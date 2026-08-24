@@ -1,0 +1,758 @@
+import { App, Modal, Notice, Setting, setIcon } from "obsidian";
+import type { TaskDraft } from "./model";
+import type { ReminderSetting, TaskStep, TicketRef } from "./markdown/blocks";
+import { normalizeTag, ticketUrl, type IssueTracker, type TagColor } from "./settings";
+import { contrastTextColor, formatDuration, minutesToHHMM, parseTimeInput } from "./util";
+
+export interface TaskModalOptions {
+  mode: "create" | "edit";
+  initial: TaskDraft;
+  snapMinutes: number;
+  /** 時刻を空にして「未スケジュール」にできるか（ブロック形式のみ） */
+  allowUnscheduled: boolean;
+  /** 対象の日付の表示（週表示のときにどの日か分かるように） */
+  dateLabel?: string;
+  /** 設定画面で登録したタグ（ボタンで選べるようにする） */
+  tagChoices?: TagColor[];
+  /** リマインドの選択欄を出すか（既定の「N分前」を表示に使う）。undefined なら出さない */
+  reminderDefault?: number;
+  /** 完了条件・ステップの入力欄を出すか（ブロック形式のみ） */
+  showDoneCondition?: boolean;
+  /** チケット管理ツール（登録があればチケット欄を出す。ブロック形式のみ） */
+  trackers?: IssueTracker[];
+  /** 「誰の予定か」の選択肢（無ければ欄を出さない） */
+  owners?: { id: string | null; name: string; color: string }[];
+  initialOwner?: string | null;
+  onSubmit: (data: TaskDraft) => void | Promise<void>;
+  onDelete?: () => void | Promise<void>;
+  /** ノートの該当ブロックを開く（編集時のみ表示） */
+  onOpenNote?: () => void | Promise<void>;
+  onClose?: () => void;
+}
+
+/** タスクを追加・編集するダイアログ */
+export class TaskModal extends Modal {
+  private opts: TaskModalOptions;
+  private title: string;
+  private done: boolean;
+  private reminder: ReminderSetting;
+  private doneCondition: string;
+  private retrospective: string;
+  private details: string;
+  private ticketTracker: string;
+  private ticketId: string;
+  private owner: string | null;
+  private steps: TaskStep[];
+  private stepsListEl!: HTMLElement;
+  private stepsCountEl!: HTMLElement;
+  private stepsBarEl!: HTMLElement;
+  private startText: string;
+  private endText: string;
+  private hintEl!: HTMLElement;
+  /** 選択中のタグ（正規化済み。"#" 抜き） */
+  private selectedTags = new Set<string>();
+  /** ボタンで選べるタグ（正規化して重複を除いたもの） */
+  private tagChoices: TagColor[];
+
+  constructor(app: App, opts: TaskModalOptions) {
+    super(app);
+    this.opts = opts;
+    this.done = opts.initial.done;
+    this.reminder = opts.initial.reminder ?? null;
+    this.doneCondition = opts.initial.doneCondition ?? "";
+    this.retrospective = opts.initial.retrospective ?? "";
+    this.details = opts.initial.details ?? "";
+    this.ticketTracker = opts.initial.ticket?.tracker ?? "";
+    this.ticketId = opts.initial.ticket?.id ?? "";
+    this.owner = opts.initialOwner ?? null;
+    this.steps = (opts.initial.steps ?? []).map((st) => ({ ...st, children: [...(st.children ?? [])] }));
+
+    this.tagChoices = normalizeTagChoices(opts.tagChoices);
+    // タイトルに書かれている選択肢のタグは、タイトルから外してボタンの選択状態にする
+    const { text, selected } = splitKnownTags(opts.initial.title, this.tagChoices.map((c) => c.tag));
+    this.title = text;
+    this.selectedTags = selected;
+    this.startText = opts.initial.start === null ? "" : minutesToHHMM(opts.initial.start);
+    this.endText = opts.initial.end === null ? "" : minutesToHHMM(opts.initial.end);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    this.modalEl.addClass("dt-modal");
+    this.titleEl.setText(
+      (this.opts.mode === "create" ? "タスクを追加" : "タスクを編集") +
+        (this.opts.dateLabel ? ` — ${this.opts.dateLabel}` : "")
+    );
+
+    // Enter で保存（日本語 IME の変換確定 Enter は無視）
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        void this.submit();
+      }
+    };
+
+    new Setting(contentEl).setName("タイトル").addText((t) => {
+      t.setPlaceholder("タスクの名前")
+        .setValue(this.title)
+        .onChange((v) => (this.title = v));
+      t.inputEl.addClass("dt-title-input");
+      t.inputEl.addEventListener("keydown", onKey);
+      window.setTimeout(() => {
+        t.inputEl.focus();
+        t.inputEl.select();
+      }, 0);
+    });
+
+    if (this.opts.owners?.length) {
+      const owners = this.opts.owners;
+      const ownerSetting = new Setting(contentEl).setName("誰の予定か");
+      const dot = ownerSetting.controlEl.createSpan("dt-owner-dot");
+      const paintDot = () => {
+        const o = owners.find((x) => (x.id ?? null) === (this.owner ?? null));
+        dot.style.background = o?.color || "transparent";
+        dot.toggleClass("is-self", !o?.color);
+      };
+      ownerSetting.addDropdown((d) => {
+        for (const o of owners) d.addOption(o.id ?? "", o.name);
+        d.setValue(this.owner ?? "").onChange((v) => {
+          this.owner = v || null;
+          paintDot();
+        });
+      });
+      paintDot();
+      if (this.opts.mode === "edit") {
+        ownerSetting.setDesc("変えると、その人のノートへブロックごと移ります。");
+      }
+    }
+
+    if (this.opts.showDoneCondition) {
+      new Setting(contentEl)
+        .setName("完了条件")
+        .setDesc("何ができたら終わりか。ノートには「- 完了条件: …」として保存されます。")
+        .addText((t) => {
+          t.setPlaceholder("例: レビューが通ってマージされている")
+            .setValue(this.doneCondition)
+            .onChange((v) => (this.doneCondition = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+        });
+      this.buildStepsSection(contentEl);
+
+      const detailSetting = new Setting(contentEl)
+        .setName("詳細")
+        .setDesc("自由なメモ（Markdown）。ノートのブロック本文と相互に反映されます。");
+      detailSetting.settingEl.addClass("dt-retro-setting");
+      const detailTa = detailSetting.controlEl.createEl("textarea", {
+        cls: "dt-retro-field dt-details-field",
+        attr: { rows: "1", placeholder: "例: - 参考リンク\n- 気づいたことのメモ" },
+      });
+      detailTa.value = this.details;
+      const growDetail = () => {
+        detailTa.style.height = "auto";
+        detailTa.style.height = Math.min(Math.max(detailTa.scrollHeight, 36), 320) + "px";
+      };
+      detailTa.addEventListener("input", () => {
+        this.details = detailTa.value;
+        growDetail();
+      });
+      detailTa.addEventListener("focus", () => {
+        detailTa.addClass("is-active");
+        growDetail();
+      });
+      detailTa.addEventListener("blur", () => {
+        detailTa.removeClass("is-active");
+        growDetail();
+      });
+      // Enter は改行（Markdown なので変換しない）。保存は Ctrl+Enter
+      detailTa.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+          e.preventDefault();
+          void this.submit();
+        }
+      });
+      window.setTimeout(growDetail, 0);
+
+      const retroSetting = new Setting(contentEl)
+        .setName("ふりかえり")
+        .setDesc("作業してみてどうだったか・次はどう改善するか。");
+      retroSetting.settingEl.addClass("dt-retro-setting");
+      const retroTa = retroSetting.controlEl.createEl("textarea", {
+        cls: "dt-retro-field",
+        attr: { rows: "1", placeholder: "例: 調査に時間がかかった。次は先に既知の事例を探す" },
+      });
+      retroTa.value = this.retrospective.replace(/ \/ /g, "\n");
+      const growRetro = () => {
+        retroTa.style.height = "auto";
+        retroTa.style.height = Math.min(Math.max(retroTa.scrollHeight, 36), 220) + "px";
+      };
+      retroTa.addEventListener("input", () => {
+        this.retrospective = retroTa.value;
+        growRetro();
+      });
+      // フォーカスで広がり、離れたら（内容ぶんの高さを保ちつつ）縮む
+      retroTa.addEventListener("focus", () => {
+        retroTa.addClass("is-active");
+        growRetro();
+      });
+      retroTa.addEventListener("blur", () => {
+        retroTa.removeClass("is-active");
+        growRetro();
+      });
+      // Enter は改行（保存は Ctrl+Enter）
+      retroTa.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+          e.preventDefault();
+          void this.submit();
+        }
+      });
+      window.setTimeout(growRetro, 0);
+    }
+
+    if (this.tagChoices.length) {
+      const tagSetting = new Setting(contentEl).setName("タグ");
+      tagSetting.settingEl.addClass("dt-tag-setting");
+      renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags);
+      tagSetting.descEl.setText("選んだタグは見出しの末尾に #タグ として書き込まれます。");
+    }
+
+    const trackers = this.opts.trackers ?? [];
+    if (this.opts.showDoneCondition && trackers.length) {
+      const tkSetting = new Setting(contentEl).setName("チケット");
+      const updateDesc = () => {
+        const url = this.ticketId.trim()
+          ? ticketUrl(trackers, this.ticketTracker, this.ticketId.trim())
+          : null;
+        tkSetting.descEl.empty();
+        if (url) {
+          tkSetting.descEl.createEl("a", {
+            cls: "dt-ticket-link",
+            text: url,
+            href: url,
+            attr: { target: "_blank", rel: "noopener" },
+          });
+        } else {
+          tkSetting.descEl.setText("管理ツールと番号を選ぶと、ブロックからチケットを開けます。");
+        }
+      };
+      tkSetting.addDropdown((d) => {
+        for (const tr of trackers) if (tr.name) d.addOption(tr.name, tr.name);
+        const cur =
+          this.ticketTracker && trackers.some((tr) => tr.name === this.ticketTracker)
+            ? this.ticketTracker
+            : trackers.find((tr) => tr.name)?.name ?? "";
+        if (this.ticketTracker && !trackers.some((tr) => tr.name === this.ticketTracker)) {
+          d.addOption(this.ticketTracker, this.ticketTracker + "（未登録）");
+        }
+        this.ticketTracker = this.ticketId ? this.ticketTracker || cur : cur;
+        d.setValue(this.ticketTracker || cur).onChange((v) => {
+          this.ticketTracker = v;
+          updateDesc();
+        });
+      });
+      tkSetting.addText((t) => {
+        t.setPlaceholder("番号（例: 65130）")
+          .setValue(this.ticketId)
+          .onChange((v) => {
+            this.ticketId = v.trim().replace(/^#+/, "");
+            updateDesc();
+          });
+        t.inputEl.addClass("dt-ticket-input");
+        t.inputEl.addEventListener("keydown", onKey);
+      });
+      updateDesc();
+    }
+
+    // 時刻の候補リスト（入力欄をクリックすると選べる）
+    const listId = "dt-times-" + Math.random().toString(36).slice(2, 8);
+    const datalist = contentEl.createEl("datalist", { attr: { id: listId } });
+    const step = Math.max(this.opts.snapMinutes, 15);
+    for (let m = 0; m <= 1440; m += step) {
+      datalist.createEl("option", { attr: { value: minutesToHHMM(m) } });
+    }
+
+    const timeSetting = new Setting(contentEl).setName("時間");
+    timeSetting.addText((t) => {
+      t.setPlaceholder("09:00")
+        .setValue(this.startText)
+        .onChange((v) => {
+          this.startText = v;
+          this.updateHint();
+        });
+      t.inputEl.addClass("dt-time-input");
+      t.inputEl.setAttr("list", listId);
+      t.inputEl.addEventListener("keydown", onKey);
+    });
+    timeSetting.controlEl.createSpan({ text: "〜", cls: "dt-modal-tilde" });
+    timeSetting.addText((t) => {
+      t.setPlaceholder("10:00")
+        .setValue(this.endText)
+        .onChange((v) => {
+          this.endText = v;
+          this.updateHint();
+        });
+      t.inputEl.addClass("dt-time-input");
+      t.inputEl.setAttr("list", listId);
+      t.inputEl.addEventListener("keydown", onKey);
+    });
+    if (this.opts.allowUnscheduled) {
+      timeSetting.addExtraButton((b) =>
+        b
+          .setIcon("timer-off")
+          .setTooltip("時刻を外して「未スケジュール」にする")
+          .onClick(() => {
+            this.startText = "";
+            this.endText = "";
+            const inputs = timeSetting.controlEl.querySelectorAll("input");
+            inputs.forEach((i) => ((i as HTMLInputElement).value = ""));
+            this.updateHint();
+          })
+      );
+    }
+    this.hintEl = timeSetting.descEl;
+    this.updateHint();
+
+    if (this.opts.reminderDefault !== undefined) {
+      const def = this.opts.reminderDefault;
+      new Setting(contentEl)
+        .setName("リマインド")
+        .setDesc("開始の何分前に通知するか。")
+        .addDropdown((d) => {
+          d.addOption("default", `既定（${def === 0 ? "開始時刻" : `${def}分前`}）`);
+          d.addOption("off", "しない");
+          for (const m of [0, 1, 3, 5, 10, 15, 30, 60]) d.addOption(String(m), m === 0 ? "開始時刻" : `${m}分前`);
+          const cur = this.reminder;
+          const val = cur === null ? "default" : cur === "off" ? "off" : String(cur);
+          if (cur !== null && cur !== "off" && !d.selectEl.querySelector(`option[value="${cur}"]`)) {
+            d.addOption(String(cur), `${cur}分前`);
+          }
+          d.setValue(val).onChange((v) => {
+            this.reminder = v === "default" ? null : v === "off" ? "off" : Number(v);
+          });
+        });
+    }
+
+    if (this.opts.mode === "edit") {
+      new Setting(contentEl)
+        .setName("完了")
+        .addToggle((t) => t.setValue(this.done).onChange((v) => (this.done = v)));
+    }
+
+    const buttons = new Setting(contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    if (this.opts.mode === "edit" && this.opts.onDelete) {
+      const onDelete = this.opts.onDelete;
+      buttons.addButton((b) =>
+        b
+          .setButtonText("削除")
+          .setWarning()
+          .onClick(async () => {
+            this.close();
+            await onDelete();
+          })
+      );
+    }
+    if (this.opts.mode === "edit" && this.opts.onOpenNote) {
+      const onOpenNote = this.opts.onOpenNote;
+      buttons.addButton((b) =>
+        b
+          .setButtonText("ノートで開く")
+          .setTooltip("このタスクのブロックをノートで開く")
+          .onClick(async () => {
+            this.close();
+            await onOpenNote();
+          })
+      );
+    }
+    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+    buttons.addButton((b) =>
+      b
+        .setButtonText(this.opts.mode === "create" ? "追加" : "保存")
+        .setCta()
+        .onClick(() => void this.submit())
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    this.opts.onClose?.();
+  }
+
+  // ---------- ステップ ----------
+
+  /** 「ステップ」の入力欄（チェック・並べ替え・追加・削除） */
+  private buildStepsSection(contentEl: HTMLElement): void {
+    const wrap = contentEl.createDiv("dt-steps");
+    const head = wrap.createDiv("dt-steps-head");
+    const name = head.createDiv("dt-steps-name");
+    name.createSpan({ text: "ステップ" });
+    this.stepsCountEl = name.createSpan({ cls: "dt-steps-count" });
+    head.createDiv({ cls: "dt-steps-desc", text: "⋮⋮ をドラッグで並べ替え・Enter で次を追加" });
+    const bar = wrap.createDiv("dt-steps-progress");
+    this.stepsBarEl = bar.createDiv();
+    this.stepsListEl = wrap.createDiv("dt-steps-list");
+
+    const addRow = wrap.createDiv("dt-step-add");
+    const plus = addRow.createSpan("dt-step-add-icon");
+    setIcon(plus, "plus");
+    const addInput = addRow.createEl("input", { type: "text", attr: { placeholder: "ステップを追加…" } });
+    const commitAdd = () => {
+      const text = addInput.value.trim();
+      if (!text) return;
+      this.steps.push({ text, done: false, children: [] });
+      addInput.value = "";
+      this.renderSteps();
+    };
+    addInput.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        commitAdd();
+      }
+    });
+    addInput.addEventListener("blur", commitAdd);
+    wrap.createDiv({
+      cls: "dt-steps-hint",
+      text: "ノートには「- [ ] ステップ」のチェックリストとして保存され、ノート側の変更も反映されます。",
+    });
+    this.renderSteps();
+  }
+
+  private renderSteps(focusIndex?: number): void {
+    const list = this.stepsListEl;
+    list.empty();
+    const done = this.steps.filter((st) => st.done).length;
+    this.stepsCountEl.setText(this.steps.length ? `${done} / ${this.steps.length} 完了` : "");
+    this.stepsBarEl.style.width = this.steps.length ? `${(done / this.steps.length) * 100}%` : "0%";
+    this.stepsBarEl.parentElement?.toggleClass("is-empty", this.steps.length === 0);
+
+    this.steps.forEach((st, idx) => {
+      const row = list.createDiv("dt-step");
+      row.toggleClass("is-done", st.done);
+      const grip = row.createDiv({ cls: "dt-step-grip", attr: { "aria-label": "ドラッグで並べ替え" } });
+      setIcon(grip, "grip-vertical");
+      const box = row.createDiv({ cls: "dt-step-check", attr: { role: "checkbox", "aria-checked": String(st.done) } });
+      setIcon(box, st.done ? "check-square" : "square");
+      box.onclick = () => {
+        st.done = !st.done;
+        this.renderSteps();
+      };
+      const input = row.createEl("input", { type: "text", cls: "dt-step-text" });
+      input.value = st.text;
+      input.addEventListener("input", () => (st.text = input.value));
+      input.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.isComposing) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          this.steps.splice(idx + 1, 0, { text: "", done: false, children: [] });
+          this.renderSteps(idx + 1);
+        } else if (e.key === "Backspace" && input.value === "" && this.steps.length > 0) {
+          e.preventDefault();
+          this.steps.splice(idx, 1);
+          this.renderSteps(Math.max(0, idx - 1));
+        } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.altKey) {
+          // Alt + ↑↓ でも並べ替え
+          e.preventDefault();
+          const to = e.key === "ArrowUp" ? idx - 1 : idx + 1;
+          if (to < 0 || to >= this.steps.length) return;
+          [this.steps[idx], this.steps[to]] = [this.steps[to], this.steps[idx]];
+          this.renderSteps(to);
+        }
+      });
+      const del = row.createDiv({ cls: "dt-step-delete", attr: { "aria-label": "削除" } });
+      setIcon(del, "x");
+      del.onclick = () => {
+        this.steps.splice(idx, 1);
+        this.renderSteps();
+      };
+      this.attachStepDrag(row, grip, idx);
+      if (focusIndex === idx) window.setTimeout(() => input.focus(), 0);
+    });
+  }
+
+  /** ⋮⋮ をドラッグして順番を入れ替える */
+  private attachStepDrag(row: HTMLElement, grip: HTMLElement, from: number): void {
+    grip.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const list = this.stepsListEl;
+      const rows = Array.from(list.children) as HTMLElement[];
+      const placeholder = document.createElement("div");
+      placeholder.className = "dt-step dt-step-placeholder";
+      placeholder.style.height = row.offsetHeight + "px";
+      let to = from;
+      let started = false;
+      const pointerId = e.pointerId;
+      const startY = e.clientY;
+
+      const move = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        if (!started) {
+          if (Math.abs(ev.clientY - startY) < 3) return;
+          started = true;
+          row.addClass("is-dragging");
+          row.after(placeholder);
+        }
+        // 他の行の中央より上か下かで挿入位置を決める
+        let index = 0;
+        for (const r of rows) {
+          if (r === row) continue;
+          const rect = r.getBoundingClientRect();
+          if (ev.clientY > rect.top + rect.height / 2) index++;
+        }
+        to = index;
+        // プレースホルダーを移動
+        const others = rows.filter((r) => r !== row);
+        if (index >= others.length) list.appendChild(placeholder);
+        else others[index].before(placeholder);
+      };
+      const finish = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", finish);
+        grip.removeEventListener("pointercancel", cancel);
+        try {
+          grip.releasePointerCapture(pointerId);
+        } catch (_e) {
+          /* ignore */
+        }
+        placeholder.remove();
+        row.removeClass("is-dragging");
+        if (!started || to === from) return;
+        const [item] = this.steps.splice(from, 1);
+        this.steps.splice(to, 0, item);
+        this.renderSteps();
+      };
+      const cancel = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        placeholder.remove();
+        row.removeClass("is-dragging");
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", finish);
+        grip.removeEventListener("pointercancel", cancel);
+      };
+      try {
+        grip.setPointerCapture(pointerId);
+      } catch (_e) {
+        /* ignore */
+      }
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", finish);
+      grip.addEventListener("pointercancel", cancel);
+    });
+  }
+
+  private parse(): { start: number | null; end: number | null } | { error: string } {
+    const startEmpty = this.startText.trim() === "";
+    const endEmpty = this.endText.trim() === "";
+    if (startEmpty && endEmpty) {
+      if (this.opts.allowUnscheduled) return { start: null, end: null };
+      return { error: "時刻は 09:00 のように入力してください" };
+    }
+    const start = parseTimeInput(this.startText);
+    const end = parseTimeInput(this.endText);
+    if (start === null || end === null) return { error: "時刻は 09:00 のように入力してください" };
+    if (end <= start) return { error: "終了時刻は開始時刻より後にしてください" };
+    return { start, end };
+  }
+
+  private updateHint(): void {
+    const r = this.parse();
+    if ("error" in r) {
+      this.hintEl.setText(r.error);
+      this.hintEl.addClass("is-error");
+    } else if (r.start === null) {
+      this.hintEl.setText("時刻なし（未スケジュール）");
+      this.hintEl.removeClass("is-error");
+    } else {
+      this.hintEl.setText(`所要時間: ${formatDuration((r.end as number) - r.start)}`);
+      this.hintEl.removeClass("is-error");
+    }
+  }
+
+  private async submit(): Promise<void> {
+    const r = this.parse();
+    if ("error" in r) {
+      new Notice(r.error);
+      return;
+    }
+    const data: TaskDraft = {
+      title: joinTitleAndTags(this.title, this.tagChoices, this.selectedTags),
+      start: r.start,
+      end: r.end,
+      done: this.done,
+      reminder: this.reminder,
+      doneCondition: this.opts.showDoneCondition ? this.doneCondition.trim() : undefined,
+      steps: this.opts.showDoneCondition
+        ? this.steps.filter((st) => st.text.trim()).map((st) => ({ ...st, text: st.text.trim() }))
+        : undefined,
+      retrospective: this.opts.showDoneCondition
+        ? this.retrospective.replace(/\s*\n+\s*/g, " / ").trim()
+        : undefined,
+      details: this.opts.showDoneCondition ? this.details.replace(/\s+$/, "") : undefined,
+      ticket: this.opts.showDoneCondition
+        ? this.ticketId.trim()
+          ? ({ tracker: this.ticketTracker, id: this.ticketId.trim() } as TicketRef)
+          : null
+        : undefined,
+      owner: this.opts.owners?.length ? this.owner : undefined,
+    };
+    this.close();
+    await this.opts.onSubmit(data);
+  }
+}
+
+/** 設定のタグを正規化して重複を除く */
+export function normalizeTagChoices(choices: TagColor[] | undefined): TagColor[] {
+  const seen = new Set<string>();
+  const out: TagColor[] = [];
+  for (const r of choices ?? []) {
+    const tag = normalizeTag(r.tag);
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push({ tag, color: r.color });
+  }
+  return out;
+}
+
+/** 色付きのタグボタンを並べる。クリックで selected を付け外しする */
+export function renderTagChips(parent: HTMLElement, choices: TagColor[], selected: Set<string>): void {
+  const chips = parent.createDiv("dt-tag-chips");
+  for (const c of choices) {
+    const chip = chips.createEl("button", {
+      cls: "dt-tag-chip",
+      text: "#" + c.tag,
+      attr: { type: "button" },
+    });
+    chip.style.setProperty("--dt-chip-color", c.color);
+    chip.style.setProperty("--dt-chip-fg", contrastTextColor(c.color) || "#fff");
+    const paint = () => {
+      const on = selected.has(c.tag);
+      chip.toggleClass("is-selected", on);
+      chip.setAttr("aria-pressed", String(on));
+    };
+    paint();
+    chip.onclick = () => {
+      if (selected.has(c.tag)) selected.delete(c.tag);
+      else selected.add(c.tag);
+      paint();
+    };
+  }
+}
+
+/**
+ * タイトルから「選択肢にあるタグ」を取り出す。
+ * 選択肢に無いタグ（手書きの #memo など）はタイトルに残す。
+ */
+export function splitKnownTags(title: string, known: string[]): { text: string; selected: Set<string> } {
+  const selected = new Set<string>();
+  if (!known.length) return { text: title, selected };
+  const text = title
+    .replace(/(^|[\s(（「\[])#([\p{L}\p{N}_\-\/]+)/gu, (all, pre: string, tag: string) => {
+      const norm = normalizeTag(tag);
+      if (!known.includes(norm)) return all;
+      selected.add(norm);
+      return pre;
+    })
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return { text, selected };
+}
+
+/** タイトルの末尾に選択したタグを付ける（設定の並び順で） */
+export function joinTitleAndTags(title: string, choices: TagColor[], selected: Set<string>): string {
+  const tags = choices.filter((c) => selected.has(c.tag)).map((c) => "#" + c.tag);
+  return [title.trim(), ...tags].filter(Boolean).join(" ");
+}
+
+/** 削除の確認（本文があるタスク用） */
+export class ConfirmModal extends Modal {
+  constructor(
+    app: App,
+    private message: string,
+    private confirmText: string,
+    private onConfirm: () => void | Promise<void>
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal");
+    this.titleEl.setText("確認");
+    this.contentEl.createEl("p", { text: this.message });
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+    buttons.addButton((b) =>
+      b
+        .setButtonText(this.confirmText)
+        .setWarning()
+        .onClick(async () => {
+          this.close();
+          await this.onConfirm();
+        })
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/** 完了時に「ふりかえり」の入力を促すダイアログ */
+export class RetrospectiveModal extends Modal {
+  private text = "";
+
+  constructor(
+    app: App,
+    private taskTitle: string,
+    private durationLabel: string,
+    private onSave: (text: string) => void | Promise<void>
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal", "dt-retro-modal");
+    this.titleEl.setText("ふりかえりを書きませんか？");
+    this.contentEl.createEl("p", {
+      cls: "dt-retro-lead",
+      text: `「${this.taskTitle || "(無題)"}」（${this.durationLabel}）が完了しました。作業してみてどうだったか・次はどう改善するかを一言残しておくと、次回に活きます。`,
+    });
+    const ta = this.contentEl.createEl("textarea", {
+      cls: "dt-retro-input",
+      attr: { rows: "5", placeholder: "例: 想定より調査に時間がかかった。次は先に既知の事例を探す" },
+    });
+    const grow = () => {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(Math.max(ta.scrollHeight, 120), 320) + "px";
+    };
+    ta.addEventListener("input", () => {
+      this.text = ta.value;
+      grow();
+    });
+    ta.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+        e.preventDefault();
+        void this.save();
+      }
+    });
+    window.setTimeout(() => ta.focus(), 0);
+
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) => b.setButtonText("あとで").onClick(() => this.close()));
+    buttons.addButton((b) => b.setButtonText("保存").setCta().onClick(() => void this.save()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private async save(): Promise<void> {
+    const text = this.text.replace(/\s*\n+\s*/g, " / ").trim();
+    this.close();
+    if (text) await this.onSave(text);
+  }
+}

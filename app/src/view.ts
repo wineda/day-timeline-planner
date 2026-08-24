@@ -1,0 +1,2013 @@
+import {
+  ItemView,
+  MarkdownView,
+  Menu,
+  Notice,
+  Scope,
+  TAbstractFile,
+  WorkspaceLeaf,
+  debounce,
+  moment,
+  setIcon,
+} from "obsidian";
+import type DayTimelinePlugin from "./main";
+import { ScheduledTask, Task, TaskDraft, isScheduled } from "./model";
+import { ConfirmModal, RetrospectiveModal, TaskModal } from "./modal";
+import { layoutEvents } from "./layout";
+import { colorForTags, ticketUrl, type Member, type ViewMode } from "./settings";
+import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
+import { INBOX_DATE } from "./store";
+import { formatSeconds } from "./notify";
+import {
+  addDays,
+  clamp,
+  contrastTextColor,
+  dateKey,
+  formatDuration,
+  isSameDay,
+  isToday,
+  minutesToHHMM,
+  nowMinutes,
+  startOfDay,
+  startOfWeek,
+  stripTags,
+} from "./util";
+
+export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
+
+interface DragHandlers {
+  onMove?: (dy: number, ev: PointerEvent) => void;
+  onEnd: (moved: boolean, ev: PointerEvent) => void;
+  onCancel?: () => void;
+}
+
+/** 1日分の列 */
+interface DayColumn {
+  date: Date;
+  key: string;
+  headerEl: HTMLElement;
+  canvasEl: HTMLElement;
+  eventsEl: HTMLElement;
+  nowEl: HTMLElement | null;
+}
+
+/** 1日分の読み込み結果 */
+interface DayData {
+  tasks: Task[];
+  exists: boolean;
+  legacyCount: number;
+}
+
+const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
+
+export class DayTimelineView extends ItemView {
+  private plugin: DayTimelinePlugin;
+  /** 基準日。日表示ではこの日、週表示ではこの日を含む週を表示する */
+  private date: Date = startOfDay(new Date());
+  private mode: ViewMode;
+  private columns: DayColumn[] = [];
+  private data = new Map<string, DayData>();
+
+  private dateLabelEl!: HTMLElement;
+  private dateInputEl!: HTMLInputElement;
+  private noteBtnEl!: HTMLElement;
+  private timerEl!: HTMLElement;
+  private timerBtnEl!: HTMLElement;
+  private modeBtns = new Map<ViewMode, HTMLElement>();
+  private membersEl!: HTMLElement;
+  /** 月表示のマス（日付キー → 要素） */
+  private monthCells = new Map<string, { date: Date; el: HTMLElement; listEl: HTMLElement }>();
+  private bannerEl!: HTMLElement;
+  private inboxEl!: HTMLElement;
+  private inboxTasks: Task[] = [];
+  private trayEl!: HTMLElement;
+  private scrollEl!: HTMLElement;
+  private headersEl!: HTMLElement;
+  private labelsEl!: HTMLElement;
+  private daysEl!: HTMLElement;
+  /** "日付キー|タスクの key" → タイムライン上の要素（エディタ連動のハイライトに使う） */
+  private taskEls = new Map<string, HTMLElement>();
+  private activeTaskKey: string | null = null;
+
+  /** ドラッグ操作中は再描画しない */
+  private interacting = false;
+  private pendingReload = false;
+  private shouldScroll = true;
+  private reloadDebounced: () => void;
+  private syncCursorDebounced: () => void;
+
+  constructor(leaf: WorkspaceLeaf, plugin: DayTimelinePlugin) {
+    super(leaf);
+    this.plugin = plugin;
+    this.mode = plugin.settings.viewMode;
+    this.reloadDebounced = debounce(() => void this.reload(), 250, true);
+    this.syncCursorDebounced = debounce(() => void this.syncCursorHighlight(), 150, true);
+
+    // ビューにフォーカスがあるとき: ← → で前後へ
+    this.scope = new Scope(this.app.scope);
+    this.scope.register([], "ArrowLeft", () => {
+      this.goToPrev();
+      return false;
+    });
+    this.scope.register([], "ArrowRight", () => {
+      this.goToNext();
+      return false;
+    });
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_DAY_TIMELINE;
+  }
+
+  getDisplayText(): string {
+    return "タイムスケジュール";
+  }
+
+  getIcon(): string {
+    return "calendar-clock";
+  }
+
+  /** 表示中の基準日（コマンドから使う） */
+  getDate(): Date {
+    return this.date;
+  }
+
+  getMode(): ViewMode {
+    return this.mode;
+  }
+
+  async onOpen(): Promise<void> {
+    this.buildSkeleton();
+    this.buildGrid();
+
+    const onFile = (f: TAbstractFile) => this.onVaultChange(f.path);
+    this.registerEvent(this.app.vault.on("modify", onFile));
+    this.registerEvent(this.app.vault.on("create", onFile));
+    this.registerEvent(this.app.vault.on("delete", onFile));
+    this.registerEvent(
+      this.app.vault.on("rename", (f, oldPath) => {
+        this.onVaultChange(f.path);
+        this.onVaultChange(oldPath);
+      })
+    );
+    this.registerInterval(window.setInterval(() => this.updateNowLine(), 30_000));
+    // エディタのカーソル位置に合わせて、対応するタスクをハイライト
+    this.registerDomEvent(document, "selectionchange", () => this.syncCursorDebounced());
+
+    await this.reload();
+  }
+
+  async onClose(): Promise<void> {
+    this.contentEl.empty();
+  }
+
+  onResize(): void {
+    if (this.shouldScroll) this.scrollToInitial();
+  }
+
+  /** 設定変更時などに、グリッドから作り直す */
+  rebuild(): void {
+    if (!this.scrollEl) return;
+    this.mode = this.plugin.settings.viewMode; // 設定画面で「既定の表示」を変えたときも追従する
+    this.buildGrid();
+    this.shouldScroll = true;
+    void this.reload();
+  }
+
+  goToPrev(): void {
+    this.setDate(this.shift(-1));
+  }
+
+  goToNext(): void {
+    this.setDate(this.shift(1));
+  }
+
+  /** 表示モードに応じた「1つ前 / 後」の基準日 */
+  private shift(dir: 1 | -1): Date {
+    switch (this.mode) {
+      case "day":
+        return addDays(this.date, dir);
+      case "3day":
+        return addDays(this.date, 3 * dir);
+      case "week":
+        return addDays(this.date, 7 * dir);
+      case "month": {
+        const d = new Date(this.date.getFullYear(), this.date.getMonth() + dir, 1);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        return new Date(d.getFullYear(), d.getMonth(), Math.min(this.date.getDate(), last));
+      }
+    }
+  }
+
+  /** @deprecated goToPrev を使う */
+  goToPrevDay(): void {
+    this.goToPrev();
+  }
+
+  /** @deprecated goToNext を使う */
+  goToNextDay(): void {
+    this.goToNext();
+  }
+
+  goToToday(): void {
+    this.setDate(startOfDay(new Date()));
+  }
+
+  /** 指定した日を表示する */
+  showDate(d: Date): void {
+    this.setDate(d);
+  }
+
+  setViewMode(mode: ViewMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.plugin.settings.viewMode = mode;
+    void this.plugin.persistSettings();
+    this.buildGrid();
+    this.shouldScroll = true;
+    void this.reload();
+  }
+
+  /** 日 → 3日 → 週 → 月 → 日 … と切り替える */
+  toggleViewMode(): void {
+    const order: ViewMode[] = ["day", "3day", "week", "month"];
+    this.setViewMode(order[(order.indexOf(this.mode) + 1) % order.length]);
+  }
+
+  // ---------- 表示している日 ----------
+
+  /** 表示中の日付（日: 1日 / 3日: 基準日から3日 / 週: 7日 / 月: カレンダーの 6 週分） */
+  private visibleDays(): Date[] {
+    const ws = this.plugin.settings.weekStart;
+    switch (this.mode) {
+      case "day":
+        return [this.date];
+      case "3day":
+        return [0, 1, 2].map((i) => addDays(this.date, i));
+      case "week": {
+        const first = startOfWeek(this.date, ws);
+        return Array.from({ length: 7 }, (_v, i) => addDays(first, i));
+      }
+      case "month": {
+        const first = startOfWeek(new Date(this.date.getFullYear(), this.date.getMonth(), 1), ws);
+        return Array.from({ length: 42 }, (_v, i) => addDays(first, i));
+      }
+    }
+  }
+
+  /** タイムライン（時間軸）を出すモードか */
+  private isTimeline(): boolean {
+    return this.mode !== "month";
+  }
+
+  /** 表示ONのメンバー（ブロック形式のときだけ） */
+  private visibleMembers(): Member[] {
+    if (!this.plugin.blockStore()) return [];
+    return this.plugin.settings.members.filter((m) => m.visible && this.plugin.memberStores.has(m.id));
+  }
+
+  /** タスクの色: メンバーの予定はメンバー色、自分の予定はタグ色 */
+  private taskColor(task: Task): string | null {
+    if (task.owner) return this.plugin.memberOf(task.owner)?.color ?? null;
+    return colorForTags(task.tags, this.plugin.settings.tagColors);
+  }
+
+  /** タスクの持ち主の名前（自分なら null） */
+  private ownerName(task: Task): string | null {
+    return task.owner ? (this.plugin.memberOf(task.owner)?.name ?? "?") : null;
+  }
+
+  /** タスクの持ち主に応じたストア */
+  private storeOf(task: Task) {
+    return this.plugin.storeFor(task.owner);
+  }
+
+  private columnFor(date: Date): DayColumn | null {
+    const k = dateKey(date);
+    return this.columns.find((c) => c.key === k) ?? null;
+  }
+
+  private dataFor(date: Date): DayData {
+    return this.data.get(dateKey(date)) ?? { tasks: [], exists: false, legacyCount: 0 };
+  }
+
+  // ---------- 構築 ----------
+
+  private buildSkeleton(): void {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("dt-view");
+
+    const header = root.createDiv("dt-header");
+
+    const nav = header.createDiv("dt-nav");
+    this.iconButton(nav, "chevron-left", "前へ", () => this.goToPrev());
+    const todayBtn = nav.createEl("button", { text: "今日", cls: "dt-today-btn" });
+    todayBtn.onclick = () => this.goToToday();
+    this.iconButton(nav, "chevron-right", "次へ", () => this.goToNext());
+
+    const dateWrap = header.createDiv("dt-date");
+    this.dateLabelEl = dateWrap.createEl("button", {
+      cls: "dt-date-label",
+      attr: { "aria-label": "日付を選ぶ" },
+    });
+    this.dateInputEl = dateWrap.createEl("input", { type: "date", cls: "dt-date-input" });
+    this.dateLabelEl.onclick = () => this.openDatePicker();
+    this.dateInputEl.onchange = () => {
+      const v = this.dateInputEl.value;
+      if (!v) return;
+      const [y, m, d] = v.split("-").map(Number);
+      if (y && m && d) this.setDate(new Date(y, m - 1, d));
+    };
+
+    const modeWrap = header.createDiv("dt-mode");
+    const modes: [ViewMode, string][] = [
+      ["day", "日"],
+      ["3day", "3日"],
+      ["week", "週"],
+      ["month", "月"],
+    ];
+    for (const [mode, label] of modes) {
+      const b = modeWrap.createEl("button", { text: label, cls: "dt-mode-btn" });
+      b.onclick = () => this.setViewMode(mode);
+      this.modeBtns.set(mode, b);
+    }
+
+    // メンバー（他の人の予定）の表示切替チップ
+    this.membersEl = header.createDiv("dt-members");
+
+    const actions = header.createDiv("dt-actions");
+    this.timerEl = actions.createEl("button", { cls: "dt-timer-chip", attr: { "aria-label": "タイマー" } });
+    this.timerEl.onclick = () => this.plugin.openTimerModal();
+    this.timerBtnEl = this.iconButton(actions, "timer", "タイマー", () => this.plugin.openTimerModal());
+    this.renderTimer();
+    this.register(this.plugin.timer.onChange(() => this.renderTimer()));
+    this.iconButton(actions, "repeat", "定期タスクを管理", () =>
+      new RecurringListModal(this.plugin).open()
+    );
+    this.iconButton(actions, "plus", "タスクを追加", () => this.openCreateModal(this.date));
+    this.noteBtnEl = this.iconButton(actions, "file-text", "ノートを開く", () =>
+      void this.openNote(this.date)
+    );
+
+    this.bannerEl = root.createDiv("dt-banner");
+    this.trayEl = root.createDiv("dt-tray");
+    // 左に Inbox のサイドバー、右にタイムライン
+    const body = root.createDiv("dt-body");
+    this.inboxEl = body.createDiv("dt-inbox");
+    this.scrollEl = body.createDiv("dt-scroll");
+  }
+
+  /** アイコンボタン（クリック / Enter / Space で動作） */
+  private iconButton(
+    parent: HTMLElement,
+    icon: string,
+    label: string,
+    onClick: () => void
+  ): HTMLElement {
+    const btn = parent.createDiv({
+      cls: "clickable-icon dt-icon-btn",
+      attr: { "aria-label": label, role: "button", tabindex: "0" },
+    });
+    setIcon(btn, icon);
+    btn.addEventListener("click", onClick);
+    btn.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    });
+    return btn;
+  }
+
+  /** 表示中の日付に合わせて、時間軸と日ごとの列（月表示ならカレンダーのマス）を作る */
+  private buildGrid(): void {
+    const s = this.plugin.settings;
+    this.scrollEl.empty();
+    this.columns = [];
+    this.monthCells.clear();
+    this.taskEls.clear();
+
+    this.contentEl.toggleClass("is-week", this.mode === "week");
+    this.contentEl.toggleClass("is-3day", this.mode === "3day");
+    this.contentEl.toggleClass("is-day", this.mode === "day");
+    this.contentEl.toggleClass("is-month", this.mode === "month");
+    this.contentEl.toggleClass("is-multi-day", this.mode === "week" || this.mode === "3day");
+
+    if (this.mode === "month") {
+      this.buildMonthGrid();
+      return;
+    }
+
+    // 曜日・日付のヘッダー（スクロールしても上に残る）
+    this.headersEl = this.scrollEl.createDiv("dt-day-headers");
+    this.headersEl.createDiv("dt-day-headers-spacer");
+    const headerCells = this.headersEl.createDiv("dt-day-headers-cells");
+
+    const grid = this.scrollEl.createDiv("dt-grid");
+    this.labelsEl = grid.createDiv("dt-labels");
+    this.daysEl = grid.createDiv("dt-days");
+
+    const height = (s.endHour - s.startHour) * s.hourHeight;
+    this.labelsEl.style.height = height + "px";
+
+    for (let h = s.startHour; h <= s.endHour; h++) {
+      const top = (h - s.startHour) * s.hourHeight;
+      const label = this.labelsEl.createDiv({ cls: "dt-hour-label", text: `${h}:00` });
+      label.style.top = top + "px";
+    }
+
+    for (const date of this.visibleDays()) {
+      const headerEl = headerCells.createDiv("dt-day-header");
+      const canvasEl = this.daysEl.createDiv("dt-canvas");
+      canvasEl.style.height = height + "px";
+      canvasEl.setAttr("data-date", dateKey(date));
+
+      for (let h = s.startHour; h <= s.endHour; h++) {
+        const top = (h - s.startHour) * s.hourHeight;
+        const line = canvasEl.createDiv("dt-hour-line");
+        line.style.top = top + "px";
+        if (h < s.endHour) {
+          const half = canvasEl.createDiv("dt-half-line");
+          half.style.top = top + s.hourHeight / 2 + "px";
+        }
+      }
+      const eventsEl = canvasEl.createDiv("dt-events");
+      const col: DayColumn = { date, key: dateKey(date), headerEl, canvasEl, eventsEl, nowEl: null };
+      canvasEl.addEventListener("pointerdown", (e) => this.onCanvasPointerDown(e, col));
+      this.columns.push(col);
+    }
+    this.renderDayHeaders();
+  }
+
+  /** 月表示のカレンダー（曜日ヘッダー + 6 週 × 7 日のマス） */
+  private buildMonthGrid(): void {
+    const ws = this.plugin.settings.weekStart;
+    const wrap = this.scrollEl.createDiv("dt-month");
+    const head = wrap.createDiv("dt-month-weekdays");
+    for (let i = 0; i < 7; i++) {
+      const dow = (ws + i) % 7;
+      const c = head.createDiv({ cls: "dt-month-weekday", text: WEEKDAY_JA[dow] });
+      c.toggleClass("is-sunday", dow === 0);
+      c.toggleClass("is-saturday", dow === 6);
+    }
+    const grid = wrap.createDiv("dt-month-grid");
+    for (const date of this.visibleDays()) {
+      const cell = grid.createDiv("dt-month-cell");
+      const dow = date.getDay();
+      cell.toggleClass("is-today", isToday(date));
+      cell.toggleClass("is-sunday", dow === 0);
+      cell.toggleClass("is-saturday", dow === 6);
+      cell.toggleClass("is-other-month", date.getMonth() !== this.date.getMonth());
+      const top = cell.createDiv("dt-month-cell-head");
+      const num = top.createEl("button", {
+        cls: "dt-month-daynum",
+        text: date.getDate() === 1 ? `${date.getMonth() + 1}/1` : String(date.getDate()),
+        attr: { "aria-label": `${moment(date).format("M月D日 (ddd)")} を日表示で開く` },
+      });
+      num.onclick = (e) => {
+        e.stopPropagation();
+        this.date = startOfDay(date);
+        this.setViewMode("day");
+      };
+      const add = this.iconButton(top, "plus", "タスクを追加", () => this.openCreateModal(date));
+      add.addClass("dt-month-add");
+      const listEl = cell.createDiv("dt-month-list");
+      // 空きをクリック → その日にタスクを追加
+      cell.addEventListener("click", (e) => {
+        if ((e.target as HTMLElement).closest(".dt-month-item, .dt-month-daynum, .dt-month-add")) return;
+        this.openCreateModal(date);
+      });
+      this.monthCells.set(dateKey(date), { date, el: cell, listEl });
+    }
+  }
+
+  private renderDayHeaders(): void {
+    for (const col of this.columns) {
+      const el = col.headerEl;
+      el.empty();
+      const dow = col.date.getDay();
+      el.toggleClass("is-today", isToday(col.date));
+      el.toggleClass("is-sunday", dow === 0);
+      el.toggleClass("is-saturday", dow === 6);
+      el.toggleClass("is-other-month", col.date.getMonth() !== this.date.getMonth());
+      el.createSpan({ cls: "dt-day-header-dow", text: WEEKDAY_JA[dow] });
+      el.createSpan({ cls: "dt-day-header-num", text: String(col.date.getDate()) });
+      el.setAttr("aria-label", `${moment(col.date).format("M月D日 (ddd)")} を日表示で開く`);
+      el.onclick = () => {
+        this.date = startOfDay(col.date);
+        this.setViewMode("day");
+      };
+    }
+  }
+
+  // ---------- データ ----------
+
+  private onVaultChange(path: string): void {
+    const inbox = this.plugin.inbox;
+    if (inbox && path === inbox.pathFor(INBOX_DATE)) {
+      this.reloadDebounced();
+      return;
+    }
+    const stores = [this.plugin.store, ...this.visibleMembers().map((m) => this.plugin.memberStores.get(m.id)!)];
+    for (const d of this.visibleDays()) {
+      for (const st of stores) {
+        if (path === st.pathFor(d)) {
+          this.reloadDebounced();
+          return;
+        }
+      }
+    }
+  }
+
+  private async reload(): Promise<void> {
+    if (this.interacting) {
+      this.pendingReload = true;
+      return;
+    }
+    const s = this.plugin.settings;
+    const store = this.plugin.store;
+    const blockStore = this.plugin.blockStore();
+    const days = this.visibleDays();
+    // 月表示では 6 週分のノートを先に作らないよう、定期タスクの自動反映はしない（薄く表示だけする）
+    if (this.isTimeline()) {
+      try {
+        await applyRecurring(this.plugin, days);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    const inbox = this.plugin.inbox;
+    this.inboxTasks = inbox && s.showInbox ? (await inbox.load(INBOX_DATE)).tasks : [];
+    const memberStores = this.visibleMembers().map((m) => this.plugin.memberStores.get(m.id)!);
+    const loaded = await Promise.all(
+      days.map(async (d): Promise<[string, DayData]> => {
+        const day = await store.load(d);
+        const legacyCount =
+          s.storageFormat === "block" && day.exists && blockStore
+            ? await blockStore.countLegacyEvents(d)
+            : 0;
+        const tasks = [...day.tasks];
+        for (const ms of memberStores) {
+          try {
+            tasks.push(...(await ms.load(d)).tasks);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        return [dateKey(d), { tasks, exists: day.exists, legacyCount }];
+      })
+    );
+    this.data = new Map(loaded);
+    this.renderHeader();
+    this.renderBanner();
+    this.renderInbox();
+    this.renderTray();
+    this.renderEvents();
+    if (this.shouldScroll) this.scrollToInitial();
+  }
+
+  private setDate(d: Date): void {
+    const next = startOfDay(d);
+    let sameRange: boolean;
+    switch (this.mode) {
+      case "week":
+        sameRange = isSameDay(
+          startOfWeek(next, this.plugin.settings.weekStart),
+          startOfWeek(this.date, this.plugin.settings.weekStart)
+        );
+        break;
+      case "month":
+        sameRange =
+          next.getFullYear() === this.date.getFullYear() && next.getMonth() === this.date.getMonth();
+        break;
+      default:
+        sameRange = isSameDay(next, this.date);
+    }
+    this.date = next;
+    if (sameRange) {
+      // 同じ範囲内の移動（週表示で日付ピッカーから選んだときなど）は列を作り直さない
+      this.renderDayHeaders();
+      this.renderHeader();
+      return;
+    }
+    this.buildGrid();
+    this.shouldScroll = true;
+    void this.reload();
+  }
+
+  // ---------- 描画 ----------
+
+  private renderHeader(): void {
+    const m = moment(this.date);
+    if (this.mode === "day") {
+      this.dateLabelEl.setText(m.format("YYYY年M月D日 (ddd)"));
+      this.dateLabelEl.toggleClass("is-today", isToday(this.date));
+    } else if (this.mode === "month") {
+      const now = new Date();
+      this.dateLabelEl.setText(m.format("YYYY年M月"));
+      this.dateLabelEl.toggleClass(
+        "is-today",
+        now.getFullYear() === this.date.getFullYear() && now.getMonth() === this.date.getMonth()
+      );
+    } else {
+      const days = this.visibleDays();
+      const a = moment(days[0]);
+      const b = moment(days[days.length - 1]);
+      const endFmt =
+        a.year() !== b.year() ? "YYYY年M月D日" : a.month() !== b.month() ? "M月D日" : "D日";
+      this.dateLabelEl.setText(`${a.format("YYYY年M月D日")} 〜 ${b.format(endFmt)}`);
+      this.dateLabelEl.toggleClass(
+        "is-today",
+        days.some((d) => isToday(d))
+      );
+    }
+    this.dateInputEl.value = m.format("YYYY-MM-DD");
+    for (const [mode, b] of this.modeBtns) b.toggleClass("is-active", mode === this.mode);
+    this.renderMemberChips();
+
+    const path = this.plugin.store.pathFor(this.date);
+    const exists = this.dataFor(this.date).exists;
+    this.noteBtnEl.setAttr(
+      "aria-label",
+      (exists ? "ノートを開く" : "ノートを作成して開く") +
+        `（${m.format("M月D日")}）\n${path}`
+    );
+  }
+
+  /** ヘッダーのメンバー表示切替チップ */
+  private renderMemberChips(): void {
+    if (!this.membersEl) return;
+    const s = this.plugin.settings;
+    this.membersEl.empty();
+    const show = !!this.plugin.blockStore() && s.members.length > 0;
+    this.membersEl.toggleClass("is-visible", show);
+    if (!show) return;
+    for (const m of s.members) {
+      const chip = this.membersEl.createEl("button", {
+        cls: "dt-member-chip",
+        attr: {
+          "aria-label": `${m.name || "(名前未設定)"} の予定を${m.visible ? "隠す" : "表示する"}`,
+          "aria-pressed": String(m.visible),
+        },
+      });
+      chip.toggleClass("is-on", m.visible);
+      chip.style.setProperty("--dt-member-color", m.color);
+      chip.createSpan("dt-member-dot");
+      chip.createSpan({ cls: "dt-member-name", text: m.name || "?" });
+      chip.onclick = () => {
+        m.visible = !m.visible;
+        void this.plugin.persistSettings();
+        void this.reload();
+      };
+    }
+    if (s.members.length > 1) {
+      const all = s.members.every((m) => m.visible);
+      const btn = this.membersEl.createEl("button", {
+        cls: "dt-member-chip dt-member-all",
+        text: all ? "自分だけ" : "全員",
+        attr: { "aria-label": all ? "メンバーの予定をすべて隠す" : "メンバーの予定をすべて表示" },
+      });
+      btn.onclick = () => {
+        for (const m of s.members) m.visible = !all;
+        void this.plugin.persistSettings();
+        void this.reload();
+      };
+    }
+  }
+
+  /** ヘッダーのタイマー表示 */
+  private renderTimer(): void {
+    if (!this.timerEl) return;
+    const timer = this.plugin.timer;
+    const st = timer.getState();
+    if (st.endAt !== null) {
+      this.timerEl.setText(`⏱ ${formatSeconds(timer.remainingSeconds())}${st.label ? ` ${st.label}` : ""}`);
+      this.timerEl.toggleClass("is-visible", true);
+      this.timerEl.toggleClass("is-finished", false);
+      this.timerBtnEl.toggleClass("is-hidden", true);
+    } else if (st.finished) {
+      this.timerEl.setText(`⏱ 終了${st.label ? ` ${st.label}` : ""}`);
+      this.timerEl.toggleClass("is-visible", true);
+      this.timerEl.toggleClass("is-finished", true);
+      this.timerBtnEl.toggleClass("is-hidden", true);
+      this.timerEl.onclick = () => timer.dismiss();
+      return;
+    } else {
+      this.timerEl.toggleClass("is-visible", false);
+      this.timerBtnEl.toggleClass("is-hidden", false);
+    }
+    this.timerEl.onclick = () => this.plugin.openTimerModal();
+  }
+
+  /** 旧形式の予定が残っているときの変換案内 */
+  private renderBanner(): void {
+    this.bannerEl.empty();
+    const pending = this.visibleDays()
+      .map((date) => ({ date }))
+      .filter((c) => this.dataFor(c.date).legacyCount > 0);
+    const total = pending.reduce((n, c) => n + this.dataFor(c.date).legacyCount, 0);
+    this.bannerEl.toggleClass("is-visible", total > 0);
+    if (total === 0) return;
+    this.bannerEl.createSpan({
+      text:
+        pending.length === 1
+          ? `旧形式の予定が ${total} 件あります。タスクブロックに変換できます。`
+          : `旧形式の予定が ${pending.length} 日分・${total} 件あります。タスクブロックに変換できます。`,
+    });
+    const btn = this.bannerEl.createEl("button", { text: "変換", cls: "mod-cta" });
+    btn.onclick = async () => {
+      for (const c of pending) await this.plugin.migrateNoteFor(c.date);
+      await this.reload();
+    };
+  }
+
+  /** Inbox だけ読み直す（コマンドから追加したときなど） */
+  async reloadInbox(): Promise<void> {
+    const inbox = this.plugin.inbox;
+    if (!inbox || !this.inboxEl) return;
+    this.inboxTasks = this.plugin.settings.showInbox ? (await inbox.load(INBOX_DATE)).tasks : [];
+    this.renderInbox();
+  }
+
+  /** Inbox（日付を決めていないタスク）のパネル */
+  private renderInbox(): void {
+    const s = this.plugin.settings;
+    const inbox = this.plugin.inbox;
+    this.inboxEl.empty();
+    const show = !!inbox && s.showInbox;
+    this.inboxEl.toggleClass("is-visible", show);
+    if (!show || !inbox) return;
+    const collapsed = s.inboxCollapsed;
+    this.inboxEl.toggleClass("is-collapsed", collapsed);
+
+    const doToggle = () => {
+      s.inboxCollapsed = !s.inboxCollapsed;
+      void this.plugin.persistSettings();
+      this.renderInbox();
+    };
+    const head = this.inboxEl.createDiv("dt-inbox-head");
+    const toggle = this.iconButton(
+      head,
+      collapsed ? "panel-left-open" : "panel-left-close",
+      collapsed ? "Inbox を開く" : "Inbox を畳む",
+      doToggle
+    );
+    toggle.addClass("dt-inbox-toggle");
+    const label = head.createSpan({ cls: "dt-inbox-label", text: "Inbox" });
+    label.onclick = doToggle;
+    head.createSpan({ cls: "dt-inbox-count", text: String(this.inboxTasks.length) });
+    const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
+      this.plugin.openInboxAddModal()
+    );
+    addBtn.addClass("dt-inbox-add");
+    const openBtn = this.iconButton(head, "file-text", "Inbox のノートを開く", () =>
+      void inbox
+        .ensureFile(INBOX_DATE)
+        .then((f) => this.app.workspace.getLeaf("tab").openFile(f))
+    );
+    openBtn.addClass("dt-inbox-open");
+    if (collapsed) return;
+
+    const list = this.inboxEl.createDiv("dt-inbox-list");
+    if (this.inboxTasks.length === 0) {
+      list.createSpan({
+        cls: "dt-tray-empty",
+        text: "日付を決めずに登録したタスクがここに並びます。タイムラインへドラッグで予定に。",
+      });
+      return;
+    }
+    for (const t of this.inboxTasks) {
+      const chip = list.createDiv("dt-tray-chip dt-inbox-chip");
+      chip.toggleClass("is-done", t.done);
+      const color = colorForTags(t.tags, s.tagColors);
+      if (color) {
+        const dot = chip.createSpan("dt-tray-color");
+        dot.style.background = color;
+      }
+      const box = chip.createDiv("dt-tray-check");
+      setIcon(box, t.done ? "check-circle-2" : "circle");
+      box.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
+      });
+      chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+      chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
+      this.attachInboxInteractions(chip, t);
+    }
+  }
+
+  /** 未スケジュールのタスクのトレイ */
+  private renderTray(): void {
+    const s = this.plugin.settings;
+    this.trayEl.empty();
+    const groups = this.columns
+      .map((c) => ({ date: c.date, tasks: this.dataFor(c.date).tasks.filter((t) => !isScheduled(t)) }))
+      .filter((g) => g.tasks.length > 0);
+    // 月表示では時刻なしのタスクもマスの中に出すのでトレイは使わない
+    const show =
+      this.isTimeline() && s.showUnscheduledTray && this.plugin.store.supportsUnscheduled && groups.length > 0;
+    this.trayEl.toggleClass("is-visible", show);
+    if (!show) return;
+
+    const label = this.trayEl.createDiv("dt-tray-label");
+    label.setText("未スケジュール");
+    const addBtn = this.iconButton(this.trayEl, "plus", "未スケジュールのタスクを追加", () =>
+      this.openCreateModal(this.date, null, null)
+    );
+    addBtn.addClass("dt-tray-add");
+
+    const list = this.trayEl.createDiv("dt-tray-list");
+    for (const g of groups) {
+      if (this.columns.length > 1) {
+        list.createSpan({
+          cls: "dt-tray-day",
+          text: `${g.date.getMonth() + 1}/${g.date.getDate()}(${WEEKDAY_JA[g.date.getDay()]})`,
+        });
+      }
+      for (const t of g.tasks) {
+        const chip = list.createDiv("dt-tray-chip");
+        chip.toggleClass("is-done", t.done);
+        const color = this.taskColor(t);
+        if (color) {
+          const dot = chip.createSpan("dt-tray-color");
+          dot.style.background = color;
+        }
+        const owner = this.ownerName(t);
+        if (owner) chip.createSpan({ cls: "dt-owner-label", text: owner });
+        const box = chip.createDiv("dt-tray-check");
+        setIcon(box, t.done ? "check-circle-2" : "circle");
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
+        });
+        chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
+        this.attachTrayInteractions(chip, g.date, t);
+      }
+    }
+  }
+
+  private renderEvents(): void {
+    if (this.mode === "month") {
+      this.renderMonth();
+      return;
+    }
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    this.taskEls.clear();
+
+    let anyScheduled = false;
+    for (const col of this.columns) {
+      col.eventsEl.empty();
+      const scheduled = this.dataFor(col.date).tasks.filter(isScheduled);
+      if (scheduled.length) anyScheduled = true;
+      const visible = scheduled.filter((t) => t.end > dayStart && t.start < dayEnd);
+      const layout = layoutEvents(visible);
+
+      for (const task of visible) {
+        const info = layout.get(task) ?? { col: 0, cols: 1 };
+        const top = this.minutesToPx(clamp(task.start, dayStart, dayEnd));
+        const bottom = this.minutesToPx(clamp(task.end, dayStart, dayEnd));
+        const h = bottom - top;
+
+        const el = col.eventsEl.createDiv("dt-event");
+        el.style.top = top + "px";
+        el.style.height = Math.max(h - 2, 4) + "px";
+        el.style.left = `calc(${(info.col / info.cols) * 100}% + 2px)`;
+        el.style.width = `calc(${(1 / info.cols) * 100}% - 4px)`;
+        el.toggleClass("is-done", task.done);
+        el.toggleClass("is-short", h < 34);
+        el.toggleClass("is-tiny", h < 18);
+        const elKey = `${col.key}|${task.key}`;
+        el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
+        this.applyTagColor(el, task);
+        el.setAttr(
+          "aria-label",
+          (this.ownerName(task) ? `${this.ownerName(task)}の予定\n` : "") +
+            `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}  ${task.title || "(無題)"}` +
+            (task.ticket ? `\n${task.ticket.tracker || "チケット"} #${task.ticket.id}` : "") +
+            (task.doneCondition ? `\n完了条件: ${task.doneCondition}` : "") +
+            (task.preview ? `\n${task.preview}` : "")
+        );
+        this.taskEls.set(elKey, el);
+
+        // タイトル → 時刻の順。本文や完了条件は文字として出さない（ツールチップで見られる）
+        const titleEl = el.createDiv("dt-event-title");
+        const ownerName = this.ownerName(task);
+        if (ownerName) {
+          el.addClass("is-member");
+          titleEl.createSpan({ cls: "dt-owner-label", text: ownerName });
+        }
+        titleEl.appendText(this.displayTitle(task));
+        const timeEl = el.createDiv({
+          cls: "dt-event-time",
+          text: `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}`,
+        });
+        if (task.ticket) {
+          const badge = el.createDiv({ cls: "dt-event-ticket", text: `#${task.ticket.id}` });
+          const url = this.ticketUrlOf(task);
+          badge.setAttr(
+            "aria-label",
+            `${task.ticket.tracker || "チケット"} #${task.ticket.id}` + (url ? `\n${url}` : "")
+          );
+          if (url) {
+            badge.addClass("is-linked");
+            badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+            badge.addEventListener("click", (ev) => {
+              ev.stopPropagation();
+              window.open(url);
+            });
+          }
+        }
+        const handle = el.createDiv("dt-event-resize");
+
+        this.attachEventInteractions(el, timeEl, handle, col, task);
+        this.attachHoverPreview(el, col.date, task);
+      }
+    }
+
+    if (!anyScheduled && this.columns.length) {
+      this.columns[0].eventsEl.createDiv({
+        cls: "dt-empty-hint",
+        text:
+          this.mode === "day"
+            ? "空いている時間をクリック、またはドラッグしてタスクを追加"
+            : "空いている時間をクリック / ドラッグしてタスクを追加",
+      });
+    }
+    this.updateNowLine();
+  }
+
+  /** 月表示: 各マスにその日のタスクを並べる */
+  private renderMonth(): void {
+    const s = this.plugin.settings;
+    this.taskEls.clear();
+    const today = startOfDay(new Date());
+    const rules = s.recurring.filter((r) => r.enabled && r.title.trim() && r.weekdays.length);
+
+    for (const [key, cell] of this.monthCells) {
+      cell.listEl.empty();
+      const tasks = [...this.dataFor(cell.date).tasks].sort((a, b) => {
+        if (a.start === null && b.start === null) return 0;
+        if (a.start === null) return 1;
+        if (b.start === null) return -1;
+        return a.start - b.start;
+      });
+      for (const task of tasks) {
+        const item = cell.listEl.createDiv("dt-month-item");
+        item.toggleClass("is-done", task.done);
+        item.toggleClass("is-unscheduled", !isScheduled(task));
+        if (task.owner) {
+          item.addClass("is-member");
+          const mc = this.plugin.memberOf(task.owner)?.color;
+          if (mc) item.style.setProperty("--dt-member-color", mc);
+        } else {
+          const color = this.taskColor(task);
+          if (color) {
+            item.addClass("has-tag-color");
+            item.style.setProperty("--dt-event-bg", color);
+            const fg = contrastTextColor(color);
+            if (fg) item.style.setProperty("--dt-event-fg", fg);
+          }
+        }
+        {
+          const owner = this.ownerName(task);
+          if (owner) item.createSpan({ cls: "dt-owner-label", text: owner });
+        }
+        if (isScheduled(task)) {
+          item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(task.start) });
+        }
+        item.createSpan({ cls: "dt-month-item-title", text: this.displayTitle(task) });
+        if (task.ticket) item.createSpan({ cls: "dt-month-item-ticket", text: `#${task.ticket.id}` });
+        item.setAttr(
+          "aria-label",
+          (isScheduled(task) ? `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}  ` : "") +
+            (task.title || "(無題)") +
+            (task.preview ? `\n${task.preview}` : "")
+        );
+        const elKey = `${key}|${task.key}`;
+        item.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
+        this.taskEls.set(elKey, item);
+        item.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (e.ctrlKey || e.metaKey) void this.openTaskInNote(cell.date, task);
+          else this.openEditModal(cell.date, task);
+        });
+        item.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.showTaskMenu(cell.date, task, e);
+        });
+        this.attachHoverPreview(item, cell.date, task);
+      }
+      // まだノートに入れていない将来の定期タスクは薄く表示
+      if (cell.date >= today && s.autoApplyRecurring) {
+        const applied = new Set(s.recurringApplied[key] ?? []);
+        for (const r of rules) {
+          if (!r.weekdays.includes(cell.date.getDay()) || applied.has(r.id)) continue;
+          const item = cell.listEl.createDiv("dt-month-item is-recurring-preview");
+          if (r.start !== null) item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(r.start) });
+          item.createSpan({ cls: "dt-month-item-title", text: r.title });
+          item.setAttr("aria-label", "定期タスク（この日を開くとノートに入ります）");
+        }
+      }
+    }
+  }
+
+  /** タグに対応する色をブロックに当てる */
+  private applyTagColor(el: HTMLElement, task: Task): void {
+    // 他の人の予定: 背景はグレーにして、左端の線だけその人の色にする
+    if (task.owner) {
+      el.addClass("is-member");
+      const mc = this.plugin.memberOf(task.owner)?.color;
+      if (mc) el.style.setProperty("--dt-member-color", mc);
+      return;
+    }
+    const color = this.taskColor(task);
+    if (!color) return;
+    el.addClass("has-tag-color");
+    el.style.setProperty("--dt-event-bg", color);
+    const fg = contrastTextColor(color);
+    if (fg) el.style.setProperty("--dt-event-fg", fg);
+  }
+
+  private updateNowLine(): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    const m = nowMinutes();
+    for (const col of this.columns) {
+      const show = s.showCurrentTime && isToday(col.date) && m >= dayStart && m <= dayEnd;
+      if (!show) {
+        col.nowEl?.remove();
+        col.nowEl = null;
+        continue;
+      }
+      if (!col.nowEl || !col.nowEl.isConnected) {
+        col.nowEl = col.canvasEl.createDiv("dt-now");
+      }
+      col.nowEl.style.top = this.minutesToPx(m) + "px";
+    }
+  }
+
+  private scrollToInitial(): void {
+    if (!this.scrollEl || this.scrollEl.clientHeight === 0) return; // まだ表示されていない
+    if (this.mode === "month") {
+      this.scrollEl.scrollTop = 0;
+      this.shouldScroll = false;
+      return;
+    }
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    const hasToday = this.columns.some((c) => isToday(c.date));
+    const scheduled = this.columns.flatMap((c) => this.dataFor(c.date).tasks.filter(isScheduled));
+    let target = hasToday ? nowMinutes() - 60 : 8 * 60;
+    if (scheduled.length && !hasToday) {
+      target = Math.min(...scheduled.map((t) => t.start)) - 30;
+    }
+    target = clamp(target, dayStart, dayEnd);
+    this.scrollEl.scrollTop = Math.max(0, this.minutesToPx(target));
+    this.shouldScroll = false;
+  }
+
+  // ---------- エディタ連動 ----------
+
+  /** アクティブなエディタのカーソルが乗っているタスクをハイライト */
+  private async syncCursorHighlight(): Promise<void> {
+    const store = this.plugin.blockStore();
+    if (!store) return;
+    let key: string | null = null;
+    const md = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (md?.file) {
+      const path = md.file.path;
+      const day = this.visibleDays().find((d) => store.pathFor(d) === path);
+      if (day) {
+        const line = md.editor.getCursor().line;
+        const task = await store.taskAtLine(day, line);
+        key = task ? `${dateKey(day)}|${task.key}` : null;
+      }
+    }
+    if (key === this.activeTaskKey) return;
+    this.activeTaskKey = key;
+    for (const [k, el] of this.taskEls) el.toggleClass("is-active-in-note", k === key);
+  }
+
+  /** Ctrl/Cmd + ホバーでノートの該当ブロックをプレビュー */
+  private attachHoverPreview(el: HTMLElement, date: Date, task: Task): void {
+    if (!task.blockId) return;
+    const linktext = `${this.storeOf(task).pathFor(date)}#^${task.blockId}`;
+    el.addEventListener("mouseover", (e: MouseEvent) => {
+      this.app.workspace.trigger("hover-link", {
+        event: e,
+        source: VIEW_TYPE_DAY_TIMELINE,
+        hoverParent: this,
+        targetEl: el,
+        linktext,
+      });
+    });
+  }
+
+  /** ノートの該当ブロックを開く（ID が無ければ付けてから開く） */
+  private async openTaskInNote(date: Date, task: Task): Promise<void> {
+    try {
+      const link = await this.storeOf(task).linkTo(date, task);
+      if (link) {
+        await this.app.workspace.openLinkText(link, "", false);
+      } else if (task.owner) {
+        const file = await this.storeOf(task).ensureFile(date);
+        await this.app.workspace.getLeaf("tab").openFile(file);
+      } else {
+        await this.openNote(date);
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("ノートを開けませんでした: " + String(e));
+    }
+  }
+
+  // ---------- 座標変換 ----------
+
+  private minutesToPx(min: number): number {
+    const s = this.plugin.settings;
+    return ((min - s.startHour * 60) / 60) * s.hourHeight;
+  }
+
+  private pxToMinutes(px: number): number {
+    return (px / this.plugin.settings.hourHeight) * 60;
+  }
+
+  private clientYToMinutes(clientY: number): number {
+    const s = this.plugin.settings;
+    const rect = this.daysEl.getBoundingClientRect();
+    const min = s.startHour * 60 + this.pxToMinutes(clientY - rect.top);
+    return clamp(min, s.startHour * 60, s.endHour * 60);
+  }
+
+  /** ポインタの X 座標から、どの日の列の上にいるかを返す（列の外なら一番近い列） */
+  private columnAtX(clientX: number): DayColumn | null {
+    if (!this.columns.length) return null;
+    let best: DayColumn | null = null;
+    let bestDist = Infinity;
+    for (const col of this.columns) {
+      const r = col.canvasEl.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right) return col;
+      const d = clientX < r.left ? r.left - clientX : clientX - r.right;
+      if (d < bestDist) {
+        bestDist = d;
+        best = col;
+      }
+    }
+    return best;
+  }
+
+  private overGrid(ev: PointerEvent): boolean {
+    const r = this.daysEl.getBoundingClientRect();
+    return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+  }
+
+  private snapFloor(min: number): number {
+    const snap = this.plugin.settings.snapMinutes;
+    return Math.floor(min / snap) * snap;
+  }
+
+  private snapRound(min: number): number {
+    const snap = this.plugin.settings.snapMinutes;
+    return Math.round(min / snap) * snap;
+  }
+
+  // ---------- 操作 ----------
+
+  /** マウス／タッチのドラッグをまとめて扱う */
+  private startDrag(target: HTMLElement, e: PointerEvent, h: DragHandlers): void {
+    const startY = e.clientY;
+    const pointerId = e.pointerId;
+    let moved = false;
+    this.interacting = true;
+
+    const detach = () => {
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onCancel);
+      try {
+        target.releasePointerCapture(pointerId);
+      } catch (_e) {
+        /* すでに解放済み */
+      }
+    };
+    const done = () => {
+      this.interacting = false;
+      if (this.pendingReload) {
+        this.pendingReload = false;
+        void this.reload();
+      }
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      const dy = ev.clientY - startY;
+      if (!moved && Math.abs(dy) < 3 && Math.abs(ev.clientX - e.clientX) < 3) return;
+      moved = true;
+      h.onMove?.(dy, ev);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      detach();
+      h.onEnd(moved, ev);
+      done();
+    };
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      detach();
+      h.onCancel?.();
+      done();
+    };
+
+    try {
+      target.setPointerCapture(pointerId);
+    } catch (_e) {
+      /* 非対応環境 */
+    }
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onCancel);
+  }
+
+  /** 空き時間のクリック／ドラッグ → タスクを作成 */
+  private onCanvasPointerDown(e: PointerEvent, col: DayColumn): void {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest(".dt-event")) return;
+
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    const snap = s.snapMinutes;
+    const anchor = clamp(this.snapFloor(this.clientYToMinutes(e.clientY)), dayStart, dayEnd - snap);
+    const defaultRange = (): [number, number] => [
+      anchor,
+      Math.min(anchor + s.defaultDurationMinutes, dayEnd),
+    ];
+    let range = defaultRange();
+
+    const ghost = col.eventsEl.createDiv("dt-ghost");
+    const drawGhost = () => {
+      ghost.style.top = this.minutesToPx(range[0]) + "px";
+      ghost.style.height = Math.max(this.minutesToPx(range[1]) - this.minutesToPx(range[0]) - 2, 4) + "px";
+      ghost.setText(`${minutesToHHMM(range[0])} - ${minutesToHHMM(range[1])}`);
+    };
+    drawGhost();
+
+    this.startDrag(col.canvasEl, e, {
+      onMove: (_dy, ev) => {
+        const cur = clamp(this.snapFloor(this.clientYToMinutes(ev.clientY)), dayStart, dayEnd - snap);
+        if (cur === anchor) range = defaultRange();
+        else if (cur > anchor) range = [anchor, cur + snap];
+        else range = [cur, anchor + snap];
+        drawGhost();
+      },
+      onEnd: (moved) => {
+        if (!moved) range = defaultRange();
+        this.openCreateModal(col.date, range[0], range[1], () => ghost.remove());
+      },
+      onCancel: () => ghost.remove(),
+    });
+  }
+
+  private attachEventInteractions(
+    el: HTMLElement,
+    timeEl: HTMLElement,
+    handle: HTMLElement,
+    col: DayColumn,
+    task: ScheduledTask
+  ): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+
+    // 本体: クリックで編集（Ctrl/Cmd+クリックでノートへ）、ドラッグで移動（週表示では別の日へも）
+    el.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      const toNote = e.ctrlKey || e.metaKey;
+      const dur = task.end - task.start;
+      let newStart = task.start;
+      let targetCol: DayColumn = col;
+      this.startDrag(el, e, {
+        onMove: (dy, ev) => {
+          newStart = clamp(
+            this.snapRound(task.start + this.pxToMinutes(dy)),
+            dayStart,
+            Math.max(dayStart, dayEnd - dur)
+          );
+          el.addClass("is-dragging");
+          el.style.top = this.minutesToPx(newStart) + "px";
+          timeEl.setText(`${minutesToHHMM(newStart)} - ${minutesToHHMM(newStart + dur)}`);
+          if (this.columns.length > 1) {
+            const over = this.columnAtX(ev.clientX) ?? col;
+            if (over !== targetCol) {
+              targetCol = over;
+              // 要素は元の列に置いたまま、横にずらして別の日の列の上に見せる
+              // （DOM を移すとポインタキャプチャが外れる環境があるため）
+              const dx =
+                targetCol.canvasEl.getBoundingClientRect().left -
+                col.canvasEl.getBoundingClientRect().left;
+              el.style.transform = dx ? `translateX(${dx}px)` : "";
+              el.toggleClass("is-moving-day", targetCol !== col);
+            }
+          }
+        },
+        onEnd: (moved) => {
+          el.removeClass("is-dragging");
+          if (!moved) {
+            if (toNote) void this.openTaskInNote(col.date, task);
+            else this.openEditModal(col.date, task);
+            return;
+          }
+          const draft = { ...this.draftOf(task), start: newStart, end: newStart + dur };
+          if (targetCol !== col) {
+            void this.commitMove(col.date, task, targetCol.date, draft);
+          } else if (newStart !== task.start) {
+            void this.commitUpdate(col.date, task, draft);
+          } else {
+            this.renderEvents();
+          }
+        },
+        onCancel: () => this.renderEvents(),
+      });
+    });
+
+    // 下端のハンドル: ドラッグで終了時刻を変更
+    handle.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      let newEnd = task.end;
+      this.startDrag(handle, e, {
+        onMove: (dy) => {
+          newEnd = clamp(this.snapRound(task.end + this.pxToMinutes(dy)), task.start + s.snapMinutes, dayEnd);
+          el.addClass("is-dragging");
+          el.style.height = Math.max(this.minutesToPx(newEnd) - this.minutesToPx(task.start) - 2, 4) + "px";
+          timeEl.setText(`${minutesToHHMM(task.start)} - ${minutesToHHMM(newEnd)}`);
+        },
+        onEnd: (moved) => {
+          el.removeClass("is-dragging");
+          if (moved && newEnd !== task.end) {
+            void this.commitUpdate(col.date, task, { ...this.draftOf(task), end: newEnd });
+          } else {
+            this.renderEvents();
+          }
+        },
+        onCancel: () => this.renderEvents(),
+      });
+    });
+
+    // 右クリックメニュー
+    el.addEventListener("contextmenu", (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showTaskMenu(col.date, task, e);
+    });
+  }
+
+  /** トレイのチップ: クリックで編集、タイムラインへドラッグで時刻を割り当て */
+  private attachTrayInteractions(chip: HTMLElement, date: Date, task: Task): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+
+    chip.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest(".dt-tray-check")) return;
+      e.preventDefault();
+
+      let ghost: HTMLElement | null = null;
+      let dropStart: number | null = null;
+      let dropCol: DayColumn | null = null;
+      const duration = s.defaultDurationMinutes;
+
+      this.startDrag(chip, e, {
+        onMove: (_dy, ev) => {
+          chip.addClass("is-dragging");
+          const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
+          if (!over) {
+            dropStart = null;
+            dropCol = null;
+            ghost?.remove();
+            ghost = null;
+            return;
+          }
+          if (over !== dropCol) {
+            ghost?.remove();
+            ghost = null;
+            dropCol = over;
+          }
+          dropStart = clamp(
+            this.snapFloor(this.clientYToMinutes(ev.clientY)),
+            dayStart,
+            Math.max(dayStart, dayEnd - duration)
+          );
+          if (!ghost) ghost = over.eventsEl.createDiv("dt-ghost");
+          ghost.style.top = this.minutesToPx(dropStart) + "px";
+          ghost.style.height =
+            Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
+          ghost.setText(
+            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${this.displayTitle(task)}`
+          );
+        },
+        onEnd: (moved) => {
+          chip.removeClass("is-dragging");
+          ghost?.remove();
+          if (!moved) {
+            this.openEditModal(date, task);
+            return;
+          }
+          if (dropStart !== null && dropCol) {
+            const draft = {
+              ...this.draftOf(task),
+              start: dropStart,
+              end: Math.min(dropStart + duration, dayEnd),
+            };
+            if (isSameDay(dropCol.date, date)) void this.commitUpdate(date, task, draft);
+            else void this.commitMove(date, task, dropCol.date, draft);
+          }
+        },
+        onCancel: () => {
+          chip.removeClass("is-dragging");
+          ghost?.remove();
+        },
+      });
+    });
+
+    chip.addEventListener("contextmenu", (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showTaskMenu(date, task, e);
+    });
+  }
+
+  /** Inbox のチップ: クリックで編集、タイムラインへドラッグでその日に移して時刻を割り当て */
+  private attachInboxInteractions(chip: HTMLElement, task: Task): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+
+    chip.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest(".dt-tray-check")) return;
+      e.preventDefault();
+
+      let ghost: HTMLElement | null = null;
+      let dropStart: number | null = null;
+      let dropCol: DayColumn | null = null;
+      const duration = s.defaultDurationMinutes;
+
+      this.startDrag(chip, e, {
+        onMove: (_dy, ev) => {
+          chip.addClass("is-dragging");
+          const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
+          if (!over) {
+            dropStart = null;
+            dropCol = null;
+            ghost?.remove();
+            ghost = null;
+            return;
+          }
+          if (over !== dropCol) {
+            ghost?.remove();
+            ghost = null;
+            dropCol = over;
+          }
+          dropStart = clamp(
+            this.snapFloor(this.clientYToMinutes(ev.clientY)),
+            dayStart,
+            Math.max(dayStart, dayEnd - duration)
+          );
+          if (!ghost) ghost = over.eventsEl.createDiv("dt-ghost");
+          ghost.style.top = this.minutesToPx(dropStart) + "px";
+          ghost.style.height =
+            Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
+          ghost.setText(
+            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${this.displayTitle(task)}`
+          );
+        },
+        onEnd: (moved) => {
+          chip.removeClass("is-dragging");
+          ghost?.remove();
+          if (!moved) {
+            this.openInboxEditModal(task);
+            return;
+          }
+          if (dropStart !== null && dropCol) {
+            void this.commitInboxToDay(task, dropCol.date, {
+              ...this.draftOf(task),
+              start: dropStart,
+              end: Math.min(dropStart + duration, dayEnd),
+            });
+          }
+        },
+        onCancel: () => {
+          chip.removeClass("is-dragging");
+          ghost?.remove();
+        },
+      });
+    });
+
+    chip.addEventListener("contextmenu", (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const menu = new Menu();
+      menu.addItem((i) => i.setTitle("編集").setIcon("pencil").onClick(() => this.openInboxEditModal(task)));
+      menu.addItem((i) =>
+        i
+          .setTitle(task.done ? "未完了に戻す" : "完了にする")
+          .setIcon("check")
+          .onClick(() => void this.commitInboxUpdate(task, { ...this.draftOf(task), done: !task.done }))
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle("今日へ送る（未スケジュール）")
+          .setIcon("calendar")
+          .onClick(() => void this.commitInboxToDay(task, startOfDay(new Date())))
+      );
+      if (this.mode === "day" && !isToday(this.date)) {
+        menu.addItem((i) =>
+          i
+            .setTitle(`${moment(this.date).format("M月D日")} へ送る（未スケジュール）`)
+            .setIcon("calendar")
+            .onClick(() => void this.commitInboxToDay(task, this.date))
+        );
+      }
+      menu.addItem((i) =>
+        i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openInboxTaskInNote(task))
+      );
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i.setTitle("削除").setIcon("trash").onClick(() => void this.commitInboxDelete(task))
+      );
+      menu.showAtMouseEvent(e);
+    });
+  }
+
+  /** タスクの右クリックメニュー（タイムライン・トレイ共通） */
+  private showTaskMenu(date: Date, task: Task, e: MouseEvent): void {
+    const menu = new Menu();
+    menu.addItem((i) =>
+      i.setTitle("編集").setIcon("pencil").onClick(() => this.openEditModal(date, task))
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle(task.done ? "未完了に戻す" : "完了にする")
+        .setIcon("check")
+        .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), done: !task.done }))
+    );
+    menu.addItem((i) =>
+      i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openTaskInNote(date, task))
+    );
+    {
+      const url = this.ticketUrlOf(task);
+      if (url && task.ticket) {
+        menu.addItem((i) =>
+          i
+            .setTitle(`チケット #${task.ticket?.id} を開く`)
+            .setIcon("external-link")
+            .onClick(() => window.open(url))
+        );
+      }
+    }
+    if (this.storeOf(task).supportsUnscheduled && isScheduled(task)) {
+      menu.addItem((i) =>
+        i
+          .setTitle("時刻を外す（未スケジュールへ）")
+          .setIcon("timer-off")
+          .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), start: null, end: null }))
+      );
+    }
+    menu.addItem((i) =>
+      i
+        .setTitle("前日へ送る")
+        .setIcon("arrow-left")
+        .onClick(() => void this.commitMove(date, task, addDays(date, -1)))
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle("翌日へ送る")
+        .setIcon("arrow-right")
+        .onClick(() => void this.commitMove(date, task, addDays(date, 1)))
+    );
+    if (this.plugin.blockStore() && this.plugin.settings.members.length) {
+      const targets: { id: string | null; name: string }[] = [
+        { id: null, name: "自分" },
+        ...this.plugin.settings.members.map((m) => ({ id: m.id, name: m.name || "?" })),
+      ].filter((o) => (o.id ?? null) !== (task.owner ?? null));
+      for (const o of targets) {
+        menu.addItem((i) =>
+          i
+            .setTitle(`${o.name}の予定にする`)
+            .setIcon("user")
+            .onClick(() => void this.commitChangeOwner(date, task, { ...this.draftOf(task), owner: o.id }))
+        );
+      }
+    }
+    if (this.plugin.inbox && !task.owner) {
+      menu.addItem((i) =>
+        i
+          .setTitle("Inbox へ戻す（日付を外す）")
+          .setIcon("inbox")
+          .onClick(() => void this.commitDayToInbox(date, task))
+      );
+    }
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i
+        .setTitle("定期タスクとして登録…")
+        .setIcon("repeat")
+        .onClick(() => {
+          new RecurringModal(this.app, {
+            preset: { title: task.title, start: task.start, end: task.end, weekday: date.getDay() },
+            tagChoices: this.plugin.settings.tagColors,
+            onSubmit: async (rule) => {
+              this.plugin.settings.recurring.push(rule);
+              await this.plugin.saveSettings();
+              new Notice(`定期タスク「${rule.title}」を登録しました`);
+            },
+          }).open();
+        })
+    );
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i.setTitle("削除").setIcon("trash").onClick(() => void this.commitDelete(date, task))
+    );
+    menu.showAtMouseEvent(e);
+  }
+
+  // ---------- モーダル ----------
+
+  private openCreateModal(
+    date: Date,
+    start?: number | null,
+    end?: number | null,
+    onClose?: () => void
+  ): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    if (start === undefined) {
+      const base = isToday(date) ? Math.ceil(nowMinutes() / s.snapMinutes) * s.snapMinutes : 9 * 60;
+      start = clamp(base, dayStart, Math.max(dayStart, dayEnd - s.snapMinutes));
+    }
+    if (start !== null) {
+      if (end === undefined || end === null) end = Math.min(start + s.defaultDurationMinutes, dayEnd);
+      if (end <= start) end = Math.min(start + s.snapMinutes, 1440);
+    } else {
+      end = null;
+    }
+
+    new TaskModal(this.app, {
+      mode: "create",
+      initial: { title: "", start, end, done: false },
+      snapMinutes: s.snapMinutes,
+      allowUnscheduled: this.plugin.store.supportsUnscheduled,
+      dateLabel: this.mode !== "day" ? moment(date).format("M月D日 (ddd)") : undefined,
+      tagChoices: s.tagColors,
+      reminderDefault: this.plugin.blockStore() ? s.reminderDefaultMinutes : undefined,
+      showDoneCondition: !!this.plugin.blockStore(),
+      trackers: s.trackers,
+      owners: this.ownerChoices(),
+      initialOwner: null,
+      onSubmit: (data) => this.commitCreate(date, data),
+      onClose,
+    }).open();
+  }
+
+  private openEditModal(date: Date, task: Task): void {
+    new TaskModal(this.app, {
+      mode: "edit",
+      initial: this.draftOf(task),
+      snapMinutes: this.plugin.settings.snapMinutes,
+      allowUnscheduled: this.plugin.store.supportsUnscheduled,
+      dateLabel: this.mode !== "day" ? moment(date).format("M月D日 (ddd)") : undefined,
+      tagChoices: this.plugin.settings.tagColors,
+      reminderDefault: this.plugin.blockStore() ? this.plugin.settings.reminderDefaultMinutes : undefined,
+      showDoneCondition: !!this.plugin.blockStore(),
+      trackers: this.plugin.settings.trackers,
+      owners: this.ownerChoices(),
+      initialOwner: task.owner ?? null,
+      onSubmit: (data) => this.commitUpdate(date, task, data),
+      onDelete: () => this.commitDelete(date, task),
+      onOpenNote: () => this.openTaskInNote(date, task),
+    }).open();
+  }
+
+  /** 編集ダイアログの「誰の予定か」の選択肢（メンバーが居ないときは undefined = 欄を出さない） */
+  private ownerChoices(): { id: string | null; name: string; color: string }[] | undefined {
+    if (!this.plugin.blockStore() || !this.plugin.settings.members.length) return undefined;
+    return [
+      { id: null, name: "自分", color: "" },
+      ...this.plugin.settings.members.map((m) => ({ id: m.id, name: m.name || "?", color: m.color })),
+    ];
+  }
+
+  private draftOf(task: Task): TaskDraft {
+    return {
+      title: task.title,
+      start: task.start,
+      end: task.end,
+      done: task.done,
+      reminder: task.reminder,
+      doneCondition: task.doneCondition,
+      steps: task.steps,
+      retrospective: task.retrospective,
+      details: task.details,
+      ticket: task.ticket,
+    };
+  }
+
+  /** チケットの URL（設定に無ければ null） */
+  private ticketUrlOf(task: Task): string | null {
+    if (!task.ticket) return null;
+    return ticketUrl(this.plugin.settings.trackers, task.ticket.tracker, task.ticket.id);
+  }
+
+  /** タイムライン上に出すタイトル（タグは色で分かるので文字としては出さない） */
+  private displayTitle(task: Task): string {
+    return stripTags(task.title) || "(無題)";
+  }
+
+  // ---------- 保存 ----------
+
+  private async commitCreate(date: Date, data: TaskDraft): Promise<void> {
+    try {
+      await this.plugin.storeFor(data.owner).create(date, data);
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを保存できませんでした: " + String(e));
+    }
+    await this.reload();
+  }
+
+  private async commitUpdate(date: Date, task: Task, data: TaskDraft): Promise<void> {
+    // 持ち主が変わった場合は、別のノートへブロックごと移す
+    if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
+      await this.commitChangeOwner(date, task, data);
+      return;
+    }
+    let updated = false;
+    try {
+      const ok = await this.storeOf(task).update(date, task, data);
+      if (!ok) new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      updated = !!ok;
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを保存できませんでした: " + String(e));
+    }
+    await this.reload();
+    if (updated) this.maybePromptRetrospective(date, task, data);
+  }
+
+  /** 15分以上のタスクを完了にしたとき、ふりかえりが空なら入力を促す */
+  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft): void {
+    if (!this.plugin.blockStore()) return; // ブロック形式のみ
+    if (!data.done || task.done) return; // 「未完了 → 完了」のときだけ
+    const start = data.start ?? task.start;
+    const end = data.end ?? task.end;
+    if (start === null || end === null || end - start < 15) return;
+    const retro = data.retrospective !== undefined ? data.retrospective : task.retrospective;
+    if (retro && retro.trim()) return;
+    new RetrospectiveModal(
+      this.app,
+      stripTags(data.title || task.title),
+      formatDuration(end - start),
+      async (text) => {
+        try {
+          const ok = await this.storeOf(task).update(date, task, { ...data, retrospective: text });
+          if (!ok) new Notice("ふりかえりを保存できませんでした。ノートが変更された可能性があります。");
+        } catch (e) {
+          console.error(e);
+          new Notice("ふりかえりを保存できませんでした: " + String(e));
+        }
+        await this.reload();
+      }
+    ).open();
+  }
+
+  private async commitDelete(date: Date, task: Task): Promise<void> {
+    const doDelete = async () => {
+      try {
+        const ok = await this.storeOf(task).remove(date, task);
+        if (!ok) new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      } catch (e) {
+        console.error(e);
+        new Notice("タスクを削除できませんでした: " + String(e));
+      }
+      await this.reload();
+    };
+
+    // 本文があるブロックはノートの中身ごと消えるので確認する
+    const s = this.plugin.settings;
+    const blockStore = this.plugin.blockStoreFor(task.owner);
+    if (s.confirmBodyDelete && blockStore && (await blockStore.hasBody(date, task))) {
+      new ConfirmModal(
+        this.app,
+        `「${task.title || "(無題)"}」には本文があります。ブロックごと削除しますか？`,
+        "削除",
+        doDelete
+      ).open();
+      return;
+    }
+    await doDelete();
+  }
+
+  /**
+   * 別の日へ移す。draft を渡すと移動後にその内容（時刻など）で更新する
+   * （週表示で別の日の列へドラッグしたときに使う）。
+   */
+  private async commitMove(from: Date, task: Task, to: Date, draft?: TaskDraft): Promise<void> {
+    try {
+      const ok = await this.storeOf(task).moveToDate(from, task, to);
+      if (ok === false) {
+        new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      } else if (ok === null) {
+        new Notice("この形式では日をまたぐ移動に対応していません");
+      } else {
+        if (draft) {
+          const updated = await this.storeOf(task).update(to, task, draft);
+          if (!updated) new Notice("移動しましたが、時刻を更新できませんでした");
+        }
+        new Notice(`${moment(to).format("M月D日")} へ移動しました`);
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを移動できませんでした: " + String(e));
+    }
+    await this.reload();
+  }
+
+  /** タスクの持ち主を変える（別のフォルダのノートへブロックごと移す） */
+  private async commitChangeOwner(date: Date, task: Task, data: TaskDraft): Promise<void> {
+    const from = this.plugin.blockStoreFor(task.owner);
+    const to = this.plugin.blockStoreFor(data.owner);
+    if (!from || !to || from === to) return;
+    try {
+      const block = await from.takeBlock(date, task);
+      if (!block) {
+        new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      } else {
+        await to.putBlock(date, block, data.start ?? task.start);
+        const ok = await to.update(date, task, { ...data, owner: undefined });
+        if (!ok) new Notice("移しましたが、内容を更新できませんでした");
+        const name = this.plugin.memberOf(data.owner)?.name ?? "自分";
+        new Notice(`${name}の予定にしました`);
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを移せませんでした: " + String(e));
+    }
+    await this.reload();
+  }
+
+  // ---------- Inbox ----------
+
+  private openInboxEditModal(task: Task): void {
+    const inbox = this.plugin.inbox;
+    if (!inbox) return;
+    new TaskModal(this.app, {
+      mode: "edit",
+      initial: this.draftOf(task),
+      snapMinutes: this.plugin.settings.snapMinutes,
+      allowUnscheduled: true,
+      dateLabel: "Inbox",
+      tagChoices: this.plugin.settings.tagColors,
+      showDoneCondition: true,
+      trackers: this.plugin.settings.trackers,
+      onSubmit: (data) => {
+        // Inbox で時刻を入れたら「今日」に移す
+        if (data.start !== null && data.end !== null) {
+          return this.commitInboxToDay(task, startOfDay(new Date()), data);
+        }
+        return this.commitInboxUpdate(task, data);
+      },
+      onDelete: () => this.commitInboxDelete(task),
+      onOpenNote: () => this.openInboxTaskInNote(task),
+    }).open();
+  }
+
+  private async openInboxTaskInNote(task: Task): Promise<void> {
+    const inbox = this.plugin.inbox;
+    if (!inbox) return;
+    try {
+      const link = await inbox.linkTo(INBOX_DATE, task);
+      if (link) await this.app.workspace.openLinkText(link, "", false);
+      else await this.app.workspace.getLeaf("tab").openFile(await inbox.ensureFile(INBOX_DATE));
+    } catch (e) {
+      console.error(e);
+      new Notice("ノートを開けませんでした: " + String(e));
+    }
+  }
+
+  private async commitInboxUpdate(task: Task, data: TaskDraft): Promise<void> {
+    const inbox = this.plugin.inbox;
+    if (!inbox) return;
+    try {
+      const ok = await inbox.update(INBOX_DATE, task, { ...data, start: null, end: null });
+      if (!ok) new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを保存できませんでした: " + String(e));
+    }
+    await this.reload();
+  }
+
+  private async commitInboxDelete(task: Task): Promise<void> {
+    const inbox = this.plugin.inbox;
+    if (!inbox) return;
+    const doDelete = async () => {
+      try {
+        const ok = await inbox.remove(INBOX_DATE, task);
+        if (!ok) new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
+      } catch (e) {
+        console.error(e);
+        new Notice("タスクを削除できませんでした: " + String(e));
+      }
+      await this.reload();
+    };
+    if (this.plugin.settings.confirmBodyDelete && (await inbox.hasBody(INBOX_DATE, task))) {
+      new ConfirmModal(
+        this.app,
+        `「${task.title || "(無題)"}」には本文があります。ブロックごと削除しますか？`,
+        "削除",
+        doDelete
+      ).open();
+      return;
+    }
+    await doDelete();
+  }
+
+  /** Inbox のタスクをその日のノートへ移す。draft があれば移動後にその内容で更新 */
+  private async commitInboxToDay(task: Task, to: Date, draft?: TaskDraft): Promise<void> {
+    const inbox = this.plugin.inbox;
+    const day = this.plugin.blockStore();
+    if (!inbox || !day) return;
+    try {
+      const block = await inbox.takeBlock(INBOX_DATE, task);
+      if (!block) {
+        new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
+      } else {
+        await day.putBlock(to, block, draft?.start ?? null);
+        if (draft) {
+          const ok = await day.update(to, task, draft);
+          if (!ok) new Notice("移動しましたが、時刻を更新できませんでした");
+        }
+        new Notice(`${moment(to).format("M月D日")} へ移動しました`);
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを移動できませんでした: " + String(e));
+    }
+    await this.reload();
+  }
+
+  /** その日のタスクを Inbox へ戻す（時刻も外す） */
+  private async commitDayToInbox(from: Date, task: Task): Promise<void> {
+    const inbox = this.plugin.inbox;
+    const day = this.plugin.blockStore();
+    if (!inbox || !day) return;
+    try {
+      const block = await day.takeBlock(from, task);
+      if (!block) {
+        new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      } else {
+        await inbox.putBlock(INBOX_DATE, block, null);
+        if (task.start !== null) {
+          await inbox.update(INBOX_DATE, task, { ...this.draftOf(task), start: null, end: null });
+        }
+        new Notice("Inbox へ戻しました");
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("タスクを移動できませんでした: " + String(e));
+    }
+    await this.reload();
+  }
+
+  // ---------- その他 ----------
+
+  private openDatePicker(): void {
+    const input = this.dateInputEl as HTMLInputElement & { showPicker?: () => void };
+    try {
+      if (typeof input.showPicker === "function") input.showPicker();
+      else input.focus();
+    } catch (_e) {
+      input.focus();
+    }
+  }
+
+  private async openNote(date: Date): Promise<void> {
+    try {
+      const file = await this.plugin.store.ensureFile(date);
+      await this.app.workspace.getLeaf("tab").openFile(file);
+    } catch (e) {
+      console.error(e);
+      new Notice("ノートを開けませんでした: " + String(e));
+    }
+  }
+}

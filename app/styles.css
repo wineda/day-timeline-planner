@@ -1,0 +1,1575 @@
+/* ===== Day Timeline Planner ===== */
+
+.workspace-leaf-content[data-type="day-timeline-planner-view"] .view-content {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------- ヘッダー ---------- */
+.dt-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+
+.dt-nav,
+.dt-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.dt-icon-btn {
+  padding: 4px;
+  border-radius: var(--radius-s);
+}
+.dt-icon-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.dt-today-btn {
+  font-size: var(--font-ui-small);
+  padding: 2px 10px;
+  height: auto;
+  min-height: 0;
+  line-height: 1.6;
+}
+
+.dt-date {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  position: relative;
+}
+
+.dt-date-label {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 2px 8px;
+  height: auto;
+  min-height: 0;
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.dt-date-label:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+.dt-date-label.is-today {
+  color: var(--text-accent);
+}
+
+/* 日 / 週 の切り替え */
+.dt-mode {
+  display: inline-flex;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+.dt-mode-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  height: auto;
+  min-height: 0;
+  line-height: 1.6;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+.dt-mode-btn + .dt-mode-btn {
+  border-left: 1px solid var(--background-modifier-border);
+}
+.dt-mode-btn:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+.dt-mode-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+/* メンバー（他の人の予定）の表示切替チップ */
+.dt-members {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.dt-members.is-visible {
+  display: flex;
+}
+.dt-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: auto;
+  min-height: 0;
+  padding: 2px 9px 2px 6px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dt-member-chip:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+.dt-member-chip.is-on {
+  color: var(--text-normal);
+  border-color: var(--dt-member-color, var(--background-modifier-border));
+}
+.dt-member-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dt-member-color, var(--text-faint));
+  opacity: 0.35;
+}
+.dt-member-chip.is-on .dt-member-dot {
+  opacity: 1;
+}
+.dt-member-all {
+  padding: 2px 9px;
+}
+
+/* 他の人の予定: グレーの背景 + 左端だけその人の色 */
+.dt-event.is-member {
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  border-left: 4px solid var(--dt-member-color, var(--text-faint));
+  box-shadow: none;
+}
+.dt-event.is-member:hover {
+  filter: none;
+  background: var(--background-modifier-border-hover, var(--background-modifier-hover));
+}
+.dt-event.is-member .dt-event-time {
+  opacity: 0.7;
+}
+.dt-event.is-member .dt-owner-label {
+  background: var(--dt-member-color, var(--text-faint));
+  color: #fff;
+}
+.dt-event.is-member .dt-event-ticket {
+  background: rgba(0, 0, 0, 0.12);
+}
+.dt-month-item.is-member {
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  border-left: 3px solid var(--dt-member-color, var(--text-faint));
+  padding-left: 4px;
+}
+.dt-month-item.is-member .dt-owner-label {
+  background: var(--dt-member-color, var(--text-faint));
+  color: #fff;
+}
+
+/* 持ち主の名前ラベル（ブロック・トレイ・月表示） */
+.dt-owner-label {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 5px;
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 0.82em;
+  line-height: 1.4;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.dt-tray-chip .dt-owner-label {
+  background: var(--background-modifier-border);
+}
+.dt-event.is-tiny .dt-owner-label {
+  display: none;
+}
+
+/* 編集ダイアログの「誰の予定か」 */
+.dt-owner-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: 6px;
+  border: 1px solid var(--background-modifier-border);
+}
+.dt-owner-dot.is-self {
+  background: var(--interactive-accent) !important;
+}
+
+/* ヘッダーのタイマー表示 */
+.dt-timer-chip {
+  display: none;
+  height: auto;
+  min-height: 0;
+  padding: 2px 10px;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-l);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dt-timer-chip.is-visible {
+  display: inline-block;
+}
+.dt-timer-chip.is-finished {
+  background: var(--color-red);
+  color: #fff;
+  animation: dt-blink 1s steps(2, start) infinite;
+}
+.dt-icon-btn.is-hidden {
+  display: none;
+}
+@keyframes dt-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* ステータスバー */
+.dt-status-timer {
+  display: none;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.dt-status-timer.is-visible {
+  display: inline-block;
+}
+
+/* 日付ピッカー用の見えない input（showPicker の位置決めに使う） */
+.dt-date-input {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- 移行バナー ---------- */
+.dt-banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+.dt-banner.is-visible {
+  display: flex;
+}
+.dt-banner span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dt-banner button {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  height: auto;
+  min-height: 0;
+}
+
+/* ---------- 本体: 左に Inbox、右にタイムライン ---------- */
+.dt-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* ---------- Inbox（日付を決めていないタスク）: 左のサイドバー ---------- */
+.dt-inbox {
+  display: none;
+  flex-direction: column;
+  flex: 0 0 220px;
+  width: 220px;
+  min-width: 0;
+  border-right: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  overflow: hidden;
+}
+.dt-inbox.is-visible {
+  display: flex;
+}
+/* 畳んだときは細い帯にして、ボタンとラベルを縦に並べる */
+.dt-inbox.is-collapsed {
+  flex: 0 0 30px;
+  width: 30px;
+}
+.dt-inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 6px 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+.dt-inbox.is-collapsed .dt-inbox-head {
+  flex-direction: column;
+  padding: 6px 2px;
+  border-bottom: none;
+  gap: 6px;
+}
+.dt-inbox-toggle {
+  flex: 0 0 auto;
+}
+.dt-inbox-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dt-inbox.is-collapsed .dt-inbox-label {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.1em;
+}
+.dt-inbox-count {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  background: var(--background-primary);
+  border-radius: var(--radius-l);
+  padding: 0 7px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.dt-inbox.is-collapsed .dt-inbox-count {
+  padding: 0 4px;
+}
+.dt-inbox-add,
+.dt-inbox-open {
+  flex: 0 0 auto;
+}
+.dt-inbox-open {
+  margin-left: auto;
+}
+.dt-inbox.is-collapsed .dt-inbox-open {
+  margin-left: 0;
+}
+
+/* 1行1タスクで縦に並べる */
+.dt-inbox-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 6px;
+}
+.dt-inbox-list .dt-tray-empty {
+  white-space: normal;
+  line-height: 1.4;
+}
+.dt-inbox-chip {
+  display: flex;
+  width: 100%;
+  max-width: none;
+  border-radius: var(--radius-s);
+  border-style: dashed;
+  background: var(--background-primary);
+  padding: 4px 8px 4px 6px;
+}
+.dt-inbox-chip .dt-tray-title {
+  flex: 1 1 auto;
+  white-space: normal;
+  line-height: 1.3;
+}
+
+/* ---------- 未スケジュールのトレイ ---------- */
+.dt-tray {
+  display: none;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow-y: auto;
+}
+.dt-tray.is-visible {
+  display: flex;
+}
+
+.dt-tray-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: 3px 0;
+}
+
+.dt-tray-add {
+  flex: 0 0 auto;
+}
+
+.dt-tray-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dt-tray-day {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  padding: 3px 4px 3px 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dt-tray-day:not(:first-child) {
+  margin-left: 6px;
+}
+
+.dt-tray-color {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dt-tray-empty {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  padding: 3px 0;
+}
+
+.dt-tray-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 9px 2px 6px;
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dt-tray-chip:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-tray-chip.is-dragging {
+  cursor: grabbing;
+  opacity: 0.6;
+}
+.dt-tray-chip.is-done {
+  opacity: 0.55;
+}
+.dt-tray-chip.is-done .dt-tray-title {
+  text-decoration: line-through;
+}
+
+.dt-tray-check {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dt-tray-check:hover {
+  color: var(--text-normal);
+}
+.dt-tray-check svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dt-tray-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ---------- グリッド ---------- */
+.dt-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* 曜日・日付のヘッダー（週表示のみ）。スクロールしても上に残る */
+.dt-day-headers {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--background-primary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-right: 10px;
+}
+.dt-view.is-multi-day .dt-day-headers {
+  display: flex;
+}
+.dt-day-headers-spacer {
+  flex: 0 0 52px;
+  width: 52px;
+}
+.dt-day-headers-cells {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+.dt-day-header {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 2px 5px;
+  border-left: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1.1;
+}
+.dt-day-header:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-day-header-dow {
+  font-size: var(--font-ui-smaller);
+}
+.dt-day-header-num {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+  width: 26px;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  border-radius: 50%;
+}
+.dt-day-header.is-sunday .dt-day-header-dow,
+.dt-day-header.is-sunday .dt-day-header-num {
+  color: var(--color-red);
+}
+.dt-day-header.is-saturday .dt-day-header-dow,
+.dt-day-header.is-saturday .dt-day-header-num {
+  color: var(--color-blue);
+}
+.dt-day-header.is-other-month .dt-day-header-num {
+  opacity: 0.6;
+}
+.dt-day-header.is-today .dt-day-header-num {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  opacity: 1;
+}
+
+.dt-grid {
+  display: flex;
+  padding: 12px 10px 24px 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 日ごとの列を並べる入れ物 */
+.dt-days {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+}
+
+.dt-labels {
+  position: relative;
+  width: 52px;
+  flex: 0 0 52px;
+}
+
+.dt-hour-label {
+  position: absolute;
+  right: 8px;
+  transform: translateY(-50%);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.dt-canvas {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  border-left: 1px solid var(--background-modifier-border);
+  cursor: default;
+}
+/* 週・3日表示では列が細いので、ブロック内の余白を詰める */
+.dt-view.is-multi-day .dt-event {
+  padding-left: 5px;
+  padding-right: 4px;
+}
+.dt-view.is-week .dt-event-time {
+  font-size: 0.8em;
+}
+
+.dt-hour-line,
+.dt-half-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  pointer-events: none;
+}
+.dt-hour-line {
+  border-top: 1px solid var(--background-modifier-border);
+}
+.dt-half-line {
+  border-top: 1px dashed var(--background-modifier-border);
+  opacity: 0.55;
+}
+
+.dt-events {
+  position: absolute;
+  inset: 0;
+}
+
+.dt-empty-hint {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  pointer-events: none;
+  padding: 0 8px;
+}
+
+/* ---------- 月表示 ---------- */
+.dt-month {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 0 8px 8px 8px;
+}
+.dt-month-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--background-primary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.dt-month-weekday {
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  padding: 6px 0 4px;
+}
+.dt-month-weekday.is-sunday {
+  color: var(--color-red);
+}
+.dt-month-weekday.is-saturday {
+  color: var(--color-blue);
+}
+.dt-month-grid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: minmax(96px, auto);
+  border-left: 1px solid var(--background-modifier-border);
+}
+.dt-month-cell {
+  position: relative;
+  min-width: 0;
+  border-right: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 2px 3px 4px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+}
+.dt-month-cell:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-month-cell.is-other-month {
+  background: var(--background-secondary);
+}
+.dt-month-cell.is-other-month .dt-month-daynum,
+.dt-month-cell.is-other-month .dt-month-item {
+  opacity: 0.55;
+}
+.dt-month-cell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.dt-month-daynum {
+  height: 22px;
+  min-height: 0;
+  min-width: 22px;
+  padding: 0 5px;
+  border-radius: 11px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.dt-month-daynum:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+.dt-month-cell.is-sunday .dt-month-daynum {
+  color: var(--color-red);
+}
+.dt-month-cell.is-saturday .dt-month-daynum {
+  color: var(--color-blue);
+}
+.dt-month-cell.is-today .dt-month-daynum {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.dt-month-add {
+  opacity: 0;
+  padding: 2px;
+}
+.dt-month-cell:hover .dt-month-add {
+  opacity: 1;
+}
+.dt-month-add svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-month-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dt-month-item {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  padding: 1px 5px;
+  border-radius: var(--radius-s);
+  background: var(--dt-event-bg, var(--interactive-accent));
+  color: var(--dt-event-fg, var(--text-on-accent));
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+  cursor: pointer;
+}
+.dt-month-item:hover {
+  filter: brightness(1.07);
+}
+.dt-month-item.is-done {
+  opacity: 0.5;
+}
+.dt-month-item.is-done .dt-month-item-ticket {
+  flex: 0 0 auto;
+  opacity: 0.8;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-month-item-title {
+  text-decoration: line-through;
+}
+.dt-month-item.is-unscheduled {
+  background: transparent;
+  color: var(--text-normal);
+  border: 1px dashed var(--dt-event-bg, var(--background-modifier-border));
+}
+.dt-month-item.is-recurring-preview {
+  background: transparent;
+  color: var(--text-faint);
+  border: 1px dotted var(--background-modifier-border);
+  cursor: default;
+}
+.dt-month-item.is-active-in-note {
+  box-shadow:
+    0 0 0 2px var(--background-primary),
+    0 0 0 4px var(--interactive-accent);
+}
+.dt-month-item-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  font-size: 0.9em;
+}
+.dt-month-item-ticket {
+  flex: 0 0 auto;
+  opacity: 0.8;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-month-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 予定ブロック ---------- */
+.dt-event {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--radius-s);
+  background: var(--dt-event-bg, var(--interactive-accent));
+  color: var(--dt-event-fg, var(--text-on-accent));
+  border-left: 3px solid rgba(0, 0, 0, 0.22);
+  padding: 3px 6px 3px 7px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.25;
+  cursor: grab;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: filter 80ms ease, box-shadow 80ms ease;
+}
+.dt-event:hover {
+  filter: brightness(1.07);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  z-index: 3;
+}
+.dt-event.is-dragging {
+  cursor: grabbing;
+  opacity: 0.92;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  transition: none;
+}
+/* 別の日の列へドラッグ中 */
+.dt-event.is-moving-day {
+  outline: 2px dashed var(--text-on-accent);
+  outline-offset: -2px;
+}
+.dt-event.is-done {
+  opacity: 0.55;
+}
+.dt-event.is-done .dt-event-title {
+  text-decoration: line-through;
+}
+/* エディタのカーソルが乗っているタスク */
+.dt-event.is-active-in-note {
+  box-shadow:
+    0 0 0 2px var(--background-primary),
+    0 0 0 4px var(--interactive-accent);
+  z-index: 4;
+}
+
+.dt-event-time {
+  font-size: 0.86em;
+  opacity: 0.85;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.dt-event-title {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.dt-event-preview {
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92em;
+}
+.dt-event.is-short .dt-event-preview {
+  display: none;
+}
+.dt-event-condition {
+  opacity: 0.95;
+}
+
+/* 高さが足りないときは 1 行にまとめる */
+.dt-event.is-short {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.dt-event.is-short .dt-event-title {
+  display: block;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.dt-event.is-short .dt-event-time {
+  margin-top: 0;
+  margin-left: auto;
+}
+.dt-event.is-tiny {
+  line-height: 1;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.dt-event.is-tiny .dt-event-time {
+  display: none;
+}
+
+.dt-event-ticket {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: var(--radius-l);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.82em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dt-event-ticket.is-linked {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dt-event-ticket.is-linked:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+.dt-event.is-short .dt-event-ticket {
+  margin-top: 0;
+}
+.dt-event.is-tiny .dt-event-ticket {
+  display: none;
+}
+
+.dt-event-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 7px;
+  cursor: ns-resize;
+}
+.dt-event.is-tiny .dt-event-ticket {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: var(--radius-l);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.82em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dt-event-ticket.is-linked {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dt-event-ticket.is-linked:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+.dt-event.is-short .dt-event-ticket {
+  margin-top: 0;
+}
+.dt-event.is-tiny .dt-event-ticket {
+  display: none;
+}
+
+.dt-event-resize {
+  height: 4px;
+}
+
+/* ドラッグ選択中の仮ブロック */
+.dt-ghost {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  box-sizing: border-box;
+  border-radius: var(--radius-s);
+  background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.28);
+  border: 1px dashed var(--interactive-accent);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+/* 現在時刻ライン */
+.dt-now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--color-red);
+  z-index: 10;
+  pointer-events: none;
+}
+.dt-now::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-red);
+}
+
+/* ---------- モーダル ---------- */
+.dt-modal .setting-item {
+  border-top: none;
+  padding: 8px 0;
+}
+.dt-modal .dt-title-input {
+  width: 100%;
+  min-width: 220px;
+}
+.dt-modal .dt-time-input {
+  width: 92px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.dt-modal .dt-tag-setting .setting-item-control {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.dt-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dt-tag-chip {
+  height: auto;
+  min-height: 0;
+  padding: 2px 10px 2px 12px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  color: var(--text-normal);
+  border: 1px solid var(--dt-chip-color, var(--background-modifier-border));
+  box-shadow: inset 4px 0 0 var(--dt-chip-color, transparent);
+  cursor: pointer;
+}
+.dt-tag-chip:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-tag-chip.is-selected {
+  background: var(--dt-chip-color, var(--interactive-accent));
+  color: var(--dt-chip-fg, var(--text-on-accent));
+  box-shadow: none;
+}
+/* ステップ */
+.dt-steps {
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+}
+.dt-steps-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dt-steps-name {
+  font-size: var(--font-ui-medium);
+}
+.dt-steps-count {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.dt-steps-desc {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+}
+.dt-steps-progress {
+  height: 4px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  margin: 8px 0 6px;
+  overflow: hidden;
+}
+.dt-steps-progress.is-empty {
+  opacity: 0.4;
+}
+.dt-steps-progress > div {
+  height: 100%;
+  background: var(--interactive-accent);
+  transition: width 120ms ease;
+}
+.dt-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dt-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 3px 6px 3px 4px;
+}
+.dt-step.is-dragging {
+  opacity: 0.5;
+  border-style: dashed;
+}
+.dt-step-placeholder {
+  background: transparent;
+  border: 1.5px dashed var(--interactive-accent);
+}
+.dt-step-grip {
+  color: var(--text-faint);
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  touch-action: none;
+}
+.dt-step-grip:active {
+  cursor: grabbing;
+}
+.dt-step-grip svg,
+.dt-step-check svg,
+.dt-step-delete svg {
+  width: 16px;
+  height: 16px;
+}
+.dt-step-check {
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.dt-step.is-done .dt-step-check {
+  color: var(--interactive-accent);
+}
+.dt-step-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 2px 4px !important;
+  height: auto;
+}
+.dt-step.is-done .dt-step-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.dt-step-delete {
+  color: var(--text-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+}
+.dt-step:hover .dt-step-delete,
+.dt-step:focus-within .dt-step-delete {
+  opacity: 1;
+}
+.dt-step-delete:hover {
+  color: var(--text-error);
+}
+.dt-step-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 4px;
+}
+.dt-step-add-icon {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+.dt-step-add-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.dt-step-add input {
+  flex: 1 1 auto;
+}
+.dt-steps-hint {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  margin-top: 6px;
+}
+
+/* 定期タスクの一覧ダイアログ */
+.dt-recurring-empty {
+  color: var(--text-muted);
+  padding: 8px 0 12px;
+  line-height: 1.5;
+}
+.dt-recurring-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.dt-recurring-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+.dt-recurring-item.is-disabled .dt-recurring-title,
+.dt-recurring-item.is-disabled .dt-recurring-desc {
+  opacity: 0.45;
+}
+.dt-recurring-toggle {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dt-recurring-item:not(.is-disabled) .dt-recurring-toggle {
+  color: var(--interactive-accent);
+}
+.dt-recurring-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+.dt-recurring-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+.dt-recurring-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-recurring-desc {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+/* 定期タスクの曜日 */
+.dt-weekday-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dt-weekday-chip {
+  padding: 2px 9px;
+  box-shadow: none;
+  border-color: var(--background-modifier-border);
+}
+.dt-weekday-chip.is-sunday {
+  color: var(--color-red);
+}
+.dt-weekday-chip.is-saturday {
+  color: var(--color-blue);
+}
+.dt-weekday-chip.is-selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+.dt-weekday-presets {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+.dt-weekday-preset {
+  height: auto;
+  min-height: 0;
+  padding: 1px 8px;
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.dt-weekday-preset:hover {
+  color: var(--text-normal);
+  background: transparent;
+}
+.dt-modal-tilde {
+  margin: 0 8px;
+  color: var(--text-muted);
+}
+.dt-modal .setting-item-description.is-error {
+  color: var(--text-error);
+}
+.dt-modal-buttons .setting-item-control {
+  gap: 8px;
+}
+
+/* ふりかえり（編集ダイアログの欄）: 名前を上、入力欄を全幅に */
+.dt-modal .dt-retro-setting {
+  display: block;
+}
+.dt-modal .dt-retro-setting .setting-item-info {
+  margin-bottom: 6px;
+}
+.dt-modal .dt-retro-setting .setting-item-control {
+  width: 100%;
+  justify-content: stretch;
+}
+.dt-retro-field {
+  width: 100%;
+  min-height: 36px;
+  max-height: 220px;
+  resize: none;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: var(--font-ui-medium);
+  line-height: 1.5;
+  padding: 7px 10px;
+  transition: min-height 120ms ease;
+}
+/* フォーカス中は最低でも4行ぶんに広がる */
+.dt-retro-field.is-active {
+  min-height: 110px;
+}
+/* 詳細は Markdown を書くので等幅寄りにして、広がりも大きめに */
+.dt-details-field {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  max-height: 320px;
+}
+.dt-details-field.is-active {
+  min-height: 140px;
+}
+
+/* ふりかえりの入力促進ポップアップ */
+.dt-retro-modal {
+  width: 560px;
+  max-width: 90vw;
+}
+.dt-retro-lead {
+  line-height: 1.6;
+  color: var(--text-normal);
+}
+.dt-retro-input {
+  width: 100%;
+  min-height: 120px;
+  max-height: 320px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: var(--font-ui-medium);
+  line-height: 1.5;
+  padding: 8px 10px;
+}
+
+/* ---------- タイマーのダイアログ ---------- */
+.dt-timer-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 10px;
+}
+.dt-timer-preset {
+  height: auto;
+  min-height: 0;
+  padding: 3px 12px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-ui-small);
+}
+.dt-timer-remaining {
+  font-size: 2.4em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 10px 0 4px;
+}
+.dt-timer-label {
+  text-align: center;
+  color: var(--text-muted);
+  padding-bottom: 8px;
+}
+.dt-timer-done-text {
+  padding: 8px 0 12px;
+}
+
+/* ---------- 画面内の通知バナー（右下に重ねる） ---------- */
+.dt-alert-host {
+  position: fixed;
+  right: 20px;
+  bottom: 40px;
+  z-index: var(--layer-notice, 1000);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  pointer-events: none;
+  max-width: min(420px, calc(100vw - 40px));
+}
+.dt-alert {
+  pointer-events: auto;
+  width: 380px;
+  max-width: 100%;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 6px solid var(--interactive-accent);
+  border-radius: var(--radius-m);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  padding: 14px 16px 12px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(24px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.dt-alert.is-shown {
+  opacity: 1;
+  transform: none;
+}
+.dt-alert.is-leaving {
+  opacity: 0;
+  transform: translateX(24px);
+}
+.dt-alert-title {
+  font-size: 1.15em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.dt-alert-body {
+  margin-top: 4px;
+  font-size: var(--font-ui-medium);
+  color: var(--text-muted);
+}
+.dt-alert-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+.dt-alert-buttons button {
+  height: auto;
+  min-height: 0;
+  padding: 3px 10px;
+  font-size: var(--font-ui-small);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-alert {
+    transition: none;
+  }
+}
+
+.dt-modal .dt-ticket-input {
+  width: 140px;
+}
+.dt-modal .dt-ticket-link {
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+/* ---------- 設定画面 ---------- */
+.dt-tag-color-row .setting-item-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dt-tag-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--background-modifier-border);
+}
+.dt-tag-color-row input[type="text"] {
+  width: 140px;
+}
+
+.dt-recurring-row.is-disabled .setting-item-name,
+.dt-recurring-row.is-disabled .setting-item-description {
+  opacity: 0.5;
+}
+.dt-setting-empty {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  padding: 4px 0 10px;
+}
+
+.dt-member-row .dt-member-folder {
+  width: 200px;
+}
+.dt-tracker-row .dt-tracker-url {
+  width: 280px;
+}
+
+.dt-setting-preview {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
+/* ---------- ノート内の見出しに付けたタグ ---------- */
+/* タスクの見出し（## タイトル #タグ）のタグが見出しの文字サイズを引き継いで大きくなるのを抑える。
+   注: 見出し内のタグ全般に効きます */
+.markdown-source-view.mod-cm6 .HyperMD-header .cm-hashtag,
+.markdown-preview-view :is(h1, h2, h3, h4, h5, h6) a.tag {
+  font-size: 0.55em;
+  font-weight: 500;
+  vertical-align: middle;
+  line-height: 1;
+}
+.markdown-source-view.mod-cm6 .HyperMD-header .cm-hashtag-begin {
+  padding-left: 0.5em;
+}
+.markdown-source-view.mod-cm6 .HyperMD-header .cm-hashtag-end {
+  padding-right: 0.5em;
+}
+.markdown-preview-view :is(h1, h2, h3, h4, h5, h6) a.tag {
+  padding: 0.15em 0.6em;
+}
+
+/* ---------- 動きを抑える設定 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .dt-event {
+    transition: none;
+  }
+  .dt-timer-chip.is-finished {
+    animation: none;
+  }
+  .dt-retro-field {
+    transition: none;
+  }
+}

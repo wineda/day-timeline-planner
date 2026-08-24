@@ -1,0 +1,344 @@
+/**
+ * タスクブロックの書き換え。
+ *
+ * どの操作も「ノート全文を解析し直す → 対象のブロックを ID で見つける →
+ * その行範囲だけを差し替える」という手順で行う。
+ * ビューが覚えている行番号は使わないので、ユーザーがノートを直接編集していても壊れない。
+ */
+import {
+  BlockDocument,
+  BlockOptions,
+  MetaSource,
+  ReminderSetting,
+  TaskBlock,
+  TaskStep,
+  TicketRef,
+  parseBlockDocument,
+  parseHeadingSetting,
+  renderDoneConditionLine,
+  renderHeadingLine,
+  renderRetrospectiveLine,
+  renderStepLines,
+  renderMetaLine,
+  renderTaskBlock,
+  trimBlankLines,
+} from "./blocks";
+import { newBlockId } from "./id";
+
+export interface InsertOptions extends BlockOptions {
+  /** 新しいタスクを入れる位置 */
+  insertPosition: "time" | "end";
+}
+
+/** 書き換え対象のタスクを指す情報 */
+export interface TaskRef {
+  id: string | null;
+  title: string;
+  start: number | null;
+  end: number | null;
+}
+
+export interface TaskPatch {
+  title?: string;
+  start?: number | null;
+  end?: number | null;
+  done?: boolean;
+  reminder?: ReminderSetting;
+  /** undefined = 変更しない / null = 消す */
+  ticket?: TicketRef | null;
+  /** undefined = 変更しない / "" = 消す */
+  doneCondition?: string;
+  /** undefined = 変更しない / [] = 消す */
+  steps?: TaskStep[];
+  /** undefined = 変更しない / "" = 消す */
+  retrospective?: string;
+  /** 詳細（自由な本文）。undefined = 変更しない / "" = 消す */
+  details?: string;
+}
+
+export interface NewTaskInput {
+  title: string;
+  start: number | null;
+  end: number | null;
+  done: boolean;
+  reminder?: ReminderSetting;
+  ticket?: TicketRef | null;
+  doneCondition?: string;
+  steps?: TaskStep[];
+  retrospective?: string;
+  details?: string;
+  body?: string[];
+  /** 指定すればその ID を使う（日をまたぐ移動などで使う） */
+  id?: string;
+}
+
+/** ノート内のタスクを特定する。ID があれば ID、無ければ見出しと時刻で照合 */
+export function locateTask(doc: BlockDocument, ref: TaskRef): TaskBlock | null {
+  if (ref.id) return doc.tasks.find((t) => t.id === ref.id) ?? null;
+  return (
+    doc.tasks.find(
+      (t) =>
+        t.id === null &&
+        t.title === ref.title &&
+        t.start === ref.start &&
+        t.end === ref.end
+    ) ?? null
+  );
+}
+
+/** タスクを追加する */
+export function insertTask(content: string, draft: NewTaskInput, opts: InsertOptions): string {
+  const id = draft.id ?? newBlockId();
+  const source: MetaSource & { body?: string[] } = {
+    id,
+    title: draft.title,
+    start: draft.start,
+    end: draft.end,
+    done: draft.done,
+    note: "",
+    reminder: draft.reminder ?? null,
+    ticket: draft.ticket ?? null,
+    doneCondition: draft.doneCondition,
+    steps: draft.steps,
+    retrospective: draft.retrospective,
+    body: draft.body ?? (draft.details ? draft.details.replace(/\s+$/, "").split("\n") : undefined),
+  };
+  return insertBlockLines(content, renderTaskBlock(source, opts), draft.start, opts);
+}
+
+/** 出来上がったブロックの行をそのまま差し込む（日をまたぐ移動で使う） */
+export function insertBlockLines(
+  content: string,
+  block: string[],
+  start: number | null,
+  opts: InsertOptions
+): string {
+  let text = content;
+  let doc = parseBlockDocument(text, opts);
+
+  if (doc.rootMissing) {
+    text = appendRootHeading(text, doc.eol, opts);
+    doc = parseBlockDocument(text, opts);
+  }
+  // 空のノートなら、そのままブロックだけを書く
+  if (text.trim() === "") return joinLines(block, doc.eol);
+
+  const at = insertionIndex(doc, start, opts.insertPosition);
+  return joinLines(spliceIn(doc.lines, at, 0, block), doc.eol);
+}
+
+/**
+ * タスクを更新する。見出し行とメタ行だけを書き換えるので、本文には触れない。
+ * 見つからなければ null。
+ */
+export function updateTask(
+  content: string,
+  ref: TaskRef,
+  patch: TaskPatch,
+  opts: BlockOptions
+): string | null {
+  const doc = parseBlockDocument(content, opts);
+  const t = locateTask(doc, ref);
+  if (!t) return null;
+
+  const next: MetaSource = {
+    id: t.id ?? newBlockId(), // 手書きのブロックにはこのタイミングで ID を付ける
+    title: patch.title ?? t.title,
+    start: patch.start !== undefined ? patch.start : t.start,
+    end: patch.end !== undefined ? patch.end : t.end,
+    done: patch.done ?? t.done,
+    checkChar: t.checkChar,
+    note: t.note,
+    reminder: patch.reminder !== undefined ? patch.reminder : t.reminder,
+    ticket: patch.ticket !== undefined ? patch.ticket : t.ticket,
+  };
+  // 片方だけ時刻が消えた状態は作らない
+  if (next.start === null || next.end === null) {
+    next.start = null;
+    next.end = null;
+  }
+
+  const lines = [...doc.lines];
+  lines[t.headingLine] = renderHeadingLine(next.title, t.level);
+  lines[t.metaLine] = renderMetaLine(next, opts);
+
+  // 完了条件とステップ: 既存の行を書き換える / 無ければメタ行の直下に足す / 空にしたら行ごと消す。
+  // 行番号がずれないように、後ろにある方から差し替える
+  const ops: { at: number; del: number; lines: string[]; order: number }[] = [];
+  let deleted = false;
+  // 詳細（自由な本文）: 特別な行（完了条件など）の後ろの領域をまるごと差し替える
+  if (patch.details !== undefined) {
+    const text = patch.details.replace(/\s+$/, "");
+    const add = text ? text.split("\n") : [];
+    if (add.length && t.detailsStart > 0 && lines[t.detailsStart - 1].trim() !== "") add.unshift("");
+    if (add.length && lines[t.endLine] !== undefined && lines[t.endLine].trim() !== "") add.push("");
+    ops.push({ at: t.detailsStart, del: t.endLine - t.detailsStart, lines: add, order: -1 });
+    if (!add.length) deleted = true;
+  }
+  // 詳細の領域内にある「ふりかえり」「完了条件」行は詳細と一緒に編集されるので、個別の書き換えは行わない
+  const insideDetails = (line: number | null) =>
+    patch.details !== undefined && line !== null && line >= t.detailsStart;
+  // ふりかえり: 既存行を書き換え / 無ければステップ・完了条件の後ろに足す / 空なら消す
+  if (patch.retrospective !== undefined && !insideDetails(t.retrospectiveLine)) {
+    const text = patch.retrospective.trim();
+    if (t.retrospectiveLine !== null) {
+      ops.push({ at: t.retrospectiveLine, del: 1, lines: text ? [renderRetrospectiveLine(text)] : [], order: 0 });
+      if (!text) deleted = true;
+    } else if (text) {
+      const at =
+        t.stepsStart !== null
+          ? t.stepsEnd
+          : t.doneConditionLine !== null
+            ? t.doneConditionLine + 1
+            : t.metaLine + 1;
+      ops.push({ at, del: 0, lines: [renderRetrospectiveLine(text)], order: 0 });
+    }
+  }
+  if (patch.steps !== undefined) {
+    const rendered = renderStepLines(patch.steps);
+    if (t.stepsStart !== null) {
+      ops.push({ at: t.stepsStart, del: t.stepsEnd - t.stepsStart, lines: rendered, order: 1 });
+      if (!rendered.length) deleted = true;
+    } else if (rendered.length) {
+      const at = t.doneConditionLine === t.metaLine + 1 ? t.metaLine + 2 : t.metaLine + 1;
+      ops.push({ at, del: 0, lines: rendered, order: 1 });
+    }
+  }
+  if (patch.doneCondition !== undefined && !insideDetails(t.doneConditionLine)) {
+    const text = patch.doneCondition.trim();
+    if (t.doneConditionLine !== null) {
+      ops.push({ at: t.doneConditionLine, del: 1, lines: text ? [renderDoneConditionLine(text)] : [], order: 2 });
+      if (!text) deleted = true;
+    } else if (text) {
+      ops.push({ at: t.metaLine + 1, del: 0, lines: [renderDoneConditionLine(text)], order: 2 });
+    }
+  }
+  ops.sort((a, b) => b.at - a.at || a.order - b.order);
+  for (const op of ops) lines.splice(op.at, op.del, ...op.lines);
+  if (deleted) {
+    // 消したことで空行が続いた場合は1つにまとめる（このブロックの範囲だけ）
+    const limit = Math.min(lines.length, t.endLine + 8);
+    for (let i = t.metaLine + 1; i < limit && i < lines.length; ) {
+      if (lines[i].trim() === "" && i > 0 && lines[i - 1].trim() === "") lines.splice(i, 1);
+      else i++;
+    }
+  }
+  return joinLines(lines, doc.eol);
+}
+
+/** タスクを消す。消したブロックの行も返す（日をまたぐ移動で使い回す） */
+export function removeTask(
+  content: string,
+  ref: TaskRef,
+  opts: BlockOptions
+): { content: string; block: string[] } | null {
+  const doc = parseBlockDocument(content, opts);
+  const t = locateTask(doc, ref);
+  if (!t) return null;
+  const block = trimBlankLines(doc.lines.slice(t.headingLine, t.endLine));
+  const lines = spliceIn(doc.lines, t.headingLine, t.endLine - t.headingLine, []);
+  return { content: joinLines(lines, doc.eol), block };
+}
+
+/** ブロックID を確実に付ける（リンクを作るときに使う）。既にあれば書き換えない */
+export function ensureTaskId(
+  content: string,
+  ref: TaskRef,
+  opts: BlockOptions
+): { content: string; id: string } | null {
+  const doc = parseBlockDocument(content, opts);
+  const t = locateTask(doc, ref);
+  if (!t) return null;
+  if (t.id) return { content, id: t.id };
+
+  const id = newBlockId();
+  const lines = [...doc.lines];
+  lines[t.metaLine] = renderMetaLine({ ...t, id }, opts);
+  return { content: joinLines(lines, doc.eol), id };
+}
+
+/** タスクを時刻順に並べ替える（コマンドから明示的に呼ぶときだけ） */
+export function sortTasksByTime(content: string, opts: BlockOptions): string | null {
+  const doc = parseBlockDocument(content, opts);
+  if (doc.tasks.length < 2) return null;
+
+  const order = [...doc.tasks].sort((a, b) => {
+    if (a.start === null && b.start === null) return 0;
+    if (a.start === null) return 1; // 未スケジュールは末尾へ
+    if (b.start === null) return -1;
+    return a.start - b.start || (a.end ?? 0) - (b.end ?? 0);
+  });
+  if (order.every((t, i) => t === doc.tasks[i])) return null; // 既に並んでいる
+
+  const blocks = doc.tasks.map((t) => trimBlankLines(doc.lines.slice(t.headingLine, t.endLine)));
+  const indexOf = new Map(doc.tasks.map((t, i) => [t, i]));
+
+  const first = doc.tasks[0].headingLine;
+  const last = doc.tasks[doc.tasks.length - 1].endLine;
+  // タスクの間に挟まっていた非タスクの行は消さずに、並べ替えたタスクの後ろへ寄せる
+  const between: string[] = [];
+  for (let i = 0; i < doc.tasks.length - 1; i++) {
+    const gap = doc.lines.slice(doc.tasks[i].endLine, doc.tasks[i + 1].headingLine);
+    between.push(...trimBlankLines(gap));
+  }
+
+  const rebuilt: string[] = [];
+  for (const t of order) {
+    if (rebuilt.length) rebuilt.push("");
+    rebuilt.push(...blocks[indexOf.get(t) as number]);
+  }
+  if (between.length) rebuilt.push("", ...between);
+
+  return joinLines(spliceIn(doc.lines, first, last - first, rebuilt), doc.eol);
+}
+
+// ---------- 内部処理 ----------
+
+/** 新しいタスクを差し込む行 */
+function insertionIndex(
+  doc: BlockDocument,
+  start: number | null,
+  mode: "time" | "end"
+): number {
+  if (!doc.tasks.length) return doc.scanEnd;
+  if (mode === "time" && start !== null) {
+    const next = doc.tasks.find((t) => t.start !== null && t.start > start);
+    if (next) return next.headingLine;
+  }
+  return doc.tasks[doc.tasks.length - 1].endLine;
+}
+
+/** 親見出しがノートに無いときに末尾へ足す */
+function appendRootHeading(content: string, eol: string, opts: BlockOptions): string {
+  const { level, text } = parseHeadingSetting(opts.rootHeading);
+  const body = content.replace(/\s+$/, "");
+  const heading = "#".repeat(level) + " " + text;
+  return (body ? body + eol + eol : "") + heading + eol;
+}
+
+/** 行を差し替える。継ぎ目の空行が増えたり減ったりしないように整える */
+export function spliceIn(
+  lines: string[],
+  at: number,
+  deleteCount: number,
+  insert: string[]
+): string[] {
+  const out = [...lines];
+  if (insert.length === 0) {
+    out.splice(at, deleteCount);
+    while (at > 0 && at < out.length && out[at - 1].trim() === "" && out[at].trim() === "") {
+      out.splice(at, 1);
+    }
+    return out;
+  }
+  const add = [...insert];
+  if (at > 0 && out[at - 1].trim() !== "") add.unshift("");
+  const after = out[at + deleteCount];
+  if (after !== undefined && after.trim() !== "") add.push("");
+  out.splice(at, deleteCount, ...add);
+  return out;
+}
+
+export function joinLines(lines: string[], eol: string): string {
+  return lines.join(eol).replace(/(\r?\n)*$/, "") + eol;
+}
