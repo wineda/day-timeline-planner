@@ -1340,6 +1340,10 @@
 .dt-modal-buttons .setting-item-control {
   gap: 8px;
 }
+/* 自動保存の状態（ボタン行の左側に出す） */
+.dt-modal .dt-modal-buttons .setting-item-description.dt-autosave-error {
+  color: var(--text-error);
+}
 
 /* ふりかえり（編集ダイアログの欄）: 名前を上、入力欄を全幅に */
 .dt-modal .dt-retro-setting {

@@ -11,7 +11,7 @@ import {
   setIcon,
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
-import { ScheduledTask, Task, TaskDraft, isScheduled } from "./model";
+import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
 import { ConfirmModal, RetrospectiveModal, TaskModal } from "./modal";
 import { layoutEvents } from "./layout";
 import { colorForTags, ticketUrl, type Member, type ViewMode } from "./settings";
@@ -1680,6 +1680,10 @@ export class DayTimelineView extends ItemView {
   }
 
   private openEditModal(date: Date, task: Task): void {
+    // 自動保存のたびに参照を最新へ差し替える（タイトルや時刻が変わると照合できなくなるため）
+    let current = task;
+    const wasDone = task.done;
+    const serially = serialQueue();
     new TaskModal(this.app, {
       mode: "edit",
       initial: this.draftOf(task),
@@ -1692,9 +1696,15 @@ export class DayTimelineView extends ItemView {
       trackers: this.plugin.settings.trackers,
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
-      onSubmit: (data) => this.commitUpdate(date, task, data),
-      onDelete: () => this.commitDelete(date, task),
-      onOpenNote: () => this.openTaskInNote(date, task),
+      onAutoSave: async (data) => {
+        // 持ち主の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
+        const next = await serially(() => this.commitAutoSave(date, current, data));
+        if (next) current = next;
+        return next !== null;
+      },
+      onSubmit: (data) => serially(() => this.commitUpdate(date, current, data, wasDone)),
+      onDelete: () => serially(() => this.commitDelete(date, current)),
+      onOpenNote: () => serially(() => this.openTaskInNote(date, current)),
     }).open();
   }
 
@@ -1745,7 +1755,7 @@ export class DayTimelineView extends ItemView {
     await this.reload();
   }
 
-  private async commitUpdate(date: Date, task: Task, data: TaskDraft): Promise<void> {
+  private async commitUpdate(date: Date, task: Task, data: TaskDraft, wasDone = task.done): Promise<void> {
     // 持ち主が変わった場合は、別のノートへブロックごと移す
     if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
       await this.commitChangeOwner(date, task, data);
@@ -1761,13 +1771,52 @@ export class DayTimelineView extends ItemView {
       new Notice("タスクを保存できませんでした: " + String(e));
     }
     await this.reload();
-    if (updated) this.maybePromptRetrospective(date, task, data);
+    if (updated) this.maybePromptRetrospective(date, task, data, wasDone);
+  }
+
+  /**
+   * 編集ダイアログからの自動保存。持ち主の変更は反映しない（閉じるときに行う）。
+   * 成功したら保存後のタスク参照を返し、失敗（見つからない・書き込みエラー）なら null。
+   */
+  private async commitAutoSave(date: Date, task: Task, data: TaskDraft): Promise<Task | null> {
+    const store = this.storeOf(task);
+    try {
+      if (!(await store.update(date, task, data))) return null;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+    await this.reload();
+    return (await this.relocateTask(store, date, task, data)) ?? task;
+  }
+
+  /** 保存で ID が付いたり内容が変わったりしたあと、同じタスクを探し直す */
+  private async relocateTask(
+    store: TaskSource,
+    date: Date,
+    task: Task,
+    draft: TaskDraft
+  ): Promise<Task | null> {
+    try {
+      const day = await store.load(date);
+      if (task.blockId) return day.tasks.find((t) => t.blockId === task.blockId) ?? null;
+      // ID の無いタスク（旧形式・手書きのブロック）は保存した内容で照合する
+      return (
+        day.tasks.find(
+          (t) =>
+            t.title === draft.title && t.start === draft.start && t.end === draft.end && t.done === draft.done
+        ) ?? null
+      );
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
   }
 
   /** 15分以上のタスクを完了にしたとき、ふりかえりが空なら入力を促す */
-  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft): void {
+  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): void {
     if (!this.plugin.blockStore()) return; // ブロック形式のみ
-    if (!data.done || task.done) return; // 「未完了 → 完了」のときだけ
+    if (!data.done || wasDone) return; // 「未完了 → 完了」のときだけ
     const start = data.start ?? task.start;
     const end = data.end ?? task.end;
     if (start === null || end === null || end - start < 15) return;
@@ -1870,6 +1919,8 @@ export class DayTimelineView extends ItemView {
   private openInboxEditModal(task: Task): void {
     const inbox = this.plugin.inbox;
     if (!inbox) return;
+    let current = task;
+    const serially = serialQueue();
     new TaskModal(this.app, {
       mode: "edit",
       initial: this.draftOf(task),
@@ -1879,16 +1930,38 @@ export class DayTimelineView extends ItemView {
       tagChoices: this.plugin.settings.tagColors,
       showDoneCondition: true,
       trackers: this.plugin.settings.trackers,
-      onSubmit: (data) => {
-        // Inbox で時刻を入れたら「今日」に移す
-        if (data.start !== null && data.end !== null) {
-          return this.commitInboxToDay(task, startOfDay(new Date()), data);
-        }
-        return this.commitInboxUpdate(task, data);
+      onAutoSave: async (data) => {
+        // 自動保存では Inbox に留める。「時刻を入れたら今日へ移す」のは閉じるときに行う
+        const next = await serially(() => this.commitInboxAutoSave(current, data));
+        if (next) current = next;
+        return next !== null;
       },
-      onDelete: () => this.commitInboxDelete(task),
-      onOpenNote: () => this.openInboxTaskInNote(task),
+      onSubmit: (data) =>
+        serially(() => {
+          // Inbox で時刻を入れたら「今日」に移す
+          if (data.start !== null && data.end !== null) {
+            return this.commitInboxToDay(current, startOfDay(new Date()), data);
+          }
+          return this.commitInboxUpdate(current, data);
+        }),
+      onDelete: () => serially(() => this.commitInboxDelete(current)),
+      onOpenNote: () => serially(() => this.openInboxTaskInNote(current)),
     }).open();
+  }
+
+  /** Inbox の編集ダイアログからの自動保存（時刻は付けずに保存する） */
+  private async commitInboxAutoSave(task: Task, data: TaskDraft): Promise<Task | null> {
+    const inbox = this.plugin.inbox;
+    if (!inbox) return null;
+    const draft = { ...data, start: null, end: null };
+    try {
+      if (!(await inbox.update(INBOX_DATE, task, draft))) return null;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+    await this.reloadInbox();
+    return (await this.relocateTask(inbox, INBOX_DATE, task, draft)) ?? task;
   }
 
   private async openInboxTaskInNote(task: Task): Promise<void> {
@@ -2010,4 +2083,17 @@ export class DayTimelineView extends ItemView {
       new Notice("ノートを開けませんでした: " + String(e));
     }
   }
+}
+
+/**
+ * 非同期処理を1つずつ順番に実行するキュー。
+ * 編集ダイアログの自動保存と、閉じる・削除などの操作が同じノートに重ならないようにする
+ */
+function serialQueue() {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => T | Promise<T>): Promise<T> => {
+    const run = tail.then(fn);
+    tail = run.catch(() => undefined);
+    return run;
+  };
 }

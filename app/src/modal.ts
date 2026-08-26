@@ -24,6 +24,12 @@ export interface TaskModalOptions {
   owners?: { id: string | null; name: string; color: string }[];
   initialOwner?: string | null;
   onSubmit: (data: TaskDraft) => void | Promise<void>;
+  /**
+   * 変更を自動保存する（編集時のみ）。渡すと保存ボタンの代わりに「閉じる」を出し、
+   * 項目が変わるたびに（少し待ってから）呼ばれる。戻り値は保存できたかどうか。
+   * 閉じるときは、開いてから変更があれば onSubmit が1回呼ばれる。
+   */
+  onAutoSave?: (data: TaskDraft) => boolean | Promise<boolean>;
   onDelete?: () => void | Promise<void>;
   /** ノートの該当ブロックを開く（編集時のみ表示） */
   onOpenNote?: () => void | Promise<void>;
@@ -49,6 +55,17 @@ export class TaskModal extends Modal {
   private startText: string;
   private endText: string;
   private hintEl!: HTMLElement;
+  private stepAddInput: HTMLInputElement | null = null;
+  // 自動保存（onAutoSave 付きの編集時のみ使う）
+  private autosaveTimer: number | null = null;
+  private autosaveInFlight = false;
+  /** 直近に自動保存した内容（JSON）。同じ内容なら保存しない */
+  private savedJson = "";
+  /** 開いたときの内容（JSON）。変わっていなければ閉じるときに保存しない */
+  private initialJson = "";
+  private autosaveStatusEl: HTMLElement | null = null;
+  /** 日本語 IME の変換中は保存しない */
+  private composing = false;
   /** 選択中のタグ（正規化済み。"#" 抜き） */
   private selectedTags = new Set<string>();
   /** ボタンで選べるタグ（正規化して重複を除いたもの） */
@@ -340,6 +357,7 @@ export class TaskModal extends Modal {
 
     const buttons = new Setting(contentEl);
     buttons.settingEl.addClass("dt-modal-buttons");
+    if (this.autosaveOn) this.autosaveStatusEl = buttons.descEl;
     if (this.opts.mode === "edit" && this.opts.onDelete) {
       const onDelete = this.opts.onDelete;
       buttons.addButton((b) =>
@@ -364,18 +382,128 @@ export class TaskModal extends Modal {
           })
       );
     }
-    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
-    buttons.addButton((b) =>
-      b
-        .setButtonText(this.opts.mode === "create" ? "追加" : "保存")
-        .setCta()
-        .onClick(() => void this.submit())
-    );
+    if (this.autosaveOn) {
+      // 自動保存なので「保存」ボタンは出さない（閉じるだけでよい）
+      buttons.addButton((b) => b.setButtonText("閉じる").setCta().onClick(() => void this.submit()));
+    } else {
+      buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+      buttons.addButton((b) =>
+        b
+          .setButtonText(this.opts.mode === "create" ? "追加" : "保存")
+          .setCta()
+          .onClick(() => void this.submit())
+      );
+    }
+
+    if (this.autosaveOn) {
+      // どの欄が変わっても拾えるように、ダイアログ全体で変更を見張る。
+      // 実際に内容が変わったかは autosaveNow() が JSON 比較で判定する
+      const bump = () => this.scheduleAutosave();
+      contentEl.addEventListener("input", bump);
+      contentEl.addEventListener("change", bump);
+      contentEl.addEventListener("click", bump);
+      contentEl.addEventListener("compositionstart", () => (this.composing = true));
+      contentEl.addEventListener("compositionend", () => {
+        this.composing = false;
+        this.scheduleAutosave();
+      });
+      // 欄の初期化（チケット欄の正規化など）が終わった状態を「変更なし」の基準にする
+      const d = this.draftForAutosave();
+      this.initialJson = this.savedJson = d ? JSON.stringify(d) : "";
+      this.setAutosaveStatus("変更は自動で保存されます");
+    }
   }
 
   onClose(): void {
+    if (this.autosaveTimer !== null) {
+      window.clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    if (this.autosaveOn) this.saveOnClose();
     this.contentEl.empty();
     this.opts.onClose?.();
+  }
+
+  // ---------- 自動保存 ----------
+
+  private get autosaveOn(): boolean {
+    return this.opts.mode === "edit" && !!this.opts.onAutoSave;
+  }
+
+  private scheduleAutosave(): void {
+    if (!this.autosaveOn) return;
+    if (this.autosaveTimer !== null) window.clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = window.setTimeout(() => {
+      this.autosaveTimer = null;
+      this.autosaveNow();
+    }, 700);
+  }
+
+  /** いまの入力内容から保存用の下書きを作る。時刻の入力が途中なら null */
+  private draftForAutosave(): TaskDraft | null {
+    const r = this.parse();
+    return "error" in r ? null : this.buildDraft(r);
+  }
+
+  private autosaveNow(): void {
+    const cb = this.opts.onAutoSave;
+    if (!cb) return;
+    if (this.composing || this.autosaveInFlight) {
+      // 変換中・保存中なら、落ち着いてからもう一度
+      this.scheduleAutosave();
+      return;
+    }
+    const d = this.draftForAutosave();
+    if (!d) return; // 時刻が直ってから保存する（エラーはヒント欄に出ている）
+    const json = JSON.stringify(d);
+    if (json === this.savedJson) return;
+    this.autosaveInFlight = true;
+    this.setAutosaveStatus("保存中…");
+    void Promise.resolve()
+      .then(() => cb(d))
+      .then(
+        (ok) => {
+          if (ok) {
+            this.savedJson = json;
+            this.setAutosaveStatus("保存しました ✓");
+          } else {
+            this.setAutosaveStatus("自動保存できませんでした", true);
+          }
+        },
+        (e) => {
+          console.error(e);
+          this.setAutosaveStatus("自動保存できませんでした", true);
+        }
+      )
+      .finally(() => {
+        this.autosaveInFlight = false;
+      });
+  }
+
+  /** 閉じるときの保存。開いてから何も変わっていなければ何もしない */
+  private saveOnClose(): void {
+    // ステップの追加欄に書きかけの文字が残っていれば拾う
+    const pending = this.stepAddInput?.value.trim();
+    if (pending) this.steps.push({ text: pending, done: false, children: [] });
+    const r = this.parse();
+    let times: { start: number | null; end: number | null };
+    if ("error" in r) {
+      // 時刻が入力途中のまま閉じられた: 時刻以外だけ保存する
+      const prev = this.savedJson ? (JSON.parse(this.savedJson) as TaskDraft) : this.opts.initial;
+      times = { start: prev.start, end: prev.end };
+      new Notice("時刻の入力が正しくないため、時刻は変更していません");
+    } else {
+      times = r;
+    }
+    const data = this.buildDraft(times);
+    if (JSON.stringify(data) === this.initialJson) return;
+    void this.opts.onSubmit(data);
+  }
+
+  private setAutosaveStatus(text: string, isError = false): void {
+    if (!this.autosaveStatusEl) return;
+    this.autosaveStatusEl.setText(text);
+    this.autosaveStatusEl.toggleClass("dt-autosave-error", isError);
   }
 
   // ---------- ステップ ----------
@@ -396,6 +524,7 @@ export class TaskModal extends Modal {
     const plus = addRow.createSpan("dt-step-add-icon");
     setIcon(plus, "plus");
     const addInput = addRow.createEl("input", { type: "text", attr: { placeholder: "ステップを追加…" } });
+    this.stepAddInput = addInput;
     const commitAdd = () => {
       const text = addInput.value.trim();
       if (!text) return;
@@ -419,6 +548,8 @@ export class TaskModal extends Modal {
   }
 
   private renderSteps(focusIndex?: number): void {
+    // ステップの変更（チェック・追加・削除・並べ替え）はここを通るので、自動保存もここで拾う
+    this.scheduleAutosave();
     const list = this.stepsListEl;
     list.empty();
     const done = this.steps.filter((st) => st.done).length;
@@ -577,10 +708,22 @@ export class TaskModal extends Modal {
       new Notice(r.error);
       return;
     }
-    const data: TaskDraft = {
+    if (this.autosaveOn) {
+      // 変更があれば onClose 側（saveOnClose）が保存する
+      this.close();
+      return;
+    }
+    const data = this.buildDraft(r);
+    this.close();
+    await this.opts.onSubmit(data);
+  }
+
+  /** いまの入力内容を TaskDraft にまとめる */
+  private buildDraft(times: { start: number | null; end: number | null }): TaskDraft {
+    return {
       title: joinTitleAndTags(this.title, this.tagChoices, this.selectedTags),
-      start: r.start,
-      end: r.end,
+      start: times.start,
+      end: times.end,
       done: this.done,
       reminder: this.reminder,
       doneCondition: this.opts.showDoneCondition ? this.doneCondition.trim() : undefined,
@@ -598,8 +741,6 @@ export class TaskModal extends Modal {
         : undefined,
       owner: this.opts.owners?.length ? this.owner : undefined,
     };
-    this.close();
-    await this.opts.onSubmit(data);
   }
 }
 
