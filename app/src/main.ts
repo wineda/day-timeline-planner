@@ -1,9 +1,10 @@
-import { Editor, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { Editor, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import {
   DEFAULT_SETTINGS,
   DayTimelineSettingTab,
   DayTimelineSettings,
   migrateSettings,
+  ticketUrl,
 } from "./settings";
 import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, migrateNote } from "./store";
 import { RecurringListModal, RecurringModal } from "./recurring";
@@ -11,7 +12,8 @@ import { TaskModal } from "./modal";
 import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
 import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
-import { dateKey, minutesToHHMM, nowMinutes, stripTags } from "./util";
+import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
+import { buildWeeklyReport, type ReportDay } from "./report";
 import { newBlockId } from "./markdown/id";
 import { DayTimelineView, VIEW_TYPE_DAY_TIMELINE } from "./view";
 
@@ -176,7 +178,66 @@ export default class DayTimelinePlugin extends Plugin {
       });
     }
 
+    // 予実レポート
+    this.addCommand({
+      id: "pa-report-week",
+      name: "予実レポートを作成（表示中の週）",
+      checkCallback: (checking) => {
+        if (!this.blockStore()) return false;
+        if (!checking) void this.createWeeklyReport();
+        return true;
+      },
+    });
+
     this.addSettingTab(new DayTimelineSettingTab(this.app, this));
+  }
+
+  /**
+   * 表示中の日を含む週の予実レポートを Markdown で書き出して開く。
+   * 出力先: <フォルダ>/Reports/予実レポート YYYY-MM-DD.md（週の初めの日付。既にあれば上書き）
+   */
+  async createWeeklyReport(): Promise<void> {
+    const store = this.blockStore();
+    if (!store) return;
+    try {
+      const base = this.getTimelineView()?.getDate() ?? startOfDay(new Date());
+      const start = startOfWeek(startOfDay(base), this.settings.weekStart);
+      const days: ReportDay[] = [];
+      for (let i = 0; i < 7; i++) {
+        const date = addDays(start, i);
+        days.push({ date, tasks: (await store.load(date)).tasks });
+      }
+      const content = buildWeeklyReport(days, {
+        ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
+      });
+
+      const dir = normalizePath((this.settings.folder ? this.settings.folder + "/" : "") + "Reports");
+      let cur = "";
+      for (const part of dir.split("/")) {
+        cur = cur ? `${cur}/${part}` : part;
+        if (!this.app.vault.getAbstractFileByPath(cur)) {
+          try {
+            await this.app.vault.createFolder(cur);
+          } catch (_e) {
+            // 既にある場合など
+          }
+        }
+      }
+      const path = normalizePath(`${dir}/予実レポート ${dateKey(start)}.md`);
+      const existing = this.app.vault.getAbstractFileByPath(path);
+      let file: TFile;
+      if (existing instanceof TFile) {
+        await this.app.vault.process(existing, () => content);
+        file = existing;
+      } else {
+        file = await this.app.vault.create(path, content);
+      }
+      await this.app.workspace.getLeaf("tab").openFile(file);
+      new Notice(`予実レポートを作成しました: ${path}`);
+    } catch (e) {
+      console.error(e);
+      new Notice("予実レポートを作成できませんでした: " + String(e));
+    }
   }
 
   openTimerModal(): void {

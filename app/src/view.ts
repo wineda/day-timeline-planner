@@ -79,6 +79,8 @@ export class DayTimelineView extends ItemView {
   private zoomBtns = new Map<number, HTMLElement>();
   private paBtns = new Map<PlanActualMode, HTMLElement>();
   private paEl!: HTMLElement;
+  /** 表示範囲（3日・週）の予実合計 */
+  private rangeTotalEl!: HTMLElement;
   /** 実際に使う 1時間あたりの高さ（px）。ズーム指定があるとビューの高さから決まる */
   private hourHeightPx = 60;
   private membersEl!: HTMLElement;
@@ -376,6 +378,9 @@ export class DayTimelineView extends ItemView {
       b.onclick = () => this.setPaMode(m);
       this.paBtns.set(m, b);
     }
+
+    // 表示範囲（3日・週）の予実合計
+    this.rangeTotalEl = header.createDiv("dt-range-total");
 
     // メンバー（他の人の予定）の表示切替チップ
     this.membersEl = header.createDiv("dt-members");
@@ -932,6 +937,7 @@ export class DayTimelineView extends ItemView {
   private renderEvents(): void {
     if (this.mode === "month") {
       this.renderMonth();
+      this.renderDayTotals(); // 範囲合計の表示を消す
       return;
     }
     const s = this.plugin.settings;
@@ -1189,30 +1195,48 @@ export class DayTimelineView extends ItemView {
     this.attachHoverPreview(el, col.date, task);
   }
 
-  /** 各日の予定・実績の合計を日付ヘッダーに出す */
+  /** 各日の予定・実績の合計を日付ヘッダーに、表示範囲の合計をヘッダー（3日・週）に出す */
   private renderDayTotals(): void {
-    if (this.mode === "month" || !this.plugin.blockStore()) return;
-    for (const col of this.columns) {
-      let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
-      const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
-      const plan = tasks.reduce((n, t) => n + (isScheduled(t) ? t.end - t.start : 0), 0);
-      const act = tasks.reduce((n, t) => n + t.actual.reduce((m, r) => m + (r.end - r.start), 0), 0);
-      if (!plan && !act) {
-        el?.remove();
-        continue;
+    const show = this.mode !== "month" && !!this.plugin.blockStore();
+    let rangePlan = 0;
+    let rangeAct = 0;
+    if (show) {
+      for (const col of this.columns) {
+        let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
+        const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
+        const plan = tasks.reduce((n, t) => n + (isScheduled(t) ? t.end - t.start : 0), 0);
+        const act = tasks.reduce((n, t) => n + t.actual.reduce((m, r) => m + (r.end - r.start), 0), 0);
+        rangePlan += plan;
+        rangeAct += act;
+        if (!plan && !act) {
+          el?.remove();
+          continue;
+        }
+        if (!el) el = col.headerEl.createDiv("dt-day-total");
+        el.empty();
+        el.createSpan({ text: `予 ${hmm(plan)}` });
+        el.createSpan({ text: `実 ${hmm(act)}` });
+        if (plan && act) {
+          const diff = act - plan;
+          const d = el.createSpan({
+            cls: "dt-day-total-diff",
+            text: `(${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))})`,
+          });
+          d.toggleClass("is-over", diff > 0);
+        }
       }
-      if (!el) el = col.headerEl.createDiv("dt-day-total");
-      el.empty();
-      el.createSpan({ text: `予 ${hmm(plan)}` });
-      el.createSpan({ text: `実 ${hmm(act)}` });
-      if (plan && act) {
-        const diff = act - plan;
-        const d = el.createSpan({
-          cls: "dt-day-total-diff",
-          text: `(${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))})`,
-        });
-        d.toggleClass("is-over", diff > 0);
+    }
+    // 週・3日表示のヘッダーに範囲合計
+    if (this.rangeTotalEl) {
+      let text = "";
+      if (show && (this.mode === "week" || this.mode === "3day") && (rangePlan || rangeAct)) {
+        const diff = rangeAct - rangePlan;
+        text =
+          `${this.mode === "week" ? "週" : "計"}: 予 ${hmm(rangePlan)}・実 ${hmm(rangeAct)}` +
+          (rangePlan && rangeAct ? `（${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))}）` : "");
       }
+      this.rangeTotalEl.setText(text);
+      this.rangeTotalEl.toggleClass("is-visible", !!text);
     }
   }
 

@@ -114,6 +114,18 @@
   display: none;
 }
 
+/* 表示範囲（3日・週）の予実合計 */
+.dt-range-total {
+  display: none;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dt-range-total.is-visible {
+  display: inline-block;
+}
+
 /* メンバー（他の人の予定）の表示切替チップ */
 .dt-members {
   display: none;
