@@ -1,6 +1,6 @@
 import { App, Modal, Notice, Setting, setIcon } from "obsidian";
 import type { TaskDraft } from "./model";
-import type { ReminderSetting, TaskStep, TicketRef } from "./markdown/blocks";
+import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
 import { normalizeTag, ticketUrl, type IssueTracker, type TagColor } from "./settings";
 import { contrastTextColor, formatDuration, minutesToHHMM, parseTimeInput } from "./util";
 
@@ -18,6 +18,8 @@ export interface TaskModalOptions {
   reminderDefault?: number;
   /** 完了条件・ステップの入力欄を出すか（ブロック形式のみ） */
   showDoneCondition?: boolean;
+  /** 実績（実際に作業した時間）の入力欄を出すか（ブロック形式の編集時のみ） */
+  showActual?: boolean;
   /** チケット管理ツール（登録があればチケット欄を出す。ブロック形式のみ） */
   trackers?: IssueTracker[];
   /** 「誰の予定か」の選択肢（無ければ欄を出さない） */
@@ -55,6 +57,8 @@ export class TaskModal extends Modal {
   private startText: string;
   private endText: string;
   private hintEl!: HTMLElement;
+  /** 実績の入力内容（"10:05 - 11:20 / 13:00 - 13:30" のような文字列） */
+  private actualText: string;
   private stepAddInput: HTMLInputElement | null = null;
   // 自動保存（onAutoSave 付きの編集時のみ使う）
   private autosaveTimer: number | null = null;
@@ -91,6 +95,7 @@ export class TaskModal extends Modal {
     this.selectedTags = selected;
     this.startText = opts.initial.start === null ? "" : minutesToHHMM(opts.initial.start);
     this.endText = opts.initial.end === null ? "" : minutesToHHMM(opts.initial.end);
+    this.actualText = formatActualRanges(opts.initial.actual ?? []);
   }
 
   onOpen(): void {
@@ -329,6 +334,49 @@ export class TaskModal extends Modal {
     this.hintEl = timeSetting.descEl;
     this.updateHint();
 
+    if (this.opts.showActual) {
+      const actSetting = new Setting(contentEl).setName("実績");
+      let actualInput: HTMLInputElement | null = null;
+      const updateActualDesc = () => {
+        const r = this.parseActual();
+        actSetting.descEl.toggleClass("is-error", r === null);
+        if (r === null) {
+          actSetting.descEl.setText("実績は 10:05 - 11:20 / 13:00 - 13:30 のように入力してください");
+        } else if (r.length === 0) {
+          actSetting.descEl.setText("実際に作業した時間。中断したら / で区切って複数書けます。");
+        } else {
+          actSetting.descEl.setText(`実績合計: ${formatDuration(actualTotal(r))}`);
+        }
+      };
+      actSetting.addText((t) => {
+        t.setPlaceholder("10:05 - 11:20 / 13:00 - 13:30")
+          .setValue(this.actualText)
+          .onChange((v) => {
+            this.actualText = v;
+            updateActualDesc();
+          });
+        t.inputEl.addClass("dt-actual-input");
+        t.inputEl.addEventListener("keydown", onKey);
+        actualInput = t.inputEl;
+      });
+      actSetting.addExtraButton((b) =>
+        b
+          .setIcon("copy")
+          .setTooltip("予定と同じ時間を実績に入れる")
+          .onClick(() => {
+            const r = this.parse();
+            if ("error" in r || r.start === null || r.end === null) {
+              new Notice("予定の時刻が入っていません");
+              return;
+            }
+            this.actualText = formatActualRanges([{ start: r.start, end: r.end }]);
+            if (actualInput) actualInput.value = this.actualText;
+            updateActualDesc();
+          })
+      );
+      updateActualDesc();
+    }
+
     if (this.opts.reminderDefault !== undefined) {
       const def = this.opts.reminderDefault;
       new Setting(contentEl)
@@ -439,10 +487,12 @@ export class TaskModal extends Modal {
     }, 700);
   }
 
-  /** いまの入力内容から保存用の下書きを作る。時刻の入力が途中なら null */
+  /** いまの入力内容から保存用の下書きを作る。時刻・実績の入力が途中なら null */
   private draftForAutosave(): TaskDraft | null {
     const r = this.parse();
-    return "error" in r ? null : this.buildDraft(r);
+    if ("error" in r) return null;
+    if (this.opts.showActual && this.parseActual() === null) return null;
+    return this.buildDraft(r);
   }
 
   private autosaveNow(): void {
@@ -485,6 +535,12 @@ export class TaskModal extends Modal {
     // ステップの追加欄に書きかけの文字が残っていれば拾う
     const pending = this.stepAddInput?.value.trim();
     if (pending) this.steps.push({ text: pending, done: false, children: [] });
+    if (this.opts.showActual && this.parseActual() === null) {
+      // 実績が入力途中のまま閉じられた: 実績以外だけ保存する
+      const prev = this.savedJson ? (JSON.parse(this.savedJson) as TaskDraft) : this.opts.initial;
+      this.actualText = formatActualRanges(prev.actual ?? []);
+      new Notice("実績の入力が正しくないため、実績は変更していません");
+    }
     const r = this.parse();
     let times: { start: number | null; end: number | null };
     if ("error" in r) {
@@ -688,6 +744,24 @@ export class TaskModal extends Modal {
     return { start, end };
   }
 
+  /** 実績の入力を解析する。空なら [] 、読めなければ null */
+  private parseActual(): ActualRange[] | null {
+    const text = this.actualText.trim();
+    if (!text) return [];
+    const out: ActualRange[] = [];
+    for (const part of text.split(/[/、,]+/)) {
+      const p = part.trim();
+      if (!p) continue;
+      const m = /^(.+?)\s*(?:-|–|—|~|〜|～)\s*(.+)$/.exec(p);
+      if (!m) return null;
+      const start = parseTimeInput(m[1]);
+      const end = parseTimeInput(m[2]);
+      if (start === null || end === null || end <= start) return null;
+      out.push({ start, end });
+    }
+    return out;
+  }
+
   private updateHint(): void {
     const r = this.parse();
     if ("error" in r) {
@@ -706,6 +780,10 @@ export class TaskModal extends Modal {
     const r = this.parse();
     if ("error" in r) {
       new Notice(r.error);
+      return;
+    }
+    if (this.opts.showActual && this.parseActual() === null) {
+      new Notice("実績は 10:05 - 11:20 のように入力してください");
       return;
     }
     if (this.autosaveOn) {
@@ -739,9 +817,15 @@ export class TaskModal extends Modal {
           ? ({ tracker: this.ticketTracker, id: this.ticketId.trim() } as TicketRef)
           : null
         : undefined,
+      actual: this.opts.showActual ? this.parseActual() ?? undefined : undefined,
       owner: this.opts.owners?.length ? this.owner : undefined,
     };
   }
+}
+
+/** 実績の時間帯を入力欄の文字列に */
+function formatActualRanges(ranges: ActualRange[]): string {
+  return ranges.map((r) => `${minutesToHHMM(r.start)} - ${minutesToHHMM(r.end)}`).join(" / ");
 }
 
 /** 設定のタグを正規化して重複を除く */

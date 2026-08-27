@@ -13,8 +13,8 @@ import {
 import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
 import { ConfirmModal, RetrospectiveModal, TaskModal } from "./modal";
-import { layoutEvents } from "./layout";
-import { colorForTags, ticketUrl, type Member, type ViewMode } from "./settings";
+import { layoutEvents, type LayoutInfo } from "./layout";
+import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
 import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
 import { INBOX_DATE } from "./store";
 import { formatSeconds } from "./notify";
@@ -74,6 +74,11 @@ export class DayTimelineView extends ItemView {
   private timerEl!: HTMLElement;
   private timerBtnEl!: HTMLElement;
   private modeBtns = new Map<ViewMode, HTMLElement>();
+  private zoomBtns = new Map<number, HTMLElement>();
+  private paBtns = new Map<PlanActualMode, HTMLElement>();
+  private paEl!: HTMLElement;
+  /** 実際に使う 1時間あたりの高さ（px）。ズーム指定があるとビューの高さから決まる */
+  private hourHeightPx = 60;
   private membersEl!: HTMLElement;
   /** 月表示のマス（日付キー → 要素） */
   private monthCells = new Map<string, { date: Date; el: HTMLElement; listEl: HTMLElement }>();
@@ -162,6 +167,11 @@ export class DayTimelineView extends ItemView {
   }
 
   onResize(): void {
+    // ズーム指定（4h/8h/12h）はビューの高さから縮尺を決めるので、高さが変わったら作り直す
+    if (this.mode !== "month" && this.plugin.settings.zoomHours && this.scrollEl) {
+      const h = this.computeHourHeight();
+      if (Math.abs(h - this.hourHeightPx) > 0.5) this.rebuildTimeline();
+    }
     if (this.shouldScroll) this.scrollToInitial();
   }
 
@@ -333,6 +343,33 @@ export class DayTimelineView extends ItemView {
       this.modeBtns.set(mode, b);
     }
 
+    // 一度に表示する時間の幅（30分単位で作業する日は 4h に寄せる、など）
+    const zoomWrap = header.createDiv("dt-mode dt-zoom");
+    const zooms: [number, string, string][] = [
+      [4, "4h", "4時間分を表示（細かい作業向け）"],
+      [8, "8h", "8時間分を表示"],
+      [12, "12h", "12時間分を表示"],
+      [0, "標準", "設定の「1時間あたりの高さ」で表示"],
+    ];
+    for (const [hours, label, tip] of zooms) {
+      const b = zoomWrap.createEl("button", { text: label, cls: "dt-mode-btn", attr: { "aria-label": tip } });
+      b.onclick = () => this.setZoom(hours);
+      this.zoomBtns.set(hours, b);
+    }
+
+    // 予定 / 予実 / 実績 の切替（ブロック形式のみ）
+    this.paEl = header.createDiv("dt-mode dt-pa");
+    const paModes: [PlanActualMode, string, string][] = [
+      ["plan", "予定", "予定だけを表示"],
+      ["both", "予実", "左に予定、右に実績を並べる"],
+      ["actual", "実績", "実績だけを表示"],
+    ];
+    for (const [m, label, tip] of paModes) {
+      const b = this.paEl.createEl("button", { text: label, cls: "dt-mode-btn", attr: { "aria-label": tip } });
+      b.onclick = () => this.setPaMode(m);
+      this.paBtns.set(m, b);
+    }
+
     // メンバー（他の人の予定）の表示切替チップ
     this.membersEl = header.createDiv("dt-members");
 
@@ -383,6 +420,7 @@ export class DayTimelineView extends ItemView {
   /** 表示中の日付に合わせて、時間軸と日ごとの列（月表示ならカレンダーのマス）を作る */
   private buildGrid(): void {
     const s = this.plugin.settings;
+    this.hourHeightPx = this.computeHourHeight(); // scrollEl を空にする前（レイアウトが生きているうち）に測る
     this.scrollEl.empty();
     this.columns = [];
     this.monthCells.clear();
@@ -408,11 +446,11 @@ export class DayTimelineView extends ItemView {
     this.labelsEl = grid.createDiv("dt-labels");
     this.daysEl = grid.createDiv("dt-days");
 
-    const height = (s.endHour - s.startHour) * s.hourHeight;
+    const height = (s.endHour - s.startHour) * this.hourHeightPx;
     this.labelsEl.style.height = height + "px";
 
     for (let h = s.startHour; h <= s.endHour; h++) {
-      const top = (h - s.startHour) * s.hourHeight;
+      const top = (h - s.startHour) * this.hourHeightPx;
       const label = this.labelsEl.createDiv({ cls: "dt-hour-label", text: `${h}:00` });
       label.style.top = top + "px";
     }
@@ -424,12 +462,12 @@ export class DayTimelineView extends ItemView {
       canvasEl.setAttr("data-date", dateKey(date));
 
       for (let h = s.startHour; h <= s.endHour; h++) {
-        const top = (h - s.startHour) * s.hourHeight;
+        const top = (h - s.startHour) * this.hourHeightPx;
         const line = canvasEl.createDiv("dt-hour-line");
         line.style.top = top + "px";
         if (h < s.endHour) {
           const half = canvasEl.createDiv("dt-half-line");
-          half.style.top = top + s.hourHeight / 2 + "px";
+          half.style.top = top + this.hourHeightPx / 2 + "px";
         }
       }
       const eventsEl = canvasEl.createDiv("dt-events");
@@ -588,6 +626,7 @@ export class DayTimelineView extends ItemView {
     if (sameRange) {
       // 同じ範囲内の移動（週表示で日付ピッカーから選んだときなど）は列を作り直さない
       this.renderDayHeaders();
+      this.renderDayTotals();
       this.renderHeader();
       return;
     }
@@ -624,6 +663,10 @@ export class DayTimelineView extends ItemView {
     }
     this.dateInputEl.value = m.format("YYYY-MM-DD");
     for (const [mode, b] of this.modeBtns) b.toggleClass("is-active", mode === this.mode);
+    const s = this.plugin.settings;
+    for (const [z, b] of this.zoomBtns) b.toggleClass("is-active", z === s.zoomHours);
+    for (const [pm, b] of this.paBtns) b.toggleClass("is-active", pm === s.paMode);
+    this.paEl.toggleClass("is-hidden", !this.plugin.blockStore());
     this.renderMemberChips();
 
     const path = this.plugin.store.pathFor(this.date);
@@ -856,88 +899,219 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
+    const pa = this.paMode();
     this.taskEls.clear();
 
-    let anyScheduled = false;
+    let anyBar = false;
     for (const col of this.columns) {
       col.eventsEl.empty();
-      const scheduled = this.dataFor(col.date).tasks.filter(isScheduled);
-      if (scheduled.length) anyScheduled = true;
-      const visible = scheduled.filter((t) => t.end > dayStart && t.start < dayEnd);
-      const layout = layoutEvents(visible);
+      const tasks = this.dataFor(col.date).tasks;
 
-      for (const task of visible) {
-        const info = layout.get(task) ?? { col: 0, cols: 1 };
-        const top = this.minutesToPx(clamp(task.start, dayStart, dayEnd));
-        const bottom = this.minutesToPx(clamp(task.end, dayStart, dayEnd));
-        const h = bottom - top;
-
-        const el = col.eventsEl.createDiv("dt-event");
-        el.style.top = top + "px";
-        el.style.height = Math.max(h - 2, 4) + "px";
-        el.style.left = `calc(${(info.col / info.cols) * 100}% + 2px)`;
-        el.style.width = `calc(${(1 / info.cols) * 100}% - 4px)`;
-        el.toggleClass("is-done", task.done);
-        el.toggleClass("is-short", h < 34);
-        el.toggleClass("is-tiny", h < 18);
-        const elKey = `${col.key}|${task.key}`;
-        el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
-        this.applyTagColor(el, task);
-        el.setAttr(
-          "aria-label",
-          (this.ownerName(task) ? `${this.ownerName(task)}の予定\n` : "") +
-            `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}  ${task.title || "(無題)"}` +
-            (task.ticket ? `\n${task.ticket.tracker || "チケット"} #${task.ticket.id}` : "") +
-            (task.doneCondition ? `\n完了条件: ${task.doneCondition}` : "") +
-            (task.preview ? `\n${task.preview}` : "")
+      if (pa !== "actual") {
+        const visible = tasks.filter(isScheduled).filter((t) => t.end > dayStart && t.start < dayEnd);
+        const layout = layoutEvents(visible);
+        const lane = pa === "both" ? { left: 0, width: 0.5 } : { left: 0, width: 1 };
+        for (const task of visible) {
+          this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, lane, pa === "both");
+          anyBar = true;
+        }
+      }
+      if (pa !== "plan") {
+        // 実績は区間ごとに1本のバーにする
+        const items = tasks.flatMap((t) =>
+          t.actual
+            .filter((r) => r.end > dayStart && r.start < dayEnd)
+            .map((r) => ({ start: r.start, end: r.end, task: t }))
         );
-        this.taskEls.set(elKey, el);
-
-        // タイトル → 時刻の順。本文や完了条件は文字として出さない（ツールチップで見られる）
-        const titleEl = el.createDiv("dt-event-title");
-        const ownerName = this.ownerName(task);
-        if (ownerName) {
-          el.addClass("is-member");
-          titleEl.createSpan({ cls: "dt-owner-label", text: ownerName });
+        const layout = layoutEvents(items);
+        const lane = pa === "both" ? { left: 0.5, width: 0.5 } : { left: 0, width: 1 };
+        for (const item of items) {
+          this.renderActualBar(col, item, layout.get(item) ?? { col: 0, cols: 1 }, lane);
+          anyBar = true;
         }
-        titleEl.appendText(this.displayTitle(task));
-        const timeEl = el.createDiv({
-          cls: "dt-event-time",
-          text: `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}`,
-        });
-        if (task.ticket) {
-          const badge = el.createDiv({ cls: "dt-event-ticket", text: `#${task.ticket.id}` });
-          const url = this.ticketUrlOf(task);
-          badge.setAttr(
-            "aria-label",
-            `${task.ticket.tracker || "チケット"} #${task.ticket.id}` + (url ? `\n${url}` : "")
-          );
-          if (url) {
-            badge.addClass("is-linked");
-            badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-            badge.addEventListener("click", (ev) => {
-              ev.stopPropagation();
-              window.open(url);
-            });
-          }
-        }
-        const handle = el.createDiv("dt-event-resize");
-
-        this.attachEventInteractions(el, timeEl, handle, col, task);
-        this.attachHoverPreview(el, col.date, task);
       }
     }
 
-    if (!anyScheduled && this.columns.length) {
+    if (!anyBar && this.columns.length) {
       this.columns[0].eventsEl.createDiv({
         cls: "dt-empty-hint",
         text:
-          this.mode === "day"
-            ? "空いている時間をクリック、またはドラッグしてタスクを追加"
-            : "空いている時間をクリック / ドラッグしてタスクを追加",
+          pa === "actual"
+            ? "実績はまだありません。タスクの編集ダイアログの「実績」欄で記録できます"
+            : this.mode === "day"
+              ? "空いている時間をクリック、またはドラッグしてタスクを追加"
+              : "空いている時間をクリック / ドラッグしてタスクを追加",
       });
     }
     this.updateNowLine();
+    this.renderDayTotals();
+  }
+
+  /** レーン内の水平位置。lane の left / width は列の幅に対する 0〜1 の割合 */
+  private barGeometry(info: LayoutInfo, lane: { left: number; width: number }): { left: string; width: string } {
+    return {
+      left: `calc(${(lane.left + (info.col / info.cols) * lane.width) * 100}% + 2px)`,
+      width: `calc(${(lane.width / info.cols) * 100}% - 4px)`,
+    };
+  }
+
+  /** 予定のバー。paired = 予実モード（実績と並べるため輪郭だけの見た目にする） */
+  private renderPlanBar(
+    col: DayColumn,
+    task: ScheduledTask,
+    info: LayoutInfo,
+    lane: { left: number; width: number },
+    paired: boolean
+  ): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    const top = this.minutesToPx(clamp(task.start, dayStart, dayEnd));
+    const bottom = this.minutesToPx(clamp(task.end, dayStart, dayEnd));
+    const h = bottom - top;
+
+    const el = col.eventsEl.createDiv("dt-event");
+    el.style.top = top + "px";
+    el.style.height = Math.max(h - 2, 4) + "px";
+    const geo = this.barGeometry(info, lane);
+    el.style.left = geo.left;
+    el.style.width = geo.width;
+    el.toggleClass("is-plan", paired);
+    el.toggleClass("is-done", task.done);
+    el.toggleClass("is-short", h < 34);
+    el.toggleClass("is-tiny", h < 18);
+    const elKey = `${col.key}|${task.key}`;
+    el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
+    this.applyTagColor(el, task);
+    el.setAttr(
+      "aria-label",
+      (this.ownerName(task) ? `${this.ownerName(task)}の予定\n` : "") +
+        `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}  ${task.title || "(無題)"}` +
+        (task.ticket ? `\n${task.ticket.tracker || "チケット"} #${task.ticket.id}` : "") +
+        (task.doneCondition ? `\n完了条件: ${task.doneCondition}` : "") +
+        (task.preview ? `\n${task.preview}` : "")
+    );
+    this.taskEls.set(elKey, el);
+
+    // タイトル → 時刻の順。本文や完了条件は文字として出さない（ツールチップで見られる）
+    const titleEl = el.createDiv("dt-event-title");
+    const ownerName = this.ownerName(task);
+    if (ownerName) {
+      el.addClass("is-member");
+      titleEl.createSpan({ cls: "dt-owner-label", text: ownerName });
+    }
+    titleEl.appendText(this.displayTitle(task));
+    const timeEl = el.createDiv({
+      cls: "dt-event-time",
+      text: `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}`,
+    });
+    if (task.ticket) {
+      const badge = el.createDiv({ cls: "dt-event-ticket", text: `#${task.ticket.id}` });
+      const url = this.ticketUrlOf(task);
+      badge.setAttr(
+        "aria-label",
+        `${task.ticket.tracker || "チケット"} #${task.ticket.id}` + (url ? `\n${url}` : "")
+      );
+      if (url) {
+        badge.addClass("is-linked");
+        badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+        badge.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          window.open(url);
+        });
+      }
+    }
+    const handle = el.createDiv("dt-event-resize");
+
+    this.attachEventInteractions(el, timeEl, handle, col, task);
+    this.attachHoverPreview(el, col.date, task);
+  }
+
+  /** 実績のバー（1区間 = 1本）。ドラッグはせず、クリックで編集を開く */
+  private renderActualBar(
+    col: DayColumn,
+    item: { start: number; end: number; task: Task },
+    info: LayoutInfo,
+    lane: { left: number; width: number }
+  ): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    const task = item.task;
+    const top = this.minutesToPx(clamp(item.start, dayStart, dayEnd));
+    const bottom = this.minutesToPx(clamp(item.end, dayStart, dayEnd));
+    const h = bottom - top;
+
+    const el = col.eventsEl.createDiv("dt-event dt-event-actual");
+    el.style.top = top + "px";
+    el.style.height = Math.max(h - 2, 4) + "px";
+    const geo = this.barGeometry(info, lane);
+    el.style.left = geo.left;
+    el.style.width = geo.width;
+    el.toggleClass("is-short", h < 34);
+    el.toggleClass("is-tiny", h < 18);
+    this.applyTagColor(el, task);
+    el.setAttr(
+      "aria-label",
+      `実績 ${minutesToHHMM(item.start)} - ${minutesToHHMM(item.end)}  ${task.title || "(無題)"}` +
+        (task.start !== null && task.end !== null
+          ? `\n予定 ${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}`
+          : "\n予定なし（未スケジュール）")
+    );
+    const elKey = `${col.key}|${task.key}`;
+    if (!this.taskEls.has(elKey)) {
+      el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
+      this.taskEls.set(elKey, el);
+    }
+
+    const titleEl = el.createDiv("dt-event-title");
+    const ownerName = this.ownerName(task);
+    if (ownerName) titleEl.createSpan({ cls: "dt-owner-label", text: ownerName });
+    titleEl.appendText(this.displayTitle(task));
+    el.createDiv({
+      cls: "dt-event-time",
+      text: `${minutesToHHMM(item.start)} - ${minutesToHHMM(item.end)}`,
+    });
+
+    el.addEventListener("pointerdown", (e) => e.stopPropagation());
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (e.ctrlKey || e.metaKey) void this.openTaskInNote(col.date, task);
+      else this.openEditModal(col.date, task);
+    });
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showTaskMenu(col.date, task, e);
+    });
+    this.attachHoverPreview(el, col.date, task);
+  }
+
+  /** 各日の予定・実績の合計を日付ヘッダーに出す */
+  private renderDayTotals(): void {
+    if (this.mode === "month" || !this.plugin.blockStore()) return;
+    for (const col of this.columns) {
+      let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
+      const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
+      const plan = tasks.reduce((n, t) => n + (isScheduled(t) ? t.end - t.start : 0), 0);
+      const act = tasks.reduce((n, t) => n + t.actual.reduce((m, r) => m + (r.end - r.start), 0), 0);
+      if (!plan && !act) {
+        el?.remove();
+        continue;
+      }
+      if (!el) el = col.headerEl.createDiv("dt-day-total");
+      el.empty();
+      el.createSpan({ text: `予 ${hmm(plan)}` });
+      el.createSpan({ text: `実 ${hmm(act)}` });
+      if (plan && act) {
+        const diff = act - plan;
+        const d = el.createSpan({
+          cls: "dt-day-total-diff",
+          text: `(${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))})`,
+        });
+        d.toggleClass("is-over", diff > 0);
+      }
+    }
   }
 
   /** 月表示: 各マスにその日のタスクを並べる */
@@ -1132,11 +1306,55 @@ export class DayTimelineView extends ItemView {
 
   private minutesToPx(min: number): number {
     const s = this.plugin.settings;
-    return ((min - s.startHour * 60) / 60) * s.hourHeight;
+    return ((min - s.startHour * 60) / 60) * this.hourHeightPx;
   }
 
   private pxToMinutes(px: number): number {
-    return (px / this.plugin.settings.hourHeight) * 60;
+    return (px / this.hourHeightPx) * 60;
+  }
+
+  /** 1時間あたりの高さ。ズーム指定があればビューの高さから逆算する */
+  private computeHourHeight(): number {
+    const s = this.plugin.settings;
+    if (!s.zoomHours) return s.hourHeight;
+    const headerH = this.headersEl?.isConnected ? this.headersEl.offsetHeight : 30;
+    const avail = (this.scrollEl?.clientHeight ?? 0) - headerH;
+    if (avail < 100) return s.hourHeight; // まだレイアウトされていない
+    return Math.max(avail / s.zoomHours, 24);
+  }
+
+  /** 縮尺が変わったときに、いま見えている時刻を保ったままグリッドを作り直す */
+  private rebuildTimeline(): void {
+    if (this.mode === "month" || !this.scrollEl) return;
+    const s = this.plugin.settings;
+    const anchor = s.startHour * 60 + this.pxToMinutes(this.scrollEl.scrollTop);
+    this.buildGrid();
+    this.renderEvents();
+    if (!this.shouldScroll) this.scrollEl.scrollTop = Math.max(0, this.minutesToPx(anchor));
+  }
+
+  private setZoom(hours: number): void {
+    const s = this.plugin.settings;
+    if (s.zoomHours === hours) return;
+    s.zoomHours = hours;
+    void this.plugin.persistSettings();
+    this.renderHeader();
+    this.rebuildTimeline();
+  }
+
+  private setPaMode(mode: PlanActualMode): void {
+    const s = this.plugin.settings;
+    if (s.paMode === mode) return;
+    s.paMode = mode;
+    void this.plugin.persistSettings();
+    this.renderHeader();
+    if (this.mode === "month") return;
+    this.renderEvents();
+  }
+
+  /** 予実の表示モード（旧リスト形式では予定のみ） */
+  private paMode(): PlanActualMode {
+    return this.plugin.blockStore() ? this.plugin.settings.paMode : "plan";
   }
 
   private clientYToMinutes(clientY: number): number {
@@ -1693,6 +1911,7 @@ export class DayTimelineView extends ItemView {
       tagChoices: this.plugin.settings.tagColors,
       reminderDefault: this.plugin.blockStore() ? this.plugin.settings.reminderDefaultMinutes : undefined,
       showDoneCondition: !!this.plugin.blockStore(),
+      showActual: !!this.plugin.blockStore(),
       trackers: this.plugin.settings.trackers,
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
@@ -1727,6 +1946,7 @@ export class DayTimelineView extends ItemView {
       doneCondition: task.doneCondition,
       steps: task.steps,
       retrospective: task.retrospective,
+      actual: task.actual,
       details: task.details,
       ticket: task.ticket,
     };
@@ -1929,6 +2149,7 @@ export class DayTimelineView extends ItemView {
       dateLabel: "Inbox",
       tagChoices: this.plugin.settings.tagColors,
       showDoneCondition: true,
+      showActual: true,
       trackers: this.plugin.settings.trackers,
       onAutoSave: async (data) => {
         // 自動保存では Inbox に留める。「時刻を入れたら今日へ移す」のは閉じるときに行う
@@ -2083,6 +2304,11 @@ export class DayTimelineView extends ItemView {
       new Notice("ノートを開けませんでした: " + String(e));
     }
   }
+}
+
+/** 分を "6:30" のような時:分表示に（日ヘッダーの予実合計用） */
+function hmm(min: number): string {
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
 }
 
 /**

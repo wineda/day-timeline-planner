@@ -7,6 +7,9 @@ export type ViewLocation = "tab" | "right" | "left";
 export type StorageFormat = "block" | "list";
 export type InsertPosition = "time" | "end";
 export type ViewMode = "day" | "3day" | "week" | "month";
+
+/** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
+export type PlanActualMode = "plan" | "both" | "actual";
 /** 通知の出し方 */
 export type NotifyStyle = "both" | "system" | "banner";
 
@@ -106,6 +109,10 @@ export interface DayTimelineSettings {
   endHour: number;
   /** 1時間あたりの高さ（px） */
   hourHeight: number;
+  /** タイムラインに一度に表示する時間の幅（4 / 8 / 12 時間）。0 = 「1時間あたりの高さ」に従う */
+  zoomHours: number;
+  /** タイムラインに出すバー（予定 / 予実 / 実績） */
+  paMode: PlanActualMode;
   /** スナップ間隔（分） */
   snapMinutes: number;
   /** クリックで作る予定の既定の長さ（分） */
@@ -170,6 +177,8 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   startHour: 7,
   endHour: 22,
   hourHeight: 60,
+  zoomHours: 0,
+  paMode: "plan",
   snapMinutes: 15,
   defaultDurationMinutes: 30,
   useCheckbox: true,

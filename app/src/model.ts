@@ -4,7 +4,7 @@
  */
 import type { TFile } from "obsidian";
 import type { ListEvent } from "./markdown/legacy";
-import type { ReminderSetting, TaskStep, TicketRef } from "./markdown/blocks";
+import type { ActualRange, ReminderSetting, TaskStep, TicketRef } from "./markdown/blocks";
 
 /** ソースだけが解釈する参照情報 */
 export type TaskRefData =
@@ -39,6 +39,8 @@ export interface Task {
   steps: TaskStep[];
   /** ふりかえり（ブロック形式のみ。無ければ ""） */
   retrospective: string;
+  /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
+  actual: ActualRange[];
   /** 詳細 = 自由な本文（ブロック形式のみ。Markdown、複数行可） */
   details: string;
   /** チケット（ブロック形式のみ。無ければ null） */
@@ -72,6 +74,8 @@ export interface TaskDraft {
   steps?: TaskStep[];
   /** undefined = 変更しない */
   retrospective?: string;
+  /** 実績。undefined = 変更しない / [] = 消す */
+  actual?: ActualRange[];
   /** undefined = 変更しない */
   details?: string;
   /** undefined = 変更しない / null = 外す */

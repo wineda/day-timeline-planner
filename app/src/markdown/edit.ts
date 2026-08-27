@@ -6,6 +6,7 @@
  * ビューが覚えている行番号は使わないので、ユーザーがノートを直接編集していても壊れない。
  */
 import {
+  ActualRange,
   BlockDocument,
   BlockOptions,
   MetaSource,
@@ -15,6 +16,7 @@ import {
   TicketRef,
   parseBlockDocument,
   parseHeadingSetting,
+  renderActualLine,
   renderDoneConditionLine,
   renderHeadingLine,
   renderRetrospectiveLine,
@@ -52,6 +54,8 @@ export interface TaskPatch {
   steps?: TaskStep[];
   /** undefined = 変更しない / "" = 消す */
   retrospective?: string;
+  /** 実績。undefined = 変更しない / [] = 消す */
+  actual?: ActualRange[];
   /** 詳細（自由な本文）。undefined = 変更しない / "" = 消す */
   details?: string;
 }
@@ -66,6 +70,7 @@ export interface NewTaskInput {
   doneCondition?: string;
   steps?: TaskStep[];
   retrospective?: string;
+  actual?: ActualRange[];
   details?: string;
   body?: string[];
   /** 指定すればその ID を使う（日をまたぐ移動などで使う） */
@@ -101,6 +106,7 @@ export function insertTask(content: string, draft: NewTaskInput, opts: InsertOpt
     doneCondition: draft.doneCondition,
     steps: draft.steps,
     retrospective: draft.retrospective,
+    actual: draft.actual,
     body: draft.body ?? (draft.details ? draft.details.replace(/\s+$/, "").split("\n") : undefined),
   };
   return insertBlockLines(content, renderTaskBlock(source, opts), draft.start, opts);
@@ -175,9 +181,12 @@ export function updateTask(
     ops.push({ at: t.detailsStart, del: t.endLine - t.detailsStart, lines: add, order: -1 });
     if (!add.length) deleted = true;
   }
-  // 詳細の領域内にある「ふりかえり」「完了条件」行は詳細と一緒に編集されるので、個別の書き換えは行わない
+  // 詳細の領域内にある「ふりかえり」「完了条件」「実績」行は詳細と一緒に編集されるので、個別の書き換えは行わない
   const insideDetails = (line: number | null) =>
     patch.details !== undefined && line !== null && line >= t.detailsStart;
+  // メタ行直下に並ぶ特別な行（実績・完了条件）を飛ばした挿入位置
+  let afterMeta = t.metaLine + 1;
+  while (afterMeta === t.actualLine || afterMeta === t.doneConditionLine) afterMeta++;
   // ふりかえり: 既存行を書き換え / 無ければステップ・完了条件の後ろに足す / 空なら消す
   if (patch.retrospective !== undefined && !insideDetails(t.retrospectiveLine)) {
     const text = patch.retrospective.trim();
@@ -190,7 +199,7 @@ export function updateTask(
           ? t.stepsEnd
           : t.doneConditionLine !== null
             ? t.doneConditionLine + 1
-            : t.metaLine + 1;
+            : afterMeta;
       ops.push({ at, del: 0, lines: [renderRetrospectiveLine(text)], order: 0 });
     }
   }
@@ -200,8 +209,7 @@ export function updateTask(
       ops.push({ at: t.stepsStart, del: t.stepsEnd - t.stepsStart, lines: rendered, order: 1 });
       if (!rendered.length) deleted = true;
     } else if (rendered.length) {
-      const at = t.doneConditionLine === t.metaLine + 1 ? t.metaLine + 2 : t.metaLine + 1;
-      ops.push({ at, del: 0, lines: rendered, order: 1 });
+      ops.push({ at: afterMeta, del: 0, lines: rendered, order: 1 });
     }
   }
   if (patch.doneCondition !== undefined && !insideDetails(t.doneConditionLine)) {
@@ -211,6 +219,16 @@ export function updateTask(
       if (!text) deleted = true;
     } else if (text) {
       ops.push({ at: t.metaLine + 1, del: 0, lines: [renderDoneConditionLine(text)], order: 2 });
+    }
+  }
+  // 実績: 既存行を書き換え / 無ければメタ行の直下に足す / 空なら消す
+  if (patch.actual !== undefined && !insideDetails(t.actualLine)) {
+    const ranges = patch.actual;
+    if (t.actualLine !== null) {
+      ops.push({ at: t.actualLine, del: 1, lines: ranges.length ? [renderActualLine(ranges)] : [], order: 3 });
+      if (!ranges.length) deleted = true;
+    } else if (ranges.length) {
+      ops.push({ at: t.metaLine + 1, del: 0, lines: [renderActualLine(ranges)], order: 3 });
     }
   }
   ops.sort((a, b) => b.at - a.at || a.order - b.order);

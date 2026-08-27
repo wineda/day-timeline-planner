@@ -105,6 +105,15 @@
   color: var(--text-on-accent);
 }
 
+/* 表示する時間の幅（4h/8h/12h）と予実の切替。月表示では意味が無いので隠す */
+.dt-view.is-month .dt-zoom,
+.dt-view.is-month .dt-pa {
+  display: none;
+}
+.dt-pa.is-hidden {
+  display: none;
+}
+
 /* メンバー（他の人の予定）の表示切替チップ */
 .dt-members {
   display: none;
@@ -150,6 +159,26 @@
 }
 .dt-member-all {
   padding: 2px 9px;
+}
+
+/* 予実モードの予定バー: 輪郭 + 薄い塗りにして「枠」に見せる（実績が主役） */
+.dt-event.is-plan {
+  background: color-mix(in srgb, var(--dt-event-bg, var(--interactive-accent)) 16%, transparent);
+  color: var(--text-normal);
+  border: 1px dashed color-mix(in srgb, var(--dt-event-bg, var(--interactive-accent)) 70%, transparent);
+  border-left: 3px solid var(--dt-event-bg, var(--interactive-accent));
+  box-shadow: none;
+}
+.dt-event.is-plan .dt-event-time {
+  opacity: 0.75;
+}
+
+/* 実績バー: 塗りつぶし。ドラッグ対象ではないのでクリックで編集 */
+.dt-event-actual {
+  cursor: pointer;
+}
+.dt-event-actual .dt-event-time {
+  opacity: 0.85;
 }
 
 /* 他の人の予定: グレーの背景 + 左端だけその人の色 */
@@ -581,6 +610,22 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
+/* 日付ヘッダーの予実合計（予 6:00 実 6:45 (+0:45)） */
+.dt-day-total {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  flex-wrap: wrap;
+  font-size: 0.72em;
+  line-height: 1.2;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.dt-day-total .dt-day-total-diff.is-over {
+  color: var(--color-red);
+}
+
 .dt-day-header.is-other-month .dt-day-header-num {
   opacity: 0.6;
 }
@@ -1061,6 +1106,10 @@
 .dt-modal .dt-time-input {
   width: 92px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.dt-modal .dt-actual-input {
+  width: 240px;
   font-variant-numeric: tabular-nums;
 }
 .dt-modal .dt-tag-setting .setting-item-control {
