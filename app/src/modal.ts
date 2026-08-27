@@ -746,20 +746,7 @@ export class TaskModal extends Modal {
 
   /** 実績の入力を解析する。空なら [] 、読めなければ null */
   private parseActual(): ActualRange[] | null {
-    const text = this.actualText.trim();
-    if (!text) return [];
-    const out: ActualRange[] = [];
-    for (const part of text.split(/[/、,]+/)) {
-      const p = part.trim();
-      if (!p) continue;
-      const m = /^(.+?)\s*(?:-|–|—|~|〜|～)\s*(.+)$/.exec(p);
-      if (!m) return null;
-      const start = parseTimeInput(m[1]);
-      const end = parseTimeInput(m[2]);
-      if (start === null || end === null || end <= start) return null;
-      out.push({ start, end });
-    }
-    return out;
+    return parseActualRanges(this.actualText);
   }
 
   private updateHint(): void {
@@ -824,8 +811,26 @@ export class TaskModal extends Modal {
 }
 
 /** 実績の時間帯を入力欄の文字列に */
-function formatActualRanges(ranges: ActualRange[]): string {
+export function formatActualRanges(ranges: ActualRange[]): string {
   return ranges.map((r) => `${minutesToHHMM(r.start)} - ${minutesToHHMM(r.end)}`).join(" / ");
+}
+
+/** 実績の入力（"10:05 - 11:20 / 13:00 - 13:30"）を解析する。空なら []、読めなければ null */
+export function parseActualRanges(text: string): ActualRange[] | null {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const out: ActualRange[] = [];
+  for (const part of trimmed.split(/[/、,]+/)) {
+    const p = part.trim();
+    if (!p) continue;
+    const m = /^(.+?)\s*(?:-|–|—|~|〜|～)\s*(.+)$/.exec(p);
+    if (!m) return null;
+    const start = parseTimeInput(m[1]);
+    const end = parseTimeInput(m[2]);
+    if (start === null || end === null || end <= start) return null;
+    out.push({ start, end });
+  }
+  return out;
 }
 
 /** 設定のタグを正規化して重複を除く */
@@ -925,17 +930,26 @@ export class ConfirmModal extends Modal {
   }
 }
 
-/** 完了時に「ふりかえり」の入力を促すダイアログ */
+export interface RetrospectiveOptions {
+  taskTitle: string;
+  durationLabel: string;
+  /** 記録済みの実績。渡すと実績の確認・修正欄を出す（完了時の自動記録の直しに使う） */
+  actual?: ActualRange[];
+  /** actual は実績欄の内容（欄を出していなければ undefined） */
+  onSave: (text: string, actual?: ActualRange[]) => void | Promise<void>;
+}
+
+/** 完了時に「ふりかえり」の入力を促すダイアログ（実績の確認・修正もここでできる） */
 export class RetrospectiveModal extends Modal {
   private text = "";
+  private actualText: string;
 
   constructor(
     app: App,
-    private taskTitle: string,
-    private durationLabel: string,
-    private onSave: (text: string) => void | Promise<void>
+    private opts: RetrospectiveOptions
   ) {
     super(app);
+    this.actualText = formatActualRanges(opts.actual ?? []);
   }
 
   onOpen(): void {
@@ -943,8 +957,40 @@ export class RetrospectiveModal extends Modal {
     this.titleEl.setText("ふりかえりを書きませんか？");
     this.contentEl.createEl("p", {
       cls: "dt-retro-lead",
-      text: `「${this.taskTitle || "(無題)"}」（${this.durationLabel}）が完了しました。作業してみてどうだったか・次はどう改善するかを一言残しておくと、次回に活きます。`,
+      text: `「${this.opts.taskTitle || "(無題)"}」（${this.opts.durationLabel}）が完了しました。作業してみてどうだったか・次はどう改善するかを一言残しておくと、次回に活きます。`,
     });
+
+    if (this.opts.actual !== undefined) {
+      const actSetting = new Setting(this.contentEl).setName("実績");
+      const updateDesc = () => {
+        const r = parseActualRanges(this.actualText);
+        actSetting.descEl.toggleClass("is-error", r === null);
+        actSetting.descEl.setText(
+          r === null
+            ? "実績は 10:05 - 11:20 のように入力してください"
+            : this.opts.actual?.length
+              ? "自動で記録した実績です。違っていればここで直せます。"
+              : "実際に作業した時間（空のままでもかまいません）。"
+        );
+      };
+      actSetting.addText((t) => {
+        t.setPlaceholder("10:05 - 11:20 / 13:00 - 13:30")
+          .setValue(this.actualText)
+          .onChange((v) => {
+            this.actualText = v;
+            updateDesc();
+          });
+        t.inputEl.addClass("dt-actual-input");
+        t.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" && !e.isComposing) {
+            e.preventDefault();
+            void this.save();
+          }
+        });
+      });
+      updateDesc();
+    }
+
     const ta = this.contentEl.createEl("textarea", {
       cls: "dt-retro-input",
       attr: { rows: "5", placeholder: "例: 想定より調査に時間がかかった。次は先に既知の事例を探す" },
@@ -977,7 +1023,19 @@ export class RetrospectiveModal extends Modal {
 
   private async save(): Promise<void> {
     const text = this.text.replace(/\s*\n+\s*/g, " / ").trim();
+    let actual: ActualRange[] | undefined;
+    if (this.opts.actual !== undefined) {
+      const r = parseActualRanges(this.actualText);
+      if (r === null) {
+        new Notice("実績は 10:05 - 11:20 のように入力してください");
+        return;
+      }
+      actual = r;
+    }
     this.close();
-    if (text) await this.onSave(text);
+    // ふりかえりが空でも、実績を直していれば保存する
+    const actualChanged =
+      actual !== undefined && JSON.stringify(actual) !== JSON.stringify(this.opts.actual ?? []);
+    if (text || actualChanged) await this.opts.onSave(text, actual);
   }
 }

@@ -10,6 +10,20 @@ export type ViewMode = "day" | "3day" | "week" | "month";
 
 /** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
 export type PlanActualMode = "plan" | "both" | "actual";
+
+/** 実績の計測（ストップウォッチ）の状態。Obsidian を再起動しても続くように設定に保存する */
+export interface TrackingState {
+  /** 対象タスクの日付キー（YYYY-MM-DD） */
+  date: string;
+  /** 誰の予定か（null = 自分） */
+  owner: string | null;
+  /** 対象タスクのブロックID */
+  blockId: string;
+  /** 表示用のタイトル */
+  title: string;
+  /** 計測を始めた時刻（0:00 からの分） */
+  startMin: number;
+}
 /** 通知の出し方 */
 export type NotifyStyle = "both" | "system" | "banner";
 
@@ -113,6 +127,10 @@ export interface DayTimelineSettings {
   zoomHours: number;
   /** タイムラインに出すバー（予定 / 予実 / 実績） */
   paMode: PlanActualMode;
+  /** 未完了→完了にしたとき、実績が空なら自動で記録する */
+  autoRecordActual: boolean;
+  /** 実績の計測中のタスク（無ければ null） */
+  tracking: TrackingState | null;
   /** スナップ間隔（分） */
   snapMinutes: number;
   /** クリックで作る予定の既定の長さ（分） */
@@ -179,6 +197,8 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   hourHeight: 60,
   zoomHours: 0,
   paMode: "plan",
+  autoRecordActual: true,
+  tracking: null,
   snapMinutes: 15,
   defaultDurationMinutes: 30,
   useCheckbox: true,
@@ -541,6 +561,19 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         .addToggle((t) =>
           t.setValue(s.showUnscheduledTray).onChange(async (v) => {
             s.showUnscheduledTray = v;
+            await save();
+          })
+        );
+
+      new Setting(containerEl)
+        .setName("完了にしたとき実績を自動で記録")
+        .setDesc(
+          "実績が空のタスクを完了にすると「開始 = 予定の開始、終了 = 今」で実績を記録します" +
+            "（完了が予定とかけ離れた時刻のときは予定どおりとして記録）。ふりかえりのポップアップで直せます。"
+        )
+        .addToggle((t) =>
+          t.setValue(s.autoRecordActual).onChange(async (v) => {
+            s.autoRecordActual = v;
             await save();
           })
         );

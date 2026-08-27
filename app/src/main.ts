@@ -9,8 +9,9 @@ import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, mig
 import { RecurringListModal, RecurringModal } from "./recurring";
 import { TaskModal } from "./modal";
 import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
-import type { TaskSource } from "./model";
+import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
+import { dateKey, minutesToHHMM, nowMinutes, stripTags } from "./util";
 import { newBlockId } from "./markdown/id";
 import { DayTimelineView, VIEW_TYPE_DAY_TIMELINE } from "./view";
 
@@ -364,6 +365,81 @@ export default class DayTimelinePlugin extends Plugin {
   /** 設定を保存するだけ（ビューは作り直さない）。ビュー側の表示切替などに使う */
   async persistSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  // ---------- 実績の計測（ストップウォッチ） ----------
+
+  /** タスクの実績の計測を開始する。別のタスクを計測中なら、それを記録してから始める */
+  async startTaskTracking(date: Date, task: Task): Promise<void> {
+    const store = this.blockStoreFor(task.owner);
+    if (!store) {
+      new Notice("実績の計測はタスクブロック形式のときだけ使えます");
+      return;
+    }
+    if (this.settings.tracking) await this.stopTaskTracking(true);
+    // ブロックID が無いタスクにはこのタイミングで付ける（計測中に編集されても追えるように）
+    const link = await store.linkTo(date, task);
+    const blockId = link?.split("#^")[1];
+    if (!blockId) {
+      new Notice("計測を開始できませんでした（タスクが見つかりません）");
+      return;
+    }
+    this.settings.tracking = {
+      date: dateKey(date),
+      owner: task.owner ?? null,
+      blockId,
+      title: stripTags(task.title) || "(無題)",
+      startMin: nowMinutes(),
+    };
+    await this.persistSettings();
+    new Notice(`計測開始: ${this.settings.tracking.title}`);
+    for (const v of this.timelineViews()) v.renderTracking();
+  }
+
+  /** 計測を終える。record = true なら経過時間をタスクの実績に追記する */
+  async stopTaskTracking(record: boolean): Promise<void> {
+    const tr = this.settings.tracking;
+    if (!tr) return;
+    this.settings.tracking = null;
+    await this.persistSettings();
+    for (const v of this.timelineViews()) v.renderTracking();
+    if (!record) {
+      new Notice("計測をやめました（実績には記録していません）");
+      return;
+    }
+    try {
+      const store = this.blockStoreFor(tr.owner);
+      if (!store) return;
+      const [y, m, d] = tr.date.split("-").map(Number);
+      const date = new Date(y, (m ?? 1) - 1, d ?? 1);
+      // 日をまたいだ場合は、開始した日の終わり（24:00）までを実績にする
+      const sameDay = dateKey(new Date()) === tr.date;
+      let start = tr.startMin;
+      let end = sameDay ? nowMinutes() : 1440;
+      if (end <= start) end = Math.min(start + 1, 1440);
+      if (end <= start) start = end - 1;
+      const day = await store.load(date);
+      const task = day.tasks.find((t) => t.blockId === tr.blockId);
+      if (!task) {
+        new Notice("計測していたタスクが見つからず、実績を記録できませんでした");
+        return;
+      }
+      const ok = await store.update(date, task, {
+        title: task.title,
+        start: task.start,
+        end: task.end,
+        done: task.done,
+        actual: [...task.actual, { start, end }],
+      });
+      if (ok) {
+        new Notice(`実績 ${minutesToHHMM(start)} - ${minutesToHHMM(end)} を記録しました: ${tr.title}`);
+      } else {
+        new Notice("実績を記録できませんでした。ノートが変更された可能性があります。");
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("実績を記録できませんでした: " + String(e));
+    }
   }
 
   async saveSettings(): Promise<void> {

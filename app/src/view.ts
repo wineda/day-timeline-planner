@@ -12,7 +12,8 @@ import {
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
-import { ConfirmModal, RetrospectiveModal, TaskModal } from "./modal";
+import { ConfirmModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
+import type { ActualRange } from "./markdown/blocks";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
 import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
@@ -73,6 +74,7 @@ export class DayTimelineView extends ItemView {
   private noteBtnEl!: HTMLElement;
   private timerEl!: HTMLElement;
   private timerBtnEl!: HTMLElement;
+  private trackingEl!: HTMLElement;
   private modeBtns = new Map<ViewMode, HTMLElement>();
   private zoomBtns = new Map<number, HTMLElement>();
   private paBtns = new Map<PlanActualMode, HTMLElement>();
@@ -155,7 +157,12 @@ export class DayTimelineView extends ItemView {
         this.onVaultChange(oldPath);
       })
     );
-    this.registerInterval(window.setInterval(() => this.updateNowLine(), 30_000));
+    this.registerInterval(
+      window.setInterval(() => {
+        this.updateNowLine();
+        this.renderTracking();
+      }, 30_000)
+    );
     // エディタのカーソル位置に合わせて、対応するタスクをハイライト
     this.registerDomEvent(document, "selectionchange", () => this.syncCursorDebounced());
 
@@ -374,6 +381,21 @@ export class DayTimelineView extends ItemView {
     this.membersEl = header.createDiv("dt-members");
 
     const actions = header.createDiv("dt-actions");
+    // 実績を計測中のタスク（クリックで終了して実績に記録）
+    this.trackingEl = actions.createEl("button", { cls: "dt-tracking-chip", attr: { "aria-label": "実績の計測" } });
+    this.trackingEl.onclick = () => void this.plugin.stopTaskTracking(true);
+    this.trackingEl.addEventListener("contextmenu", (e: MouseEvent) => {
+      e.preventDefault();
+      const menu = new Menu();
+      menu.addItem((i) =>
+        i.setTitle("計測を終了して実績に記録").setIcon("square").onClick(() => void this.plugin.stopTaskTracking(true))
+      );
+      menu.addItem((i) =>
+        i.setTitle("記録せずにやめる").setIcon("x").onClick(() => void this.plugin.stopTaskTracking(false))
+      );
+      menu.showAtMouseEvent(e);
+    });
+    this.renderTracking();
     this.timerEl = actions.createEl("button", { cls: "dt-timer-chip", attr: { "aria-label": "タイマー" } });
     this.timerEl.onclick = () => this.plugin.openTimerModal();
     this.timerBtnEl = this.iconButton(actions, "timer", "タイマー", () => this.plugin.openTimerModal());
@@ -669,6 +691,7 @@ export class DayTimelineView extends ItemView {
     this.paEl.toggleClass("is-hidden", !this.plugin.blockStore());
     this.renderMemberChips();
 
+    this.renderTracking();
     const path = this.plugin.store.pathFor(this.date);
     const exists = this.dataFor(this.date).exists;
     this.noteBtnEl.setAttr(
@@ -717,6 +740,21 @@ export class DayTimelineView extends ItemView {
         void this.reload();
       };
     }
+  }
+
+  /** ヘッダーの「実績を計測中」チップ（main の startTaskTracking からも呼ばれる） */
+  renderTracking(): void {
+    if (!this.trackingEl) return;
+    const tr = this.plugin.settings.tracking;
+    this.trackingEl.toggleClass("is-visible", !!tr);
+    if (!tr) return;
+    const sameDay = dateKey(new Date()) === tr.date;
+    const elapsed = Math.max(sameDay ? nowMinutes() - tr.startMin : 1440 - tr.startMin, 0);
+    this.trackingEl.setText(`⏺ ${formatDuration(elapsed)} ${tr.title}`);
+    this.trackingEl.setAttr(
+      "aria-label",
+      `実績を計測中: ${tr.title}\nクリックで終了して実績に記録（右クリックでメニュー）`
+    );
   }
 
   /** ヘッダーのタイマー表示 */
@@ -917,11 +955,11 @@ export class DayTimelineView extends ItemView {
         }
       }
       if (pa !== "plan") {
-        // 実績は区間ごとに1本のバーにする
+        // 実績は区間ごとに1本のバーにする（idx = タスク内の何番目の区間か。ドラッグ修正に使う）
         const items = tasks.flatMap((t) =>
           t.actual
-            .filter((r) => r.end > dayStart && r.start < dayEnd)
-            .map((r) => ({ start: r.start, end: r.end, task: t }))
+            .map((r, idx) => ({ start: r.start, end: r.end, task: t, idx }))
+            .filter((it) => it.end > dayStart && it.start < dayEnd)
         );
         const layout = layoutEvents(items);
         const lane = pa === "both" ? { left: 0.5, width: 0.5 } : { left: 0, width: 1 };
@@ -1027,10 +1065,10 @@ export class DayTimelineView extends ItemView {
     this.attachHoverPreview(el, col.date, task);
   }
 
-  /** 実績のバー（1区間 = 1本）。ドラッグはせず、クリックで編集を開く */
+  /** 実績のバー（1区間 = 1本）。クリックで編集、ドラッグで移動、下端で終了時刻を変更 */
   private renderActualBar(
     col: DayColumn,
-    item: { start: number; end: number; task: Task },
+    item: { start: number; end: number; task: Task; idx: number },
     info: LayoutInfo,
     lane: { left: number; width: number }
   ): void {
@@ -1068,17 +1106,81 @@ export class DayTimelineView extends ItemView {
     const ownerName = this.ownerName(task);
     if (ownerName) titleEl.createSpan({ cls: "dt-owner-label", text: ownerName });
     titleEl.appendText(this.displayTitle(task));
-    el.createDiv({
+    const timeEl = el.createDiv({
       cls: "dt-event-time",
       text: `${minutesToHHMM(item.start)} - ${minutesToHHMM(item.end)}`,
     });
+    const handle = el.createDiv("dt-event-resize");
 
-    el.addEventListener("pointerdown", (e) => e.stopPropagation());
-    el.addEventListener("click", (e) => {
+    // この区間だけを差し替えた実績で保存する
+    const commitRanges = (start: number, end: number) => {
+      const ranges = task.actual.map((r, i) => (i === item.idx ? { start, end } : r));
+      void this.commitUpdate(col.date, task, { ...this.draftOf(task), actual: ranges });
+    };
+
+    // 本体: クリックで編集、ドラッグで区間ごと移動
+    el.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
       e.stopPropagation();
-      if (e.ctrlKey || e.metaKey) void this.openTaskInNote(col.date, task);
-      else this.openEditModal(col.date, task);
+      const toNote = e.ctrlKey || e.metaKey;
+      const dur = item.end - item.start;
+      let newStart = item.start;
+      this.startDrag(el, e, {
+        onMove: (dy) => {
+          newStart = clamp(
+            this.snapRound(item.start + this.pxToMinutes(dy)),
+            dayStart,
+            Math.max(dayStart, dayEnd - dur)
+          );
+          el.addClass("is-dragging");
+          el.style.top = this.minutesToPx(newStart) + "px";
+          timeEl.setText(`${minutesToHHMM(newStart)} - ${minutesToHHMM(newStart + dur)}`);
+        },
+        onEnd: (moved) => {
+          el.removeClass("is-dragging");
+          if (!moved) {
+            if (toNote) void this.openTaskInNote(col.date, task);
+            else this.openEditModal(col.date, task);
+            return;
+          }
+          if (newStart === item.start) {
+            this.renderEvents();
+            return;
+          }
+          commitRanges(newStart, newStart + dur);
+        },
+        onCancel: () => this.renderEvents(),
+      });
     });
+
+    // 下端のハンドル: ドラッグで終了時刻を変更
+    handle.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      let newEnd = item.end;
+      this.startDrag(handle, e, {
+        onMove: (dy) => {
+          newEnd = clamp(
+            this.snapRound(item.end + this.pxToMinutes(dy)),
+            item.start + s.snapMinutes,
+            dayEnd
+          );
+          el.addClass("is-dragging");
+          el.style.height = Math.max(this.minutesToPx(newEnd) - this.minutesToPx(item.start) - 2, 4) + "px";
+          timeEl.setText(`${minutesToHHMM(item.start)} - ${minutesToHHMM(newEnd)}`);
+        },
+        onEnd: (moved) => {
+          el.removeClass("is-dragging");
+          if (!moved || newEnd === item.end) {
+            this.renderEvents();
+            return;
+          }
+          commitRanges(item.start, newEnd);
+        },
+        onCancel: () => this.renderEvents(),
+      });
+    });
+
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1778,6 +1880,22 @@ export class DayTimelineView extends ItemView {
         .setIcon("check")
         .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), done: !task.done }))
     );
+    if (this.plugin.blockStoreFor(task.owner)) {
+      const tr = this.plugin.settings.tracking;
+      const isTracking =
+        !!tr && !!task.blockId && tr.blockId === task.blockId && (tr.owner ?? null) === (task.owner ?? null);
+      menu.addItem((i) =>
+        isTracking
+          ? i
+              .setTitle("計測を終了して実績に記録")
+              .setIcon("square")
+              .onClick(() => void this.plugin.stopTaskTracking(true))
+          : i
+              .setTitle("実績の計測を開始")
+              .setIcon("play")
+              .onClick(() => void this.plugin.startTaskTracking(date, task))
+      );
+    }
     menu.addItem((i) =>
       i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openTaskInNote(date, task))
     );
@@ -1981,6 +2099,9 @@ export class DayTimelineView extends ItemView {
       await this.commitChangeOwner(date, task, data);
       return;
     }
+    // 未完了 → 完了で実績が空なら、自動で実績を入れる
+    const auto = this.autoActual(date, task, data, wasDone);
+    if (auto) data = { ...data, actual: auto };
     let updated = false;
     try {
       const ok = await this.storeOf(task).update(date, task, data);
@@ -1991,7 +2112,34 @@ export class DayTimelineView extends ItemView {
       new Notice("タスクを保存できませんでした: " + String(e));
     }
     await this.reload();
-    if (updated) this.maybePromptRetrospective(date, task, data, wasDone);
+    if (updated) {
+      const prompted = this.maybePromptRetrospective(date, task, data, wasDone);
+      // ふりかえりのポップアップが出ないときは、自動記録したことだけ知らせる
+      if (auto && !prompted) {
+        new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
+      }
+    }
+  }
+
+  /**
+   * 完了にしたときの実績の自動記録（設定でオフ可）。
+   * 今日のタスクを作業の前後で完了にしたときは「予定の開始 〜 今」、
+   * それ以外（後からまとめてチェックした・別の日のタスク）は「予定どおり」として記録する。
+   */
+  private autoActual(date: Date, task: Task, data: TaskDraft, wasDone: boolean): ActualRange[] | null {
+    const s = this.plugin.settings;
+    if (!s.autoRecordActual || !this.plugin.blockStore()) return null;
+    if (!data.done || wasDone) return null;
+    const existing = data.actual !== undefined ? data.actual : task.actual;
+    if (existing.length) return null;
+    const start = data.start ?? task.start;
+    const end = data.end ?? task.end;
+    if (start === null || end === null) return null;
+    if (isToday(date)) {
+      const now = nowMinutes();
+      if (now > start && now <= end + 60) return [{ start, end: Math.min(now, 1440) }];
+    }
+    return [{ start, end }];
   }
 
   /**
@@ -2033,30 +2181,38 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** 15分以上のタスクを完了にしたとき、ふりかえりが空なら入力を促す */
-  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): void {
-    if (!this.plugin.blockStore()) return; // ブロック形式のみ
-    if (!data.done || wasDone) return; // 「未完了 → 完了」のときだけ
+  /**
+   * 15分以上のタスクを完了にしたとき、ふりかえりが空なら入力を促す。
+   * 実績の確認・修正欄も一緒に出す。ポップアップを出したら true
+   */
+  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): boolean {
+    if (!this.plugin.blockStore()) return false; // ブロック形式のみ
+    if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
     const start = data.start ?? task.start;
     const end = data.end ?? task.end;
-    if (start === null || end === null || end - start < 15) return;
+    if (start === null || end === null || end - start < 15) return false;
     const retro = data.retrospective !== undefined ? data.retrospective : task.retrospective;
-    if (retro && retro.trim()) return;
-    new RetrospectiveModal(
-      this.app,
-      stripTags(data.title || task.title),
-      formatDuration(end - start),
-      async (text) => {
+    if (retro && retro.trim()) return false;
+    const recorded = data.actual !== undefined ? data.actual : task.actual;
+    new RetrospectiveModal(this.app, {
+      taskTitle: stripTags(data.title || task.title),
+      durationLabel: formatDuration(end - start),
+      actual: recorded,
+      onSave: async (text, actual) => {
         try {
-          const ok = await this.storeOf(task).update(date, task, { ...data, retrospective: text });
+          const patch: TaskDraft = { ...data };
+          if (text) patch.retrospective = text;
+          if (actual !== undefined) patch.actual = actual;
+          const ok = await this.storeOf(task).update(date, task, patch);
           if (!ok) new Notice("ふりかえりを保存できませんでした。ノートが変更された可能性があります。");
         } catch (e) {
           console.error(e);
           new Notice("ふりかえりを保存できませんでした: " + String(e));
         }
         await this.reload();
-      }
-    ).open();
+      },
+    }).open();
+    return true;
   }
 
   private async commitDelete(date: Date, task: Task): Promise<void> {
