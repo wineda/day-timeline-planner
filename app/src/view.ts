@@ -14,6 +14,7 @@ import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
 import { ConfirmModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
 import type { ActualRange } from "./markdown/blocks";
+import { projectDisplayName } from "./project";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
 import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
@@ -1065,6 +1066,16 @@ export class DayTimelineView extends ItemView {
         });
       }
     }
+    if (task.project) {
+      const link = task.project;
+      const badge = el.createDiv({ cls: "dt-event-project", text: projectDisplayName(link) });
+      badge.setAttr("aria-label", `プロジェクト: ${projectDisplayName(link)}\nクリックでノートを開く`);
+      badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+      badge.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        void this.plugin.projects?.open(link);
+      });
+    }
     const handle = el.createDiv("dt-event-resize");
 
     this.attachEventInteractions(el, timeEl, handle, col, task);
@@ -1923,6 +1934,15 @@ export class DayTimelineView extends ItemView {
     menu.addItem((i) =>
       i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openTaskInNote(date, task))
     );
+    if (task.project && this.plugin.projects) {
+      const link = task.project;
+      menu.addItem((i) =>
+        i
+          .setTitle(`プロジェクト「${projectDisplayName(link)}」を開く`)
+          .setIcon("arrow-up-right")
+          .onClick(() => void this.plugin.projects?.open(link))
+      );
+    }
     {
       const url = this.ticketUrlOf(task);
       if (url && task.ticket) {
@@ -2034,6 +2054,7 @@ export class DayTimelineView extends ItemView {
       trackers: s.trackers,
       owners: this.ownerChoices(),
       initialOwner: null,
+      ...this.projectOptions(),
       onSubmit: (data) => this.commitCreate(date, data),
       onClose,
     }).open();
@@ -2057,6 +2078,7 @@ export class DayTimelineView extends ItemView {
       trackers: this.plugin.settings.trackers,
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
+      ...this.projectOptions(),
       onAutoSave: async (data) => {
         // 持ち主の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
         const next = await serially(() => this.commitAutoSave(date, current, data));
@@ -2089,8 +2111,20 @@ export class DayTimelineView extends ItemView {
       steps: task.steps,
       retrospective: task.retrospective,
       actual: task.actual,
+      project: task.project,
       details: task.details,
       ticket: task.ticket,
+    };
+  }
+
+  /** 編集・追加ダイアログに渡すプロジェクトまわりの共通オプション */
+  private projectOptions() {
+    const projects = this.plugin.projects;
+    if (!projects) return {};
+    return {
+      projects: projects.list(),
+      onCreateProject: (name: string) => projects.create(name),
+      onOpenProject: (link: string) => projects.open(link),
     };
   }
 
@@ -2331,6 +2365,7 @@ export class DayTimelineView extends ItemView {
       showDoneCondition: true,
       showActual: true,
       trackers: this.plugin.settings.trackers,
+      ...this.projectOptions(),
       onAutoSave: async (data) => {
         // 自動保存では Inbox に留める。「時刻を入れたら今日へ移す」のは閉じるときに行う
         const next = await serially(() => this.commitInboxAutoSave(current, data));

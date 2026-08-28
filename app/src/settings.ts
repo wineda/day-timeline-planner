@@ -129,6 +129,8 @@ export interface DayTimelineSettings {
   paMode: PlanActualMode;
   /** 未完了→完了にしたとき、実績が空なら自動で記録する */
   autoRecordActual: boolean;
+  /** プロジェクト（大きなタスク）ノートを置くフォルダ。空欄 = <フォルダ>/Projects */
+  projectsFolder: string;
   /** 実績の計測中のタスク（無ければ null） */
   tracking: TrackingState | null;
   /** スナップ間隔（分） */
@@ -198,6 +200,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   zoomHours: 0,
   paMode: "plan",
   autoRecordActual: true,
+  projectsFolder: "",
   tracking: null,
   snapMinutes: 15,
   defaultDurationMinutes: 30,
@@ -563,6 +566,19 @@ export class DayTimelineSettingTab extends PluginSettingTab {
             s.showUnscheduledTray = v;
             await save();
           })
+        );
+
+      new Setting(containerEl)
+        .setName("プロジェクトのフォルダ")
+        .setDesc("プロジェクト（大きなタスク）のノートを置く場所。空欄なら「<フォルダ>/Projects」。")
+        .addText((t) =>
+          t
+            .setPlaceholder((s.folder ? s.folder + "/" : "") + "Projects")
+            .setValue(s.projectsFolder)
+            .onChange(async (v) => {
+              s.projectsFolder = v.trim();
+              await save();
+            })
         );
 
       new Setting(containerEl)

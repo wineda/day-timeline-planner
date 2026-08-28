@@ -17,6 +17,7 @@ import {
   parseBlockDocument,
   parseHeadingSetting,
   renderActualLine,
+  renderProjectLine,
   renderDoneConditionLine,
   renderHeadingLine,
   renderRetrospectiveLine,
@@ -56,6 +57,8 @@ export interface TaskPatch {
   retrospective?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
   actual?: ActualRange[];
+  /** プロジェクト。undefined = 変更しない / null = 外す */
+  project?: string | null;
   /** 詳細（自由な本文）。undefined = 変更しない / "" = 消す */
   details?: string;
 }
@@ -71,6 +74,7 @@ export interface NewTaskInput {
   steps?: TaskStep[];
   retrospective?: string;
   actual?: ActualRange[];
+  project?: string | null;
   details?: string;
   body?: string[];
   /** 指定すればその ID を使う（日をまたぐ移動などで使う） */
@@ -107,6 +111,7 @@ export function insertTask(content: string, draft: NewTaskInput, opts: InsertOpt
     steps: draft.steps,
     retrospective: draft.retrospective,
     actual: draft.actual,
+    project: draft.project,
     body: draft.body ?? (draft.details ? draft.details.replace(/\s+$/, "").split("\n") : undefined),
   };
   return insertBlockLines(content, renderTaskBlock(source, opts), draft.start, opts);
@@ -184,9 +189,10 @@ export function updateTask(
   // 詳細の領域内にある「ふりかえり」「完了条件」「実績」行は詳細と一緒に編集されるので、個別の書き換えは行わない
   const insideDetails = (line: number | null) =>
     patch.details !== undefined && line !== null && line >= t.detailsStart;
-  // メタ行直下に並ぶ特別な行（実績・完了条件）を飛ばした挿入位置
+  // メタ行直下に並ぶ特別な行（プロジェクト・実績・完了条件）を飛ばした挿入位置
   let afterMeta = t.metaLine + 1;
-  while (afterMeta === t.actualLine || afterMeta === t.doneConditionLine) afterMeta++;
+  while (afterMeta === t.actualLine || afterMeta === t.doneConditionLine || afterMeta === t.projectLine)
+    afterMeta++;
   // ふりかえり: 既存行を書き換え / 無ければステップ・完了条件の後ろに足す / 空なら消す
   if (patch.retrospective !== undefined && !insideDetails(t.retrospectiveLine)) {
     const text = patch.retrospective.trim();
@@ -229,6 +235,16 @@ export function updateTask(
       if (!ranges.length) deleted = true;
     } else if (ranges.length) {
       ops.push({ at: t.metaLine + 1, del: 0, lines: [renderActualLine(ranges)], order: 3 });
+    }
+  }
+  // プロジェクト: 既存行を書き換え / 無ければメタ行の直下に足す / null なら消す
+  if (patch.project !== undefined && !insideDetails(t.projectLine)) {
+    const link = patch.project;
+    if (t.projectLine !== null) {
+      ops.push({ at: t.projectLine, del: 1, lines: link ? [renderProjectLine(link)] : [], order: 4 });
+      if (!link) deleted = true;
+    } else if (link) {
+      ops.push({ at: t.metaLine + 1, del: 0, lines: [renderProjectLine(link)], order: 4 });
     }
   }
   ops.sort((a, b) => b.at - a.at || a.order - b.order);

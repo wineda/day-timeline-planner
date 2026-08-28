@@ -61,6 +61,10 @@ export interface TaskBlock {
   actual: ActualRange[];
   /** 実績の行番号（無ければ null） */
   actualLine: number | null;
+  /** プロジェクト（大きなタスク）ノートへのリンク先。無ければ null */
+  project: string | null;
+  /** プロジェクト行の行番号（無ければ null） */
+  projectLine: number | null;
   /** ステップ（メタ行の直後に続くチェックリスト） */
   steps: TaskStep[];
   /** ステップの行範囲（無ければ stepsStart = null） */
@@ -142,6 +146,8 @@ export interface MetaSource {
   retrospective?: string;
   /** 実績（新規ブロックを組み立てるときだけ使う） */
   actual?: ActualRange[];
+  /** プロジェクト（新規ブロックを組み立てるときだけ使う） */
+  project?: string | null;
 }
 
 /** タスクを小さく分けた1ステップ */
@@ -234,6 +240,25 @@ export function renderActualLine(ranges: ActualRange[]): string {
 /** 実績の合計（分） */
 export function actualTotal(ranges: ActualRange[]): number {
   return ranges.reduce((n, r) => n + (r.end - r.start), 0);
+}
+
+/** プロジェクト（大きなタスク）への参照行（例: "- プロジェクト: [[Timeline/Projects/環境構築]]"） */
+const PROJECT_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?プロジェクト(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/**
+ * プロジェクト行ならリンク先（[[...]] の中身。別名は除く）を返す（空でも ""）。
+ * プロジェクト行でなければ null
+ */
+export function parseProjectLine(line: string): string | null {
+  const m = PROJECT_RE.exec(line);
+  if (!m) return null;
+  const v = m[1].trim();
+  const link = /^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/.exec(v);
+  return link ? link[1].trim() : v;
+}
+
+export function renderProjectLine(linktext: string): string {
+  return `- プロジェクト: [[${linktext.trim()}]]`;
 }
 
 /** メタ行のリマインド指定（例: 🔔10 / 🔔off） */
@@ -426,13 +451,15 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
     const meta = mi < end ? parseMetaLine(lines[mi]) : null;
     if (!meta) continue;
 
-    // 本文の中の「完了条件」「ふりかえり」「実績」行（コードブロック内は除く）
+    // 本文の中の「完了条件」「ふりかえり」「実績」「プロジェクト」行（コードブロック内は除く）
     let doneCondition = "";
     let doneConditionLine: number | null = null;
     let retrospective = "";
     let retrospectiveLine: number | null = null;
     let actual: ActualRange[] = [];
     let actualLine: number | null = null;
+    let project: string | null = null;
+    let projectLine: number | null = null;
     let bodyFence = false;
     for (let k = mi + 1; k < end; k++) {
       if (FENCE_RE.test(lines[k])) {
@@ -456,6 +483,14 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           continue;
         }
       }
+      if (projectLine === null) {
+        const pj = parseProjectLine(lines[k]);
+        if (pj !== null) {
+          project = pj || null;
+          projectLine = k;
+          continue;
+        }
+      }
       if (retrospectiveLine === null) {
         const rt = parseRetrospectiveLine(lines[k]);
         if (rt !== null) {
@@ -463,7 +498,13 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           retrospectiveLine = k;
         }
       }
-      if (doneConditionLine !== null && retrospectiveLine !== null && actualLine !== null) break;
+      if (
+        doneConditionLine !== null &&
+        retrospectiveLine !== null &&
+        actualLine !== null &&
+        projectLine !== null
+      )
+        break;
     }
 
     // ステップ: メタ行（と完了条件・実績行）の直後に続くチェックリスト。空行が来るまで
@@ -474,13 +515,17 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       let k = mi + 1;
       while (
         k < end &&
-        (lines[k].trim() === "" || k === doneConditionLine || k === retrospectiveLine || k === actualLine)
+        (lines[k].trim() === "" ||
+          k === doneConditionLine ||
+          k === retrospectiveLine ||
+          k === actualLine ||
+          k === projectLine)
       )
         k++;
       if (k < end && !FENCE_RE.test(lines[k]) && parseStepLine(lines[k])) {
         stepsStart = k;
         while (k < end) {
-          if (k === doneConditionLine || k === retrospectiveLine || k === actualLine) break;
+          if (k === doneConditionLine || k === retrospectiveLine || k === actualLine || k === projectLine) break;
           const st = parseStepLine(lines[k]);
           if (st) {
             steps.push({ text: st.text, done: st.done, children: [] });
@@ -503,6 +548,7 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
         k === doneConditionLine ||
         k === retrospectiveLine ||
         k === actualLine ||
+        k === projectLine ||
         (stepsStart !== null && k >= stepsStart && k < stepsEnd) ||
         lines[k].trim() === ""
       ) {
@@ -529,6 +575,8 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       retrospectiveLine,
       actual,
       actualLine,
+      project,
+      projectLine,
       steps,
       stepsStart,
       stepsEnd,
@@ -585,6 +633,7 @@ export function renderTaskBlock(
   level = opts.headingLevel
 ): string[] {
   const out = [renderHeadingLine(t.title, level), renderMetaLine(t, opts)];
+  if (t.project) out.push(renderProjectLine(t.project));
   if (t.actual?.length) out.push(renderActualLine(t.actual));
   if (t.doneCondition && t.doneCondition.trim()) out.push(renderDoneConditionLine(t.doneCondition));
   if (t.steps?.length) out.push(...renderStepLines(t.steps));
@@ -599,6 +648,7 @@ export function bodyPreview(body: string[], max = 60): string {
   for (const raw of body) {
     if (parseDoneConditionLine(raw) !== null) continue; // 完了条件は別に出す
     if (parseActualLine(raw) !== null) continue; // 実績はバーとして出す
+    if (parseProjectLine(raw) !== null) continue; // プロジェクトはバッジとして出す
     const line = raw
       .replace(/^\s*[-*+]\s+(?:\[.\]\s*)?/, "") // リスト記号とチェックボックス
       .replace(/^\s*>\s?/, "") // 引用

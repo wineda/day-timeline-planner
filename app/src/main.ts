@@ -14,6 +14,7 @@ import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildWeeklyReport, type ReportDay } from "./report";
+import { ProjectStore } from "./project";
 import { newBlockId } from "./markdown/id";
 import { DayTimelineView, VIEW_TYPE_DAY_TIMELINE } from "./view";
 
@@ -22,6 +23,8 @@ export default class DayTimelinePlugin extends Plugin {
   store!: TaskSource;
   /** Inbox（ブロック形式のときだけ。旧リスト形式では null） */
   inbox: InboxStore | null = null;
+  /** プロジェクト（大きなタスク）。ブロック形式のときだけ */
+  projects: ProjectStore | null = null;
   /** メンバー ID → その人の予定のストア（ブロック形式のときだけ） */
   memberStores = new Map<string, MemberStore>();
   timer!: TimerService;
@@ -260,6 +263,9 @@ export default class DayTimelinePlugin extends Plugin {
       tagChoices: this.settings.tagColors,
       showDoneCondition: true,
       trackers: this.settings.trackers,
+      projects: this.projects?.list(),
+      onCreateProject: (name) => (this.projects ? this.projects.create(name) : Promise.resolve(null)),
+      onOpenProject: (link) => this.projects?.open(link),
       onSubmit: async (data) => {
         try {
           await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
@@ -289,6 +295,8 @@ export default class DayTimelinePlugin extends Plugin {
         : new BlockTaskStore(this.app, () => this.settings);
     this.inbox =
       this.settings.storageFormat === "list" ? null : new InboxStore(this.app, () => this.settings);
+    this.projects =
+      this.settings.storageFormat === "list" ? null : new ProjectStore(this.app, () => this.settings);
     this.memberStores = new Map();
     if (this.settings.storageFormat !== "list") {
       for (const m of this.settings.members) {

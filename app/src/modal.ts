@@ -1,5 +1,6 @@
-import { App, Modal, Notice, Setting, setIcon } from "obsidian";
+import { App, DropdownComponent, Modal, Notice, Setting, setIcon } from "obsidian";
 import type { TaskDraft } from "./model";
+import { projectDisplayName, type ProjectRef } from "./project";
 import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
 import { normalizeTag, ticketUrl, type IssueTracker, type TagColor } from "./settings";
 import { contrastTextColor, formatDuration, minutesToHHMM, parseTimeInput } from "./util";
@@ -20,6 +21,12 @@ export interface TaskModalOptions {
   showDoneCondition?: boolean;
   /** 実績（実際に作業した時間）の入力欄を出すか（ブロック形式の編集時のみ） */
   showActual?: boolean;
+  /** プロジェクト（大きなタスク）の選択肢。渡すと欄を出す（ブロック形式のみ） */
+  projects?: ProjectRef[];
+  /** 新しいプロジェクトノートを作る。作れたらリンク先を返す */
+  onCreateProject?: (name: string) => Promise<string | null>;
+  /** プロジェクトノートを開く（ダイアログは閉じてから呼ばれる） */
+  onOpenProject?: (linktext: string) => void | Promise<void>;
   /** チケット管理ツール（登録があればチケット欄を出す。ブロック形式のみ） */
   trackers?: IssueTracker[];
   /** 「誰の予定か」の選択肢（無ければ欄を出さない） */
@@ -50,6 +57,8 @@ export class TaskModal extends Modal {
   private ticketTracker: string;
   private ticketId: string;
   private owner: string | null;
+  /** プロジェクト（リンク先文字列）。null = なし */
+  private project: string | null;
   private steps: TaskStep[];
   private stepsListEl!: HTMLElement;
   private stepsCountEl!: HTMLElement;
@@ -86,6 +95,7 @@ export class TaskModal extends Modal {
     this.ticketTracker = opts.initial.ticket?.tracker ?? "";
     this.ticketId = opts.initial.ticket?.id ?? "";
     this.owner = opts.initialOwner ?? null;
+    this.project = opts.initial.project ?? null;
     this.steps = (opts.initial.steps ?? []).map((st) => ({ ...st, children: [...(st.children ?? [])] }));
 
     this.tagChoices = normalizeTagChoices(opts.tagChoices);
@@ -146,6 +156,10 @@ export class TaskModal extends Modal {
       if (this.opts.mode === "edit") {
         ownerSetting.setDesc("変えると、その人のノートへブロックごと移ります。");
       }
+    }
+
+    if (this.opts.projects) {
+      this.buildProjectSection(contentEl);
     }
 
     if (this.opts.showDoneCondition) {
@@ -562,6 +576,109 @@ export class TaskModal extends Modal {
     this.autosaveStatusEl.toggleClass("dt-autosave-error", isError);
   }
 
+  // ---------- プロジェクト ----------
+
+  /** 「プロジェクト」欄（選択・新規作成・ノートを開く） */
+  private buildProjectSection(contentEl: HTMLElement): void {
+    const projects = this.opts.projects ?? [];
+    const setting = new Setting(contentEl).setName("プロジェクト");
+    let dd: DropdownComponent | null = null;
+    const updateDesc = () => {
+      setting.descEl.setText(
+        this.project
+          ? "メモや進捗はプロジェクトノートにまとまります。→ ボタンで開けます。"
+          : "大きなタスクにまとめると、日をまたいでメモや進捗を共有できます。"
+      );
+    };
+
+    // 「＋ 新規作成…」を選んだときに出す入力欄
+    const newInput = setting.controlEl.createEl("input", {
+      type: "text",
+      cls: "dt-project-new",
+      attr: { placeholder: "新しいプロジェクト名（Enter で作成）" },
+    });
+    const hideNew = () => newInput.removeClass("is-visible");
+    const cancelNew = () => {
+      newInput.value = "";
+      hideNew();
+      dd?.setValue(this.project ?? "");
+    };
+    const commitNew = async () => {
+      const name = newInput.value.trim();
+      if (!name) {
+        cancelNew();
+        return;
+      }
+      const link = await this.opts.onCreateProject?.(name);
+      if (!link) {
+        new Notice("プロジェクトを作成できませんでした");
+        return;
+      }
+      if (dd && !Array.from(dd.selectEl.options).some((o) => o.value === link)) {
+        dd.addOption(link, projectDisplayName(link));
+      }
+      this.project = link;
+      dd?.setValue(link);
+      newInput.value = "";
+      hideNew();
+      updateDesc();
+      this.scheduleAutosave(); // setValue はイベントを出さないので明示的に
+    };
+    newInput.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        void commitNew();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelNew();
+      }
+    });
+
+    setting.addDropdown((d) => {
+      dd = d;
+      d.addOption("", "なし");
+      for (const p of projects) d.addOption(p.linktext, p.name);
+      if (this.project && !projects.some((p) => p.linktext === this.project)) {
+        d.addOption(this.project, projectDisplayName(this.project));
+      }
+      d.addOption("__new__", "＋ 新規作成…");
+      d.setValue(this.project ?? "");
+      d.onChange((v) => {
+        if (v === "__new__") {
+          newInput.addClass("is-visible");
+          newInput.focus();
+          return;
+        }
+        hideNew();
+        this.project = v || null;
+        updateDesc();
+      });
+    });
+    // 入力欄はドロップダウンの後ろに出す
+    setting.controlEl.appendChild(newInput);
+
+    setting.addExtraButton((b) =>
+      b
+        .setIcon("arrow-up-right")
+        .setTooltip("プロジェクトノートを開く")
+        .onClick(() => {
+          if (!this.project) {
+            new Notice("プロジェクトが選ばれていません");
+            return;
+          }
+          const open = this.opts.onOpenProject;
+          if (!open) return;
+          const link = this.project;
+          this.close(); // 自動保存があれば閉じるときに保存される
+          void open(link);
+        })
+    );
+    updateDesc();
+  }
+
   // ---------- ステップ ----------
 
   /** 「ステップ」の入力欄（チェック・並べ替え・追加・削除） */
@@ -805,6 +922,7 @@ export class TaskModal extends Modal {
           : null
         : undefined,
       actual: this.opts.showActual ? this.parseActual() ?? undefined : undefined,
+      project: this.opts.projects ? this.project : undefined,
       owner: this.opts.owners?.length ? this.owner : undefined,
     };
   }

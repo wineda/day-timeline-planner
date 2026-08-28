@@ -41,6 +41,8 @@ export interface Task {
   retrospective: string;
   /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
   actual: ActualRange[];
+  /** プロジェクト（大きなタスク）ノートへのリンク先（ブロック形式のみ。無ければ null） */
+  project: string | null;
   /** 詳細 = 自由な本文（ブロック形式のみ。Markdown、複数行可） */
   details: string;
   /** チケット（ブロック形式のみ。無ければ null） */
@@ -76,6 +78,8 @@ export interface TaskDraft {
   retrospective?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
   actual?: ActualRange[];
+  /** プロジェクト。undefined = 変更しない / null = 外す */
+  project?: string | null;
   /** undefined = 変更しない */
   details?: string;
   /** undefined = 変更しない / null = 外す */
