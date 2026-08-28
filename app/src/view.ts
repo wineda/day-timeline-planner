@@ -608,7 +608,8 @@ export class DayTimelineView extends ItemView {
       }
     }
     const inbox = this.plugin.inbox;
-    this.inboxTasks = inbox && s.showInbox ? (await inbox.load(INBOX_DATE)).tasks : [];
+    this.inboxTasks =
+      inbox && s.showInbox ? DayTimelineView.inboxVisible((await inbox.load(INBOX_DATE)).tasks) : [];
     const memberStores = this.visibleMembers().map((m) => this.plugin.memberStores.get(m.id)!);
     const loaded = await Promise.all(
       days.map(async (d): Promise<[string, DayData]> => {
@@ -823,11 +824,19 @@ export class DayTimelineView extends ItemView {
     };
   }
 
+  /** Inbox パネルに出すタスク: プロジェクトに属さず、未完了のものだけ
+   *（プロジェクト付きはプロジェクトパネルに出る。完了・プロジェクト付きもノートには残る） */
+  private static inboxVisible(tasks: Task[]): Task[] {
+    return tasks.filter((t) => !t.done && !t.project);
+  }
+
   /** Inbox だけ読み直す（コマンドから追加したときなど） */
   async reloadInbox(): Promise<void> {
     const inbox = this.plugin.inbox;
     if (!inbox || !this.inboxEl) return;
-    this.inboxTasks = this.plugin.settings.showInbox ? (await inbox.load(INBOX_DATE)).tasks : [];
+    this.inboxTasks = this.plugin.settings.showInbox
+      ? DayTimelineView.inboxVisible((await inbox.load(INBOX_DATE)).tasks)
+      : [];
     this.renderInbox();
   }
 
