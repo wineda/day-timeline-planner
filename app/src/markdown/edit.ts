@@ -224,7 +224,8 @@ export function updateTask(
       ops.push({ at: t.doneConditionLine, del: 1, lines: text ? [renderDoneConditionLine(text)] : [], order: 2 });
       if (!text) deleted = true;
     } else if (text) {
-      ops.push({ at: t.metaLine + 1, del: 0, lines: [renderDoneConditionLine(text)], order: 2 });
+      // 既存のプロジェクト・実績行の下に入れる
+      ops.push({ at: afterMeta, del: 0, lines: [renderDoneConditionLine(text)], order: 2 });
     }
   }
   // 実績: 既存行を書き換え / 無ければメタ行の直下に足す / 空なら消す
@@ -234,7 +235,9 @@ export function updateTask(
       ops.push({ at: t.actualLine, del: 1, lines: ranges.length ? [renderActualLine(ranges)] : [], order: 3 });
       if (!ranges.length) deleted = true;
     } else if (ranges.length) {
-      ops.push({ at: t.metaLine + 1, del: 0, lines: [renderActualLine(ranges)], order: 3 });
+      // 既存のプロジェクト行がメタ行の直下にあれば、その下に入れる
+      const at = t.projectLine === t.metaLine + 1 ? t.metaLine + 2 : t.metaLine + 1;
+      ops.push({ at, del: 0, lines: [renderActualLine(ranges)], order: 3 });
     }
   }
   // プロジェクト: 既存行を書き換え / 無ければメタ行の直下に足す / null なら消す
@@ -247,7 +250,13 @@ export function updateTask(
       ops.push({ at: t.metaLine + 1, del: 0, lines: [renderProjectLine(link)], order: 4 });
     }
   }
-  ops.sort((a, b) => b.at - a.at || a.order - b.order);
+  // 行の後ろから順に適用する。同じ位置に重なったときは、既存行の書き換え・削除を先に行い、
+  // そのあとで挿入を order の順に重ねる（挿入で行がずれた後に書き換えると別の行を壊すため）
+  ops.sort((a, b) => {
+    if (a.at !== b.at) return b.at - a.at;
+    if (a.del > 0 !== b.del > 0) return a.del > 0 ? -1 : 1;
+    return a.order - b.order;
+  });
   for (const op of ops) lines.splice(op.at, op.del, ...op.lines);
   if (deleted) {
     // 消したことで空行が続いた場合は1つにまとめる（このブロックの範囲だけ）
