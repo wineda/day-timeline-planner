@@ -1524,6 +1524,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 今日の反映状態（定期タスクの一覧） */
+.dt-recurring-status {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+/* 自動反映オフの警告 */
+.dt-recurring-warn {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: rgba(var(--color-yellow-rgb, 224, 172, 0), 0.12);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+}
+
 .dt-recurring-desc {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);

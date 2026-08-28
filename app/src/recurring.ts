@@ -98,6 +98,68 @@ export async function applyRecurring(plugin: DayTimelinePlugin, days: Date[]): P
   return count;
 }
 
+/**
+ * 「今日以降で、入れた記録はあるがタスクがノートに残っていない日」の記録を消して、
+ * 次の表示時にもう一度入るようにする。消した記録の日数を返す。
+ * （タスクが残っている日はそのまま = 重複しては入れない）
+ */
+export async function reapplyRule(plugin: DayTimelinePlugin, rule: RecurringRule): Promise<number> {
+  const s = plugin.settings;
+  const store = plugin.blockStore();
+  if (!store) return 0;
+  const todayKey = dateKey(startOfDay(new Date()));
+  let cleared = 0;
+  for (const [key, ids] of Object.entries(s.recurringApplied)) {
+    if (key < todayKey || !ids.includes(rule.id)) continue;
+    const [y, m, d] = key.split("-").map(Number);
+    if (!y || !m || !d) continue;
+    const date = new Date(y, m - 1, d);
+    const bid = s.recurringInstances[key]?.[rule.id];
+    let exists = false;
+    try {
+      const tasks = (await store.load(date)).tasks;
+      exists = bid ? tasks.some((t) => t.blockId === bid) : tasks.some((t) => t.title === rule.title);
+    } catch (e) {
+      console.error(e);
+    }
+    if (exists) continue;
+    s.recurringApplied[key] = ids.filter((i) => i !== rule.id);
+    const inst = s.recurringInstances[key];
+    if (inst) delete inst[rule.id];
+    cleared++;
+  }
+  if (cleared) await plugin.persistSettings();
+  return cleared;
+}
+
+/** 今日についてのルールの状態（一覧の説明に出す） */
+export async function describeTodayStatus(plugin: DayTimelinePlugin, rule: RecurringRule): Promise<string> {
+  const s = plugin.settings;
+  if (!rule.enabled) return "無効になっています";
+  const today = startOfDay(new Date());
+  if (!rule.weekdays.includes(today.getDay())) return "今日は対象外の曜日です";
+  if (!s.autoApplyRecurring) return "設定「自動でノートへ書き込む」がオフです";
+  const key = dateKey(today);
+  if (!(s.recurringApplied[key] ?? []).includes(rule.id)) {
+    return "今日: 未反映（タイムラインを開くと入ります）";
+  }
+  const store = plugin.blockStore();
+  const bid = s.recurringInstances[key]?.[rule.id];
+  if (store && bid) {
+    try {
+      const tasks = (await store.load(today)).tasks;
+      if (!tasks.some((t) => t.blockId === bid)) {
+        return "今日: 入れた後に削除されています（↺ で入れ直し）";
+      }
+      const inst = tasks.find((t) => t.blockId === bid);
+      if (inst && inst.start === null) return "今日: 反映済み（時刻なし。未スケジュールのトレイにあります）";
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  return "今日: 反映済み";
+}
+
 /** 古い反映記録を捨てる（90日より前） */
 function pruneApplied(applied: Record<string, string[]>, today: Date): void {
   const limit = dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90));
@@ -410,6 +472,15 @@ export class RecurringListModal extends Modal {
       this.render();
     };
 
+    if (!s.autoApplyRecurring) {
+      contentEl.createDiv({
+        cls: "dt-recurring-warn",
+        text:
+          "設定「定期タスクを表示時に自動でノートへ書き込む」がオフになっているため、" +
+          "タイムラインには入りません（月表示の薄い表示のみ）。",
+      });
+    }
+
     if (s.recurring.length === 0) {
       contentEl.createDiv({
         cls: "dt-recurring-empty",
@@ -435,7 +506,26 @@ export class RecurringListModal extends Modal {
       const body = row.createDiv("dt-recurring-body");
       body.createDiv({ cls: "dt-recurring-title", text: rule.title || "(無題)" });
       body.createDiv({ cls: "dt-recurring-desc", text: describeRule(rule) });
+      const statusEl = body.createDiv({ cls: "dt-recurring-status", text: "状態を確認中…" });
+      void describeTodayStatus(this.plugin, rule).then((text) => statusEl.setText(text));
       body.onclick = () => this.edit(idx);
+
+      const reBtn = row.createDiv({
+        cls: "clickable-icon",
+        attr: { "aria-label": "今日以降に入れ直す（タスクが消えている日だけ。残っている日は重複しません）" },
+      });
+      setIcon(reBtn, "rotate-ccw");
+      reBtn.onclick = async () => {
+        const n = await reapplyRule(this.plugin, rule);
+        // 未反映の日が残っている場合もあるので、どちらでも再読み込みして反映させる
+        await this.plugin.saveSettings();
+        new Notice(
+          n
+            ? `${n} 日分の記録を消しました。タイムラインに入れ直します。`
+            : "入れ直しが必要な日はありませんでした（未反映の日があれば今の再読み込みで入ります）"
+        );
+        this.render();
+      };
 
       const editBtn = row.createDiv({ cls: "clickable-icon", attr: { "aria-label": "編集" } });
       setIcon(editBtn, "pencil");
