@@ -26,7 +26,7 @@ import {
   serializeListNote,
 } from "./markdown/legacy";
 import { migrateListToBlocks } from "./markdown/migrate";
-import { extractTags } from "./util";
+import { extractTags, startOfDay } from "./util";
 
 /** 日付 → ノートの対応と、ノートの作成。保存形式によらず共通 */
 abstract class NoteStore implements TaskSource {
@@ -56,6 +56,19 @@ abstract class NoteStore implements TaskSource {
   getFile(date: Date): TFile | null {
     const f = this.app.vault.getAbstractFileByPath(this.pathFor(date));
     return f instanceof TFile ? f : null;
+  }
+
+  /** ノートのパスがこのストアの日付ノートなら、その日付を返す（違えば null） */
+  dateFromPath(path: string): Date | null {
+    const folder = normalizePath(this.folder() || "");
+    const prefix = folder && folder !== "/" ? folder + "/" : "";
+    const p = normalizePath(path);
+    if (prefix && !p.startsWith(prefix)) return null;
+    const rest = p.slice(prefix.length);
+    if (!rest.toLowerCase().endsWith(".md")) return null;
+    const name = rest.slice(0, -3);
+    const m = moment(name, this.getSettings().dateFormat, true);
+    return m.isValid() ? startOfDay(m.toDate()) : null;
   }
 
   abstract load(date: Date): Promise<DayTasks>;

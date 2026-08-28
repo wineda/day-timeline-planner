@@ -14,7 +14,7 @@ import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
 import { ConfirmModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
 import type { ActualRange } from "./markdown/blocks";
-import { projectDisplayName } from "./project";
+import { projectDisplayName, type ProjectSummary } from "./project";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
 import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
@@ -90,6 +90,10 @@ export class DayTimelineView extends ItemView {
   private bannerEl!: HTMLElement;
   private inboxEl!: HTMLElement;
   private inboxTasks: Task[] = [];
+  /** プロジェクトの集計（パネル用のキャッシュ） */
+  private projectData: ProjectSummary[] = [];
+  /** パネルで展開中のプロジェクト */
+  private expandedProjects = new Set<string>();
   private trayEl!: HTMLElement;
   private scrollEl!: HTMLElement;
   private headersEl!: HTMLElement;
@@ -625,6 +629,16 @@ export class DayTimelineView extends ItemView {
       })
     );
     this.data = new Map(loaded);
+    // プロジェクトの集計（パネル用）
+    if (this.plugin.projects && s.showProjects) {
+      try {
+        this.projectData = await this.plugin.projectSummaries();
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      this.projectData = [];
+    }
     this.renderHeader();
     this.renderBanner();
     this.renderInbox();
@@ -817,14 +831,15 @@ export class DayTimelineView extends ItemView {
     this.renderInbox();
   }
 
-  /** Inbox（日付を決めていないタスク）のパネル */
+  /** 左サイドバー（Inbox + プロジェクト）のパネル */
   private renderInbox(): void {
     const s = this.plugin.settings;
     const inbox = this.plugin.inbox;
     this.inboxEl.empty();
-    const show = !!inbox && s.showInbox;
-    this.inboxEl.toggleClass("is-visible", show);
-    if (!show || !inbox) return;
+    const showInbox = !!inbox && s.showInbox;
+    const showProjects = !!this.plugin.projects && s.showProjects;
+    this.inboxEl.toggleClass("is-visible", showInbox || showProjects);
+    if (!showInbox && !showProjects) return;
     const collapsed = s.inboxCollapsed;
     this.inboxEl.toggleClass("is-collapsed", collapsed);
 
@@ -837,51 +852,229 @@ export class DayTimelineView extends ItemView {
     const toggle = this.iconButton(
       head,
       collapsed ? "panel-left-open" : "panel-left-close",
-      collapsed ? "Inbox を開く" : "Inbox を畳む",
+      collapsed ? "パネルを開く" : "パネルを畳む",
       doToggle
     );
     toggle.addClass("dt-inbox-toggle");
-    const label = head.createSpan({ cls: "dt-inbox-label", text: "Inbox" });
+    const label = head.createSpan({ cls: "dt-inbox-label", text: showInbox ? "Inbox" : "プロジェクト" });
     label.onclick = doToggle;
-    head.createSpan({ cls: "dt-inbox-count", text: String(this.inboxTasks.length) });
-    const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
-      this.plugin.openInboxAddModal()
-    );
-    addBtn.addClass("dt-inbox-add");
-    const openBtn = this.iconButton(head, "file-text", "Inbox のノートを開く", () =>
-      void inbox
-        .ensureFile(INBOX_DATE)
-        .then((f) => this.app.workspace.getLeaf("tab").openFile(f))
-    );
-    openBtn.addClass("dt-inbox-open");
+    if (showInbox) {
+      head.createSpan({ cls: "dt-inbox-count", text: String(this.inboxTasks.length) });
+      const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
+        this.plugin.openInboxAddModal()
+      );
+      addBtn.addClass("dt-inbox-add");
+      const openBtn = this.iconButton(head, "file-text", "Inbox のノートを開く", () =>
+        void inbox
+          ?.ensureFile(INBOX_DATE)
+          .then((f) => this.app.workspace.getLeaf("tab").openFile(f))
+      );
+      openBtn.addClass("dt-inbox-open");
+    }
     if (collapsed) return;
 
-    const list = this.inboxEl.createDiv("dt-inbox-list");
-    if (this.inboxTasks.length === 0) {
+    if (showInbox) {
+      const list = this.inboxEl.createDiv("dt-inbox-list");
+      if (this.inboxTasks.length === 0) {
+        list.createSpan({
+          cls: "dt-tray-empty",
+          text: "日付を決めずに登録したタスクがここに並びます。タイムラインへドラッグで予定に。",
+        });
+      }
+      for (const t of this.inboxTasks) {
+        const chip = list.createDiv("dt-tray-chip dt-inbox-chip");
+        chip.toggleClass("is-done", t.done);
+        const color = colorForTags(t.tags, s.tagColors);
+        if (color) {
+          const dot = chip.createSpan("dt-tray-color");
+          dot.style.background = color;
+        }
+        const box = chip.createDiv("dt-tray-check");
+        setIcon(box, t.done ? "check-circle-2" : "circle");
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
+        });
+        chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
+        this.attachInboxInteractions(chip, t);
+      }
+    }
+    if (showProjects) this.renderProjects();
+  }
+
+  /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク） */
+  private renderProjects(): void {
+    const wrap = this.inboxEl.createDiv("dt-projects");
+    const head = wrap.createDiv("dt-projects-head");
+    head.createSpan({ cls: "dt-inbox-label", text: "プロジェクト" });
+    head.createSpan({ cls: "dt-inbox-count", text: String(this.projectData.length) });
+    const refresh = this.iconButton(head, "file-text", "全プロジェクトノートのタスク一覧を更新", () =>
+      void this.plugin.updateAllProjectNotes()
+    );
+    refresh.addClass("dt-inbox-open");
+
+    const list = wrap.createDiv("dt-projects-list");
+    if (!this.projectData.length) {
       list.createSpan({
         cls: "dt-tray-empty",
-        text: "日付を決めずに登録したタスクがここに並びます。タイムラインへドラッグで予定に。",
+        text: "タスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
       });
       return;
     }
-    for (const t of this.inboxTasks) {
-      const chip = list.createDiv("dt-tray-chip dt-inbox-chip");
-      chip.toggleClass("is-done", t.done);
-      const color = colorForTags(t.tags, s.tagColors);
-      if (color) {
-        const dot = chip.createSpan("dt-tray-color");
-        dot.style.background = color;
-      }
-      const box = chip.createDiv("dt-tray-check");
-      setIcon(box, t.done ? "check-circle-2" : "circle");
-      box.addEventListener("click", (e) => {
+    for (const sum of this.projectData) {
+      const key = sum.ref.linktext;
+      const expanded = this.expandedProjects.has(key);
+
+      const row = list.createDiv("dt-project-row");
+      const chev = row.createDiv("dt-project-chevron");
+      setIcon(chev, expanded ? "chevron-down" : "chevron-right");
+      const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+      const total = sum.children.length;
+      const stats = row.createSpan({ cls: "dt-project-stats" });
+      stats.setText(
+        total
+          ? `${sum.doneCount}/${total}・予${hmm(sum.planMin)}・実${hmm(sum.actMin)}`
+          : "タスクなし"
+      );
+      row.setAttr(
+        "aria-label",
+        `${sum.ref.name}\n${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
+          "クリックで展開、ドラッグでタイムラインに子タスクを作成"
+      );
+      const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
+        void this.plugin.openProject(key)
+      );
+      openBtn.addClass("dt-project-open");
+      const addBtn = this.iconButton(row, "plus", "このプロジェクトのタスクを追加", () =>
+        this.openCreateModal(this.date, undefined, undefined, undefined, { project: key })
+      );
+      addBtn.addClass("dt-project-add");
+
+      const toggleExpand = () => {
+        if (this.expandedProjects.has(key)) this.expandedProjects.delete(key);
+        else this.expandedProjects.add(key);
+        this.renderInbox();
+      };
+      chev.addEventListener("click", (e) => {
         e.stopPropagation();
-        void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
+        toggleExpand();
       });
-      chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-      chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
-      this.attachInboxInteractions(chip, t);
+      this.attachProjectDrag(row, sum, toggleExpand);
+
+      if (!expanded) continue;
+      const childrenEl = list.createDiv("dt-project-children");
+      if (!sum.children.length) {
+        childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
+      }
+      for (const child of sum.children) {
+        const t = child.task;
+        const item = childrenEl.createDiv("dt-project-child");
+        item.toggleClass("is-done", t.done);
+        const box = item.createDiv("dt-tray-check");
+        setIcon(box, t.done ? "check-circle-2" : "circle");
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
+          else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
+        });
+        item.createSpan({
+          cls: "dt-project-child-date",
+          text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "Inbox",
+        });
+        item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
+        const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
+        if (plan || act) {
+          item.createSpan({
+            cls: "dt-project-child-times",
+            text: `${plan ? hmm(plan) : "–"}/${act ? hmm(act) : "–"}`,
+          });
+        }
+        item.setAttr(
+          "aria-label",
+          `${t.title || "(無題)"}\n` +
+            (child.date ? `${moment(child.date).format("M月D日 (ddd)")}` : "Inbox") +
+            (t.start !== null && t.end !== null ? ` ${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}` : "") +
+            "\nクリックでその日へ移動、右クリックでメニュー"
+        );
+        item.addEventListener("click", () => {
+          if (child.date === null) return; // Inbox のタスクは上の Inbox 一覧に居る
+          this.setDate(child.date);
+        });
+        item.addEventListener("contextmenu", (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (child.date !== null) this.showTaskMenu(child.date, t, e);
+        });
+      }
     }
+  }
+
+  /** プロジェクト行: クリックで展開、タイムラインへドラッグで子タスクを作成 */
+  private attachProjectDrag(row: HTMLElement, sum: ProjectSummary, onClick: () => void): void {
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+
+    row.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest(".dt-icon-btn, .dt-project-chevron")) return;
+      e.preventDefault();
+
+      let ghost: HTMLElement | null = null;
+      let dropStart: number | null = null;
+      let dropCol: DayColumn | null = null;
+      const duration = s.defaultDurationMinutes;
+
+      this.startDrag(row, e, {
+        onMove: (_dy, ev) => {
+          row.addClass("is-dragging");
+          const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
+          if (!over) {
+            dropStart = null;
+            dropCol = null;
+            ghost?.remove();
+            ghost = null;
+            return;
+          }
+          if (over !== dropCol) {
+            ghost?.remove();
+            ghost = null;
+            dropCol = over;
+          }
+          dropStart = clamp(
+            this.snapFloor(this.clientYToMinutes(ev.clientY)),
+            dayStart,
+            Math.max(dayStart, dayEnd - duration)
+          );
+          if (!ghost) ghost = over.eventsEl.createDiv("dt-ghost");
+          ghost.style.top = this.minutesToPx(dropStart) + "px";
+          ghost.style.height =
+            Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
+          ghost.setText(
+            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${sum.ref.name} の新しいタスク`
+          );
+        },
+        onEnd: (moved) => {
+          row.removeClass("is-dragging");
+          ghost?.remove();
+          if (!moved) {
+            onClick();
+            return;
+          }
+          if (dropStart !== null && dropCol) {
+            this.openCreateModal(dropCol.date, dropStart, Math.min(dropStart + duration, dayEnd), undefined, {
+              project: sum.ref.linktext,
+            });
+          }
+        },
+        onCancel: () => {
+          row.removeClass("is-dragging");
+          ghost?.remove();
+        },
+      });
+    });
   }
 
   /** 未スケジュールのタスクのトレイ */
@@ -1073,7 +1266,7 @@ export class DayTimelineView extends ItemView {
       badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
       badge.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        void this.plugin.projects?.open(link);
+        void this.plugin.openProject(link);
       });
     }
     const handle = el.createDiv("dt-event-resize");
@@ -1940,7 +2133,7 @@ export class DayTimelineView extends ItemView {
         i
           .setTitle(`プロジェクト「${projectDisplayName(link)}」を開く`)
           .setIcon("arrow-up-right")
-          .onClick(() => void this.plugin.projects?.open(link))
+          .onClick(() => void this.plugin.openProject(link))
       );
     }
     {
@@ -2026,7 +2219,8 @@ export class DayTimelineView extends ItemView {
     date: Date,
     start?: number | null,
     end?: number | null,
-    onClose?: () => void
+    onClose?: () => void,
+    preset?: Partial<TaskDraft>
   ): void {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
@@ -2044,7 +2238,7 @@ export class DayTimelineView extends ItemView {
 
     new TaskModal(this.app, {
       mode: "create",
-      initial: { title: "", start, end, done: false },
+      initial: { ...preset, title: preset?.title ?? "", start, end, done: false },
       snapMinutes: s.snapMinutes,
       allowUnscheduled: this.plugin.store.supportsUnscheduled,
       dateLabel: this.mode !== "day" ? moment(date).format("M月D日 (ddd)") : undefined,
@@ -2124,7 +2318,7 @@ export class DayTimelineView extends ItemView {
     return {
       projects: projects.list(),
       onCreateProject: (name: string) => projects.create(name),
-      onOpenProject: (link: string) => projects.open(link),
+      onOpenProject: (link: string) => this.plugin.openProject(link),
     };
   }
 

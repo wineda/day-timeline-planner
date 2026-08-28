@@ -14,7 +14,14 @@ import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildWeeklyReport, type ReportDay } from "./report";
-import { ProjectStore } from "./project";
+import {
+  ProjectStore,
+  buildTaskListSection,
+  summarize,
+  upsertTaskListSection,
+  type ProjectChild,
+  type ProjectSummary,
+} from "./project";
 import { newBlockId } from "./markdown/id";
 import { DayTimelineView, VIEW_TYPE_DAY_TIMELINE } from "./view";
 
@@ -181,6 +188,17 @@ export default class DayTimelinePlugin extends Plugin {
       });
     }
 
+    // プロジェクト
+    this.addCommand({
+      id: "projects-update-notes",
+      name: "プロジェクトノートのタスク一覧を更新（すべて）",
+      checkCallback: (checking) => {
+        if (!this.projects) return false;
+        if (!checking) void this.updateAllProjectNotes();
+        return true;
+      },
+    });
+
     // 予実レポート
     this.addCommand({
       id: "pa-report-week",
@@ -265,7 +283,7 @@ export default class DayTimelinePlugin extends Plugin {
       trackers: this.settings.trackers,
       projects: this.projects?.list(),
       onCreateProject: (name) => (this.projects ? this.projects.create(name) : Promise.resolve(null)),
-      onOpenProject: (link) => this.projects?.open(link),
+      onOpenProject: (link) => this.openProject(link),
       onSubmit: async (data) => {
         try {
           await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
@@ -434,6 +452,120 @@ export default class DayTimelinePlugin extends Plugin {
   /** 設定を保存するだけ（ビューは作り直さない）。ビュー側の表示切替などに使う */
   async persistSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  // ---------- プロジェクト（大きなタスク） ----------
+
+  /**
+   * ノートのパスがどのストアの日付ノート（または Inbox）かを判定する。
+   * プロジェクトの子タスク集めに使う
+   */
+  private resolveTaskNote(
+    path: string
+  ): { store: BlockTaskStore; date: Date; owner: string | null; inbox: boolean } | null {
+    const inbox = this.inbox;
+    if (inbox && path === inbox.pathFor(INBOX_DATE)) {
+      return { store: inbox, date: INBOX_DATE, owner: null, inbox: true };
+    }
+    // メンバーのフォルダの方が深いので先に判定する
+    for (const [id, st] of this.memberStores) {
+      const d = st.dateFromPath(path);
+      if (d) return { store: st, date: d, owner: id, inbox: false };
+    }
+    const main = this.blockStore();
+    if (main) {
+      const d = main.dateFromPath(path);
+      if (d) return { store: main, date: d, owner: null, inbox: false };
+    }
+    return null;
+  }
+
+  /**
+   * 各プロジェクトに結びついた子タスクを集める。
+   * Obsidian のリンク索引（resolvedLinks）でプロジェクトノートにリンクしている
+   * ノートだけを調べるので、保管庫全体は走査しない
+   */
+  async projectSummaries(): Promise<ProjectSummary[]> {
+    const projects = this.projects;
+    if (!projects || !this.blockStore()) return [];
+    const refs = projects.list();
+    if (!refs.length) return [];
+    const byPath = new Map(refs.map((r) => [r.linktext + ".md", r]));
+    const children = new Map<string, ProjectChild[]>();
+    for (const key of byPath.keys()) children.set(key, []);
+
+    const links = this.app.metadataCache.resolvedLinks;
+    for (const [sourcePath, targets] of Object.entries(links)) {
+      if (!Object.keys(targets).some((t) => byPath.has(t))) continue;
+      const src = this.resolveTaskNote(sourcePath);
+      if (!src) continue;
+      let tasks;
+      try {
+        tasks = (await src.store.load(src.date)).tasks;
+      } catch (e) {
+        console.error(e);
+        continue;
+      }
+      for (const task of tasks) {
+        if (!task.project) continue;
+        // 短い書き方（[[環境構築]] など）も Obsidian のリンク解決に合わせる
+        const dest = this.app.metadataCache.getFirstLinkpathDest(task.project, sourcePath);
+        const key = dest?.path ?? task.project + ".md";
+        const bucket = children.get(key);
+        if (!bucket) continue;
+        bucket.push({
+          date: src.inbox ? null : src.date,
+          path: sourcePath,
+          task,
+          owner: src.owner,
+        });
+      }
+    }
+    return refs.map((r) => summarize(r, children.get(r.linktext + ".md") ?? []));
+  }
+
+  /** 1つのプロジェクトの子タスクを集める */
+  async collectProjectChildren(linktext: string): Promise<ProjectChild[]> {
+    const all = await this.projectSummaries();
+    return all.find((s) => s.ref.linktext === linktext)?.children ?? [];
+  }
+
+  /** プロジェクトノートの「タスク」セクション（自動更新）を書き換える */
+  async updateProjectNote(linktext: string): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(linktext + ".md");
+    if (!(file instanceof TFile)) return false;
+    const children = await this.collectProjectChildren(linktext);
+    const section = buildTaskListSection(children);
+    await this.app.vault.process(file, (c) => upsertTaskListSection(c, section));
+    return true;
+  }
+
+  /** プロジェクトノートを（タスク一覧を最新にしてから）開く */
+  async openProject(linktext: string): Promise<void> {
+    const projects = this.projects;
+    if (!projects) return;
+    try {
+      await this.updateProjectNote(linktext);
+    } catch (e) {
+      console.error(e); // 一覧の更新に失敗しても開くのは続ける
+    }
+    await projects.open(linktext);
+  }
+
+  /** すべてのプロジェクトノートのタスク一覧を更新する */
+  async updateAllProjectNotes(): Promise<void> {
+    const projects = this.projects;
+    if (!projects) return;
+    const summaries = await this.projectSummaries();
+    let n = 0;
+    for (const s of summaries) {
+      const file = this.app.vault.getAbstractFileByPath(s.ref.linktext + ".md");
+      if (!(file instanceof TFile)) continue;
+      const section = buildTaskListSection(s.children);
+      await this.app.vault.process(file, (c) => upsertTaskListSection(c, section));
+      n++;
+    }
+    new Notice(`${n} 件のプロジェクトノートのタスク一覧を更新しました`);
   }
 
   // ---------- 実績の計測（ストップウォッチ） ----------

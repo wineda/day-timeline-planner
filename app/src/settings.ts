@@ -167,6 +167,8 @@ export interface DayTimelineSettings {
   showInbox: boolean;
   /** Inbox パネルを畳んでいるか */
   inboxCollapsed: boolean;
+  /** プロジェクトのパネルを表示するか */
+  showProjects: boolean;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
@@ -218,6 +220,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxPath: DEFAULT_INBOX_PATH,
   showInbox: true,
   inboxCollapsed: false,
+  showProjects: true,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -758,6 +761,15 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.showInbox).onChange(async (v) => {
           s.showInbox = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトのパネルを表示")
+      .setDesc("Inbox の下にプロジェクト（大きなタスク）の一覧・進捗・予実合計を表示します。")
+      .addToggle((t) =>
+        t.setValue(s.showProjects).onChange(async (v) => {
+          s.showProjects = v;
           await save();
         })
       );

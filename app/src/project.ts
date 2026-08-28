@@ -5,13 +5,127 @@
  */
 import { App, Notice, TFile, TFolder, normalizePath } from "obsidian";
 import type { DayTimelineSettings } from "./settings";
+import type { Task } from "./model";
 import { newBlockId } from "./markdown/id";
+import { stripTags } from "./util";
 
 export interface ProjectRef {
   /** リンクに書く文字列（フォルダ付き・拡張子なし） */
   linktext: string;
   /** 表示名（ファイル名） */
   name: string;
+}
+
+/** プロジェクトに結びついた子タスク */
+export interface ProjectChild {
+  /** 子タスクの日付（Inbox のタスクは null） */
+  date: Date | null;
+  /** 子タスクがあるノートのパス */
+  path: string;
+  task: Task;
+  /** 誰の予定か（null = 自分） */
+  owner: string | null;
+}
+
+/** プロジェクトの集計（パネルとノート内一覧に使う） */
+export interface ProjectSummary {
+  ref: ProjectRef;
+  children: ProjectChild[];
+  planMin: number;
+  actMin: number;
+  doneCount: number;
+}
+
+export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSummary {
+  let planMin = 0;
+  let actMin = 0;
+  let doneCount = 0;
+  for (const c of children) {
+    if (c.task.start !== null && c.task.end !== null) planMin += c.task.end - c.task.start;
+    actMin += c.task.actual.reduce((n, r) => n + (r.end - r.start), 0);
+    if (c.task.done) doneCount++;
+  }
+  return { ref, children, planMin, actMin, doneCount };
+}
+
+/** 子タスクを日付順（Inbox は末尾）→ 開始時刻順に並べる */
+export function sortChildren(children: ProjectChild[]): ProjectChild[] {
+  return [...children].sort((a, b) => {
+    if (!a.date && !b.date) return 0;
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    const d = a.date.getTime() - b.date.getTime();
+    if (d) return d;
+    return (a.task.start ?? 1441) - (b.task.start ?? 1441);
+  });
+}
+
+// ---------- プロジェクトノート内の「タスク」一覧（自動更新セクション） ----------
+
+const SECTION_START = "<!-- dt-project-tasks:start -->";
+const SECTION_END = "<!-- dt-project-tasks:end -->";
+
+/** 分を "6:30" のような時:分表示に。0 は "–" */
+function hmm(min: number): string {
+  if (!min) return "–";
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+}
+
+function cell(text: string): string {
+  return text.replace(/\|/g, "／").replace(/\r?\n/g, " ");
+}
+
+const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
+
+/** プロジェクトノートへ書き込む「タスク」セクションの行（マーカー含む） */
+export function buildTaskListSection(children: ProjectChild[]): string[] {
+  const rows = sortChildren(children);
+  const lines = [SECTION_START, "## タスク", ""];
+  if (!rows.length) {
+    lines.push("（このプロジェクトに結びついたタスクはまだありません）");
+  } else {
+    lines.push("| 完了 | 日付 | タスク | 予定 | 実績 |", "| :-: | --- | --- | ---: | ---: |");
+    let planTotal = 0;
+    let actTotal = 0;
+    for (const c of rows) {
+      const t = c.task;
+      const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
+      const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
+      planTotal += plan;
+      actTotal += act;
+      const dateLabel = c.date
+        ? `${c.date.getMonth() + 1}/${c.date.getDate()} (${WEEKDAY_JA[c.date.getDay()]})`
+        : "Inbox";
+      const title = cell(stripTags(t.title) || "(無題)");
+      const linkBase = c.path.replace(/\.md$/, "");
+      const titleCell = t.blockId ? `[[${linkBase}#^${t.blockId}\\|${title}]]` : title;
+      lines.push(
+        `| ${t.done ? "✅" : "⬜"} | ${dateLabel} | ${titleCell} | ${hmm(plan)} | ${hmm(act)} |`
+      );
+    }
+    lines.push(`| | | **合計（${rows.length}件）** | **${hmm(planTotal)}** | **${hmm(actTotal)}** |`);
+  }
+  lines.push(SECTION_END);
+  return lines;
+}
+
+/**
+ * プロジェクトノートの自動更新セクションを差し替える。
+ * マーカーが無ければ末尾に追加する
+ */
+export function upsertTaskListSection(content: string, section: string[]): string {
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const start = lines.findIndex((l) => l.trim() === SECTION_START);
+  const end = start >= 0 ? lines.findIndex((l, i) => i > start && l.trim() === SECTION_END) : -1;
+  if (start >= 0 && end > start) {
+    lines.splice(start, end - start + 1, ...section);
+  } else {
+    while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+    if (lines.length) lines.push("");
+    lines.push(...section);
+  }
+  return lines.join(eol).replace(/(\r?\n)*$/, "") + eol;
 }
 
 /** リンク先文字列から表示名（ファイル名部分）を取り出す */
