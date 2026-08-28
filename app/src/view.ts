@@ -842,6 +842,8 @@ export class DayTimelineView extends ItemView {
     if (!showInbox && !showProjects) return;
     const collapsed = s.inboxCollapsed;
     this.inboxEl.toggleClass("is-collapsed", collapsed);
+    this.applySidebarWidth(collapsed ? null : s.sidebarWidth);
+    if (!collapsed) this.attachSidebarResize();
 
     const doToggle = () => {
       s.inboxCollapsed = !s.inboxCollapsed;
@@ -901,6 +903,46 @@ export class DayTimelineView extends ItemView {
       }
     }
     if (showProjects) this.renderProjects();
+  }
+
+  /** サイドバーの幅を反映する（null なら CSS の既定 = 畳んだ状態に任せる） */
+  private applySidebarWidth(width: number | null): void {
+    if (width === null) {
+      this.inboxEl.style.width = "";
+      this.inboxEl.style.flexBasis = "";
+      return;
+    }
+    const w = clamp(width, 160, 480);
+    this.inboxEl.style.width = w + "px";
+    this.inboxEl.style.flexBasis = w + "px";
+  }
+
+  /** サイドバーの右端をドラッグして幅を変えるハンドル */
+  private attachSidebarResize(): void {
+    const grip = this.inboxEl.createDiv({
+      cls: "dt-sidebar-resize",
+      attr: { "aria-label": "ドラッグで幅を変更" },
+    });
+    grip.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startW = this.inboxEl.getBoundingClientRect().width;
+      const startX = e.clientX;
+      let w = startW;
+      this.startDrag(grip, e, {
+        onMove: (_dy, ev) => {
+          w = clamp(startW + (ev.clientX - startX), 160, 480);
+          this.applySidebarWidth(w);
+        },
+        onEnd: (moved) => {
+          if (!moved) return;
+          this.plugin.settings.sidebarWidth = Math.round(w);
+          void this.plugin.persistSettings();
+        },
+        onCancel: () => this.applySidebarWidth(this.plugin.settings.sidebarWidth),
+      });
+    });
   }
 
   /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク） */
@@ -2196,8 +2238,15 @@ export class DayTimelineView extends ItemView {
         .setIcon("repeat")
         .onClick(() => {
           new RecurringModal(this.app, {
-            preset: { title: task.title, start: task.start, end: task.end, weekday: date.getDay() },
+            preset: {
+              title: task.title,
+              start: task.start,
+              end: task.end,
+              weekday: date.getDay(),
+              project: task.project,
+            },
             tagChoices: this.plugin.settings.tagColors,
+            projects: this.plugin.projects?.list(),
             onSubmit: async (rule) => {
               this.plugin.settings.recurring.push(rule);
               await this.plugin.saveSettings();
@@ -2370,6 +2419,37 @@ export class DayTimelineView extends ItemView {
       if (auto && !prompted) {
         new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
       }
+      // 「未完了 → 完了」でプロジェクトの子が全部完了したら、プロジェクトの完了を提案
+      if (data.done && !wasDone) {
+        void this.maybeSuggestProjectDone(data.project !== undefined ? data.project : task.project);
+      }
+    }
+  }
+
+  /** プロジェクトの子タスクがすべて完了したら、プロジェクト自身の完了を提案する */
+  private async maybeSuggestProjectDone(link: string | null | undefined): Promise<void> {
+    const projects = this.plugin.projects;
+    if (!link || !projects) return;
+    try {
+      const children = await this.plugin.collectProjectChildren(link);
+      if (!children.length || !children.every((c) => c.task.done)) return;
+      if ((await projects.isDone(link)) !== false) return; // 既に完了 or メタ行なし
+      new ConfirmModal(
+        this.app,
+        `プロジェクト「${projectDisplayName(link)}」のタスクがすべて完了しました。プロジェクトも完了にしますか？`,
+        "完了にする",
+        async () => {
+          const ok = await projects.setDone(link, true);
+          if (ok) {
+            await this.plugin.updateProjectNote(link);
+            new Notice(`プロジェクト「${projectDisplayName(link)}」を完了にしました`);
+          } else {
+            new Notice("プロジェクトノートを更新できませんでした");
+          }
+        }
+      ).open();
+    } catch (e) {
+      console.error(e);
     }
   }
 

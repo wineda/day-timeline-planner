@@ -8,6 +8,8 @@ import type { DayTimelineSettings } from "./settings";
 import type { Task } from "./model";
 import { newBlockId } from "./markdown/id";
 import { stripTags } from "./util";
+import { normalizeBlockOptions, parseBlockDocument, type BlockOptions, type TaskBlock } from "./markdown/blocks";
+import { updateTask } from "./markdown/edit";
 
 export interface ProjectRef {
   /** リンクに書く文字列（フォルダ付き・拡張子なし） */
@@ -188,6 +190,52 @@ export class ProjectStore {
       }
     }
     return path.replace(/\.md$/, "");
+  }
+
+  /** プロジェクトノート自身のタスクブロック（見出し + メタ行）を探す */
+  private findSelf(content: string): { block: TaskBlock; opts: BlockOptions } | null {
+    // スケルトンは「# 名前」だが、手書きのノートで見出しレベルが違う場合にも備える
+    for (const level of [1, 2]) {
+      const opts = normalizeBlockOptions({
+        headingLevel: level,
+        rootHeading: "",
+        useCheckbox: true,
+        mirrorTitle: false,
+      });
+      const doc = parseBlockDocument(content, opts);
+      if (doc.tasks.length) return { block: doc.tasks[0], opts };
+    }
+    return null;
+  }
+
+  /** プロジェクト自身の完了状態（メタ行が無ければ null） */
+  async isDone(linktext: string): Promise<boolean | null> {
+    const file = this.app.vault.getAbstractFileByPath(linktext + ".md");
+    if (!(file instanceof TFile)) return null;
+    const content = await this.app.vault.cachedRead(file);
+    return this.findSelf(content)?.block.done ?? null;
+  }
+
+  /** プロジェクト自身のメタ行の完了を切り替える */
+  async setDone(linktext: string, done: boolean): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(linktext + ".md");
+    if (!(file instanceof TFile)) return false;
+    let ok = false;
+    await this.app.vault.process(file, (content) => {
+      const self = this.findSelf(content);
+      if (!self) return content;
+      const t = self.block;
+      const next = updateTask(
+        content,
+        { id: t.id, title: t.title, start: t.start, end: t.end },
+        { done },
+        self.opts
+      );
+      if (next === null) return content;
+      ok = true;
+      return next;
+    });
+    return ok;
   }
 
   /** プロジェクトノートを開く */

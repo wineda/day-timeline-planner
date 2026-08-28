@@ -137,6 +137,18 @@ export function buildWeeklyReport(days: ReportDay[], opts: ReportOptions): strin
   }
   lines.push(`| **合計** | | | **${hmm(totalPlan)}** | **${hmm(totalAct)}** | **${diffLabel(totalPlan, totalAct)}** | |`, "");
 
+  // プロジェクト別
+  const byProject = new Map<string, Bucket>();
+  for (const r of rows) {
+    if (!r.task.project) continue;
+    const name = r.task.project.split("/").pop() ?? r.task.project;
+    add(byProject, name, r.plan, r.act);
+  }
+  if (byProject.size) {
+    lines.push("## プロジェクト別", "");
+    lines.push(...bucketTable("プロジェクト", byProject), "");
+  }
+
   // タグ別（複数タグのタスクは最初のタグに数える）
   const byTag = new Map<string, Bucket>();
   for (const r of rows) add(byTag, r.task.tags.length ? "#" + r.task.tags[0] : "(タグなし)", r.plan, r.act);

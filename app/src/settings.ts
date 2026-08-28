@@ -83,6 +83,8 @@ export interface RecurringRule {
   start: number | null;
   end: number | null;
   enabled: boolean;
+  /** 作るタスクを結びつけるプロジェクト（リンク先）。無ければ undefined */
+  project?: string;
 }
 
 /** 既定の保存フォルダ（空欄にはできない） */
@@ -169,6 +171,8 @@ export interface DayTimelineSettings {
   inboxCollapsed: boolean;
   /** プロジェクトのパネルを表示するか */
   showProjects: boolean;
+  /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
+  sidebarWidth: number;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
@@ -221,6 +225,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showInbox: true,
   inboxCollapsed: false,
   showProjects: true,
+  sidebarWidth: 220,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -692,6 +697,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           .onClick(() => {
             new RecurringModal(this.app, {
               tagChoices: s.tagColors,
+              projects: this.plugin.projects?.list(),
               onSubmit: async (rule) => {
                 s.recurring.push(rule);
                 await save();
@@ -728,6 +734,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
               new RecurringModal(this.app, {
                 initial: rule,
                 tagChoices: s.tagColors,
+                projects: this.plugin.projects?.list(),
                 onSubmit: async (next) => {
                   s.recurring[idx] = next;
                   await save();

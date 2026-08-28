@@ -165,6 +165,7 @@ export default class DayTimelinePlugin extends Plugin {
       callback: () => {
         new RecurringModal(this.app, {
           tagChoices: this.settings.tagColors,
+          projects: this.projects?.list(),
           onSubmit: async (rule) => {
             this.settings.recurring.push(rule);
             await this.saveSettings();

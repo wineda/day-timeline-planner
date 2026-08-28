@@ -12,6 +12,7 @@ import {
 } from "./modal";
 import { dateKey, formatDuration, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
 import { newBlockId } from "./markdown/id";
+import { projectDisplayName, type ProjectRef } from "./project";
 
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -58,7 +59,13 @@ export async function applyRecurring(plugin: DayTimelinePlugin, days: Date[]): P
       if (applied.has(rule.id)) continue;
       // 旧リスト形式は時刻必須
       if (rule.start === null && !plugin.store.supportsUnscheduled) continue;
-      const draft = { title: rule.title, start: rule.start, end: rule.end, done: false };
+      const draft = {
+        title: rule.title,
+        start: rule.start,
+        end: rule.end,
+        done: false,
+        project: rule.project ?? undefined,
+      };
       const blockStore = plugin.blockStore();
       try {
         if (blockStore) {
@@ -124,6 +131,8 @@ export async function propagateRecurringUpdate(
         title: rule.title,
         start: rule.start,
         end: rule.end,
+        // プロジェクトは、ルールに設定があるときだけ合わせる（手で付けたものは消さない）
+        ...(rule.project ? { project: rule.project } : {}),
       });
       if (ok) n++;
     } catch (e) {
@@ -141,8 +150,10 @@ export interface RecurringModalOptions {
   /** 編集するルール。無ければ新規 */
   initial?: RecurringRule;
   /** 新規のときの初期値（タスクから「定期タスクとして登録」したとき） */
-  preset?: { title: string; start: number | null; end: number | null; weekday?: number };
+  preset?: { title: string; start: number | null; end: number | null; weekday?: number; project?: string | null };
   tagChoices?: TagColor[];
+  /** プロジェクトの選択肢（渡すと欄を出す） */
+  projects?: ProjectRef[];
   onSubmit: (rule: RecurringRule) => void | Promise<void>;
 }
 
@@ -153,6 +164,7 @@ export class RecurringModal extends Modal {
   private startText: string;
   private endText: string;
   private enabled: boolean;
+  private project: string | null;
   private tagChoices: TagColor[];
   private selectedTags: Set<string>;
   private hintEl!: HTMLElement;
@@ -168,6 +180,7 @@ export class RecurringModal extends Modal {
       start: opts.preset?.start ?? 9 * 60,
       end: opts.preset?.end ?? 9 * 60 + 30,
       enabled: true,
+      project: opts.preset?.project ?? undefined,
     };
     const { text, selected } = splitKnownTags(src.title, this.tagChoices.map((c) => c.tag));
     this.title = text;
@@ -176,6 +189,7 @@ export class RecurringModal extends Modal {
     this.startText = src.start === null ? "" : minutesToHHMM(src.start);
     this.endText = src.end === null ? "" : minutesToHHMM(src.end);
     this.enabled = src.enabled;
+    this.project = src.project ?? null;
   }
 
   onOpen(): void {
@@ -203,6 +217,21 @@ export class RecurringModal extends Modal {
       const tagSetting = new Setting(contentEl).setName("タグ");
       tagSetting.settingEl.addClass("dt-tag-setting");
       renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags);
+    }
+
+    if (this.opts.projects?.length || this.project) {
+      const projects = this.opts.projects ?? [];
+      new Setting(contentEl)
+        .setName("プロジェクト")
+        .setDesc("作られるタスクをプロジェクト（大きなタスク）に結びつけます。")
+        .addDropdown((d) => {
+          d.addOption("", "なし");
+          for (const p of projects) d.addOption(p.linktext, p.name);
+          if (this.project && !projects.some((p) => p.linktext === this.project)) {
+            d.addOption(this.project, projectDisplayName(this.project));
+          }
+          d.setValue(this.project ?? "").onChange((v) => (this.project = v || null));
+        });
     }
 
     // 曜日
@@ -346,6 +375,7 @@ export class RecurringModal extends Modal {
       start: r.start,
       end: r.end,
       enabled: this.enabled,
+      project: this.project ?? undefined,
     };
     this.close();
     await this.opts.onSubmit(rule);
@@ -429,6 +459,7 @@ export class RecurringListModal extends Modal {
         .onClick(() => {
           new RecurringModal(this.app, {
             tagChoices: s.tagColors,
+            projects: this.plugin.projects?.list(),
             onSubmit: async (rule) => {
               s.recurring.push(rule);
               await this.plugin.saveSettings();
@@ -444,6 +475,7 @@ export class RecurringListModal extends Modal {
     new RecurringModal(this.app, {
       initial: s.recurring[idx],
       tagChoices: s.tagColors,
+      projects: this.plugin.projects?.list(),
       onSubmit: async (next) => {
         s.recurring[idx] = next;
         await this.plugin.saveSettings();
