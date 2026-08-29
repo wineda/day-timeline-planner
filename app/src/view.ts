@@ -1012,7 +1012,7 @@ export class DayTimelineView extends ItemView {
         const run = async () => {
           const ok = await projects.setDone(key, true);
           if (!ok) {
-            new Notice("プロジェクトノートの先頭にメタ行（- [ ] ^id）が無いため、完了にできませんでした");
+            new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
             return;
           }
           sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
@@ -2510,7 +2510,8 @@ export class DayTimelineView extends ItemView {
       const children = await this.plugin.collectProjectChildren(link);
       // 持ち越し済み [>] のブロックは「閉じた記録」なので、完了扱いで数える
       if (!children.length || !children.every((c) => c.task.done || c.task.forwarded)) return;
-      if ((await projects.isDone(link)) !== false) return; // 既に完了 or メタ行なし
+      // メタ行なし（null）は「未完了」とみなす（setDone がメタ行を書き足してくれる）
+      if ((await projects.isDone(link)) === true) return; // 既に完了
       new ConfirmModal(
         this.app,
         `プロジェクト「${projectDisplayName(link)}」のタスクがすべて完了しました。プロジェクトも完了にしますか？`,

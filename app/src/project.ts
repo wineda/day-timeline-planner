@@ -140,6 +140,31 @@ export function projectDisplayName(linktext: string): string {
   return base.replace(/\.md$/, "");
 }
 
+/**
+ * メタ行（`- [ ] ^id`）の無い手作りのプロジェクトノートに meta 行を差し込む（純関数）。
+ * 先頭の見出し（# / ##）の直後に入れる。見出しより前に本文があるか見出しが無ければ、
+ * フロントマターの直後に「# 名前」ごと足す
+ */
+export function insertSelfMeta(content: string, name: string, meta: string): string {
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  // フロントマター（--- ... ---)は飛ばす
+  let start = 0;
+  if (lines[0]?.trim() === "---") {
+    const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+    if (end > 0) start = end + 1;
+  }
+  for (let i = start; i < lines.length; i++) {
+    if (/^#{1,2}\s/.test(lines[i])) {
+      lines.splice(i + 1, 0, meta);
+      return lines.join(eol);
+    }
+    if (lines[i].trim() !== "") break;
+  }
+  lines.splice(start, 0, `# ${name}`, meta);
+  return lines.join(eol);
+}
+
 export class ProjectStore {
   constructor(
     private app: App,
@@ -176,7 +201,8 @@ export class ProjectStore {
     if (!items?.length) return false;
     let first = items[0];
     for (const it of items) if (it.position.start.line < first.position.start.line) first = it;
-    return typeof first.task === "string" && first.task.toLowerCase() === "x";
+    // ブロックID（^id）付きのチェック行だけをメタ行とみなす（手書きのチェックリストと区別する）
+    return typeof first.task === "string" && first.task.toLowerCase() === "x" && !!first.id;
   }
 
   /**
@@ -224,22 +250,34 @@ export class ProjectStore {
     return null;
   }
 
+  /** リンク先のノートを探す（フルパスでなければ Obsidian のリンク解決に任せる） */
+  private resolveFile(linktext: string): TFile | null {
+    const byPath = this.app.vault.getAbstractFileByPath(linktext + ".md");
+    if (byPath instanceof TFile) return byPath;
+    return this.app.metadataCache.getFirstLinkpathDest(linktext, "");
+  }
+
   /** プロジェクト自身の完了状態（メタ行が無ければ null） */
   async isDone(linktext: string): Promise<boolean | null> {
-    const file = this.app.vault.getAbstractFileByPath(linktext + ".md");
+    const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return null;
     const content = await this.app.vault.cachedRead(file);
     return this.findSelf(content)?.block.done ?? null;
   }
 
-  /** プロジェクト自身のメタ行の完了を切り替える */
+  /** プロジェクト自身のメタ行の完了を切り替える。メタ行が無い手作りのノートには書き足す */
   async setDone(linktext: string, done: boolean): Promise<boolean> {
-    const file = this.app.vault.getAbstractFileByPath(linktext + ".md");
+    const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return false;
     let ok = false;
     await this.app.vault.process(file, (content) => {
       const self = this.findSelf(content);
-      if (!self) return content;
+      if (!self) {
+        // 先にノートだけ作って結び付けた場合など。ID はここで新しく採番する
+        // （プロジェクトへのリンクはノート単位なので、この ^id を参照するものは無い）
+        ok = true;
+        return insertSelfMeta(content, file.basename, `- [${done ? "x" : " "}] ^${newBlockId()}`);
+      }
       const t = self.block;
       const next = updateTask(
         content,
