@@ -132,7 +132,7 @@ export function buildWeeklyReport(days: ReportDay[], opts: ReportOptions): strin
     prevKey = key;
     lines.push(
       `| ${dateCell} | ${cell(stripTags(r.task.title) || "(無題)")} | ${ticketCell(r.task, opts)} | ` +
-        `${hmm(r.plan)} | ${hmm(r.act)} | ${diffLabel(r.plan, r.act)} | ${r.task.done ? "✅" : ""} |`
+        `${hmm(r.plan)} | ${hmm(r.act)} | ${diffLabel(r.plan, r.act)} | ${r.task.done ? "✅" : r.task.forwarded ? "▶" : ""} |`
     );
   }
   lines.push(`| **合計** | | | **${hmm(totalPlan)}** | **${hmm(totalAct)}** | **${diffLabel(totalPlan, totalAct)}** | |`, "");

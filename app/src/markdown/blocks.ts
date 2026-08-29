@@ -65,6 +65,12 @@ export interface TaskBlock {
   project: string | null;
   /** プロジェクト行の行番号（無ければ null） */
   projectLine: number | null;
+  /** 持ち越し先（残件を先送りしたブロックへのリンク）。無ければ null */
+  carryTo: string | null;
+  carryToLine: number | null;
+  /** 持ち越し元（前の日のブロックへのリンク）。無ければ null */
+  carryFrom: string | null;
+  carryFromLine: number | null;
   /** ステップ（メタ行の直後に続くチェックリスト） */
   steps: TaskStep[];
   /** ステップの行範囲（無ければ stepsStart = null） */
@@ -148,6 +154,9 @@ export interface MetaSource {
   actual?: ActualRange[];
   /** プロジェクト（新規ブロックを組み立てるときだけ使う） */
   project?: string | null;
+  /** 持ち越し先・元（新規ブロックを組み立てるときだけ使う） */
+  carryTo?: string | null;
+  carryFrom?: string | null;
 }
 
 /** タスクを小さく分けた1ステップ */
@@ -259,6 +268,39 @@ export function parseProjectLine(line: string): string | null {
 
 export function renderProjectLine(linktext: string): string {
   return `- プロジェクト: [[${linktext.trim()}]]`;
+}
+
+/**
+ * 持ち越しの参照行。
+ * 残件を翌日へ持ち越したとき、元のブロックに「- 持ち越し先: [[...]]」、
+ * 続きのブロックに「- 持ち越し元: [[...]]」を書いて鎖にする
+ */
+const CARRY_TO_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?持ち越し先(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+const CARRY_FROM_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?持ち越し元(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+function parseCarryValue(v: string): string {
+  const link = /^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/.exec(v.trim());
+  return link ? link[1].trim() : v.trim();
+}
+
+/** 持ち越し先の行ならリンク先を返す（空でも ""）。違えば null */
+export function parseCarryToLine(line: string): string | null {
+  const m = CARRY_TO_RE.exec(line);
+  return m ? parseCarryValue(m[1]) : null;
+}
+
+/** 持ち越し元の行ならリンク先を返す（空でも ""）。違えば null */
+export function parseCarryFromLine(line: string): string | null {
+  const m = CARRY_FROM_RE.exec(line);
+  return m ? parseCarryValue(m[1]) : null;
+}
+
+export function renderCarryToLine(linktext: string): string {
+  return `- 持ち越し先: [[${linktext.trim()}]]`;
+}
+
+export function renderCarryFromLine(linktext: string): string {
+  return `- 持ち越し元: [[${linktext.trim()}]]`;
 }
 
 /** メタ行のリマインド指定（例: 🔔10 / 🔔off） */
@@ -460,6 +502,10 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
     let actualLine: number | null = null;
     let project: string | null = null;
     let projectLine: number | null = null;
+    let carryTo: string | null = null;
+    let carryToLine: number | null = null;
+    let carryFrom: string | null = null;
+    let carryFromLine: number | null = null;
     let bodyFence = false;
     for (let k = mi + 1; k < end; k++) {
       if (FENCE_RE.test(lines[k])) {
@@ -491,6 +537,22 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           continue;
         }
       }
+      if (carryToLine === null) {
+        const ct = parseCarryToLine(lines[k]);
+        if (ct !== null) {
+          carryTo = ct || null;
+          carryToLine = k;
+          continue;
+        }
+      }
+      if (carryFromLine === null) {
+        const cf = parseCarryFromLine(lines[k]);
+        if (cf !== null) {
+          carryFrom = cf || null;
+          carryFromLine = k;
+          continue;
+        }
+      }
       if (retrospectiveLine === null) {
         const rt = parseRetrospectiveLine(lines[k]);
         if (rt !== null) {
@@ -502,7 +564,9 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
         doneConditionLine !== null &&
         retrospectiveLine !== null &&
         actualLine !== null &&
-        projectLine !== null
+        projectLine !== null &&
+        carryToLine !== null &&
+        carryFromLine !== null
       )
         break;
     }
@@ -519,13 +583,23 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           k === doneConditionLine ||
           k === retrospectiveLine ||
           k === actualLine ||
-          k === projectLine)
+          k === projectLine ||
+          k === carryToLine ||
+          k === carryFromLine)
       )
         k++;
       if (k < end && !FENCE_RE.test(lines[k]) && parseStepLine(lines[k])) {
         stepsStart = k;
         while (k < end) {
-          if (k === doneConditionLine || k === retrospectiveLine || k === actualLine || k === projectLine) break;
+          if (
+            k === doneConditionLine ||
+            k === retrospectiveLine ||
+            k === actualLine ||
+            k === projectLine ||
+            k === carryToLine ||
+            k === carryFromLine
+          )
+            break;
           const st = parseStepLine(lines[k]);
           if (st) {
             steps.push({ text: st.text, done: st.done, children: [] });
@@ -549,6 +623,8 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
         k === retrospectiveLine ||
         k === actualLine ||
         k === projectLine ||
+        k === carryToLine ||
+        k === carryFromLine ||
         (stepsStart !== null && k >= stepsStart && k < stepsEnd) ||
         lines[k].trim() === ""
       ) {
@@ -577,6 +653,10 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       actualLine,
       project,
       projectLine,
+      carryTo,
+      carryToLine,
+      carryFrom,
+      carryFromLine,
       steps,
       stepsStart,
       stepsEnd,
@@ -635,6 +715,8 @@ export function renderTaskBlock(
   const out = [renderHeadingLine(t.title, level), renderMetaLine(t, opts)];
   if (t.project) out.push(renderProjectLine(t.project));
   if (t.actual?.length) out.push(renderActualLine(t.actual));
+  if (t.carryFrom) out.push(renderCarryFromLine(t.carryFrom));
+  if (t.carryTo) out.push(renderCarryToLine(t.carryTo));
   if (t.doneCondition && t.doneCondition.trim()) out.push(renderDoneConditionLine(t.doneCondition));
   if (t.steps?.length) out.push(...renderStepLines(t.steps));
   if (t.retrospective && t.retrospective.trim()) out.push(renderRetrospectiveLine(t.retrospective));
@@ -649,6 +731,7 @@ export function bodyPreview(body: string[], max = 60): string {
     if (parseDoneConditionLine(raw) !== null) continue; // 完了条件は別に出す
     if (parseActualLine(raw) !== null) continue; // 実績はバーとして出す
     if (parseProjectLine(raw) !== null) continue; // プロジェクトはバッジとして出す
+    if (parseCarryToLine(raw) !== null || parseCarryFromLine(raw) !== null) continue; // 持ち越しもバッジ
     const line = raw
       .replace(/^\s*[-*+]\s+(?:\[.\]\s*)?/, "") // リスト記号とチェックボックス
       .replace(/^\s*>\s?/, "") // 引用

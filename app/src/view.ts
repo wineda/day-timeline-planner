@@ -15,6 +15,7 @@ import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model
 import { ConfirmModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
 import type { ActualRange } from "./markdown/blocks";
 import { projectDisplayName, type ProjectSummary } from "./project";
+import { newBlockId } from "./markdown/id";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
 import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
@@ -1267,6 +1268,7 @@ export class DayTimelineView extends ItemView {
     el.style.width = geo.width;
     el.toggleClass("is-plan", paired);
     el.toggleClass("is-done", task.done);
+    el.toggleClass("is-forwarded", task.forwarded);
     el.toggleClass("is-short", h < 34);
     el.toggleClass("is-tiny", h < 18);
     const elKey = `${col.key}|${task.key}`;
@@ -1276,6 +1278,7 @@ export class DayTimelineView extends ItemView {
       "aria-label",
       (this.ownerName(task) ? `${this.ownerName(task)}の予定\n` : "") +
         `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}  ${task.title || "(無題)"}` +
+        (task.forwarded ? "\n持ち越し済み（このブロックは当日の記録）" : "") +
         (task.ticket ? `\n${task.ticket.tracker || "チケット"} #${task.ticket.id}` : "") +
         (task.doneCondition ? `\n完了条件: ${task.doneCondition}` : "") +
         (task.preview ? `\n${task.preview}` : "")
@@ -1289,6 +1292,7 @@ export class DayTimelineView extends ItemView {
       el.addClass("is-member");
       titleEl.createSpan({ cls: "dt-owner-label", text: ownerName });
     }
+    if (task.forwarded) titleEl.createSpan({ cls: "dt-forward-mark", text: "▶ " });
     titleEl.appendText(this.displayTitle(task));
     const timeEl = el.createDiv({
       cls: "dt-event-time",
@@ -1320,6 +1324,8 @@ export class DayTimelineView extends ItemView {
         void this.plugin.openProject(link);
       });
     }
+    if (task.carryFrom) this.carryBadge(el, "◀ 前日から", task.carryFrom, "持ち越し元のブロックを開く");
+    if (task.carryTo) this.carryBadge(el, "▶ 持ち越し先", task.carryTo, "持ち越し先のブロックを開く");
     const handle = el.createDiv("dt-event-resize");
 
     this.attachEventInteractions(el, timeEl, handle, col, task);
@@ -1450,6 +1456,20 @@ export class DayTimelineView extends ItemView {
     this.attachHoverPreview(el, col.date, task);
   }
 
+  /** 持ち越し元・先へのリンクバッジ */
+  private carryBadge(el: HTMLElement, label: string, linktext: string, tip: string): void {
+    const badge = el.createDiv({ cls: "dt-event-carry", text: label });
+    badge.setAttr("aria-label", `${tip}\n${linktext}`);
+    badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    badge.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void this.app.workspace.openLinkText(linktext, "", false).catch((e) => {
+        console.error(e);
+        new Notice("リンク先を開けませんでした: " + String(e));
+      });
+    });
+  }
+
   /** 各日の予定・実績の合計を日付ヘッダーに、表示範囲の合計をヘッダー（3日・週）に出す */
   private renderDayTotals(): void {
     const show = this.mode !== "month" && !!this.plugin.blockStore();
@@ -1513,6 +1533,7 @@ export class DayTimelineView extends ItemView {
       for (const task of tasks) {
         const item = cell.listEl.createDiv("dt-month-item");
         item.toggleClass("is-done", task.done);
+        item.toggleClass("is-forwarded", task.forwarded);
         item.toggleClass("is-unscheduled", !isScheduled(task));
         if (task.owner) {
           item.addClass("is-member");
@@ -2206,6 +2227,22 @@ export class DayTimelineView extends ItemView {
           .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), start: null, end: null }))
       );
     }
+    if (this.plugin.blockStoreFor(task.owner) && !task.done && !task.forwarded) {
+      menu.addItem((i) =>
+        i
+          .setTitle("翌日へ持ち越す（記録を残す）")
+          .setIcon("corner-down-right")
+          .onClick(() => void this.commitCarryOver(date, task, "next-day"))
+      );
+      if (!task.owner && this.plugin.inbox) {
+        menu.addItem((i) =>
+          i
+            .setTitle("Inbox へ持ち越す（記録を残す）")
+            .setIcon("inbox")
+            .onClick(() => void this.commitCarryOver(date, task, "inbox"))
+        );
+      }
+    }
     menu.addItem((i) =>
       i
         .setTitle("前日へ送る")
@@ -2441,7 +2478,8 @@ export class DayTimelineView extends ItemView {
     if (!link || !projects) return;
     try {
       const children = await this.plugin.collectProjectChildren(link);
-      if (!children.length || !children.every((c) => c.task.done)) return;
+      // 持ち越し済み [>] のブロックは「閉じた記録」なので、完了扱いで数える
+      if (!children.length || !children.every((c) => c.task.done || c.task.forwarded)) return;
       if ((await projects.isDone(link)) !== false) return; // 既に完了 or メタ行なし
       new ConfirmModal(
         this.app,
@@ -2606,6 +2644,81 @@ export class DayTimelineView extends ItemView {
       new Notice("タスクを移動できませんでした: " + String(e));
     }
     await this.reload();
+  }
+
+  /**
+   * 残件の持ち越し: タスクは動かさず、今日のブロックを [>] で閉じて
+   * 続きのブロックを翌日（または Inbox）に作る。実績・本文は今日の記録として残る
+   */
+  private async commitCarryOver(date: Date, task: Task, dest: "next-day" | "inbox"): Promise<void> {
+    const store = this.plugin.blockStoreFor(task.owner);
+    const inbox = this.plugin.inbox;
+    if (!store || (dest === "inbox" && (!inbox || task.owner))) {
+      new Notice("持ち越しはタスクブロック形式のときだけ使えます");
+      return;
+    }
+    if (task.done) {
+      new Notice("完了したタスクは持ち越せません");
+      return;
+    }
+    try {
+      // 元ブロックに ID を付けて、リンクで鎖にできるようにする
+      const link = await store.linkTo(date, task);
+      const fromId = link?.split("#^")[1];
+      if (!fromId) {
+        new Notice("持ち越し元のタスクが見つかりませんでした。ノートが変更された可能性があります。");
+        await this.reload();
+        return;
+      }
+      const fromLink = `${store.pathFor(date).replace(/\.md$/, "")}#^${fromId}`;
+
+      // 続きのブロック: 残ステップ・完了条件・プロジェクト等を引き継ぎ、未スケジュールで作る
+      const remaining = task.steps
+        .filter((st) => !st.done)
+        .map((st) => ({ ...st, children: [...(st.children ?? [])] }));
+      const newId = newBlockId();
+      const toStore = dest === "inbox" ? inbox! : store;
+      const toDate = dest === "inbox" ? INBOX_DATE : addDays(date, 1);
+      const toLink = `${toStore.pathFor(toDate).replace(/\.md$/, "")}#^${newId}`;
+      await toStore.createWithId(toDate, {
+        title: task.title,
+        start: null,
+        end: null,
+        done: false,
+        reminder: task.reminder,
+        doneCondition: task.doneCondition || undefined,
+        steps: remaining,
+        ticket: task.ticket ?? undefined,
+        project: task.project ?? undefined,
+        carryFrom: fromLink,
+      }, newId);
+
+      // 元ブロックを閉じる: [>] + 持ち越し先リンク（実績・ステップ・本文はそのまま）
+      const ok = await store.update(date, { ...task, blockId: fromId, ref: { kind: "block", id: fromId, title: task.title, start: task.start, end: task.end } }, {
+        title: task.title,
+        start: task.start,
+        end: task.end,
+        done: false,
+        forward: true,
+        carryTo: toLink,
+      });
+      if (!ok) new Notice("持ち越し先は作りましたが、元のタスクを閉じられませんでした");
+      else {
+        new Notice(
+          dest === "inbox"
+            ? `「${stripTags(task.title) || "(無題)"}」を Inbox へ持ち越しました` +
+              (remaining.length ? `（残ステップ ${remaining.length} 件）` : "")
+            : `「${stripTags(task.title) || "(無題)"}」を翌日へ持ち越しました` +
+              (remaining.length ? `（残ステップ ${remaining.length} 件）` : "") +
+              "。明日の未スケジュールのトレイに入ります"
+        );
+      }
+    } catch (e) {
+      console.error(e);
+      new Notice("持ち越せませんでした: " + String(e));
+    }
+    await this.reload();
+    await this.reloadInbox();
   }
 
   /** タスクの持ち主を変える（別のフォルダのノートへブロックごと移す） */

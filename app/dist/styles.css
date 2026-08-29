@@ -1201,6 +1201,40 @@
   display: none;
 }
 
+/* 持ち越し済み [>] のブロック: その日の記録としてグレーで残す */
+.dt-event.is-forwarded {
+  opacity: 0.55;
+  border-left-style: dashed;
+}
+.dt-forward-mark {
+  opacity: 0.9;
+}
+.dt-month-item.is-forwarded {
+  opacity: 0.55;
+}
+/* 持ち越し元・先のリンクバッジ */
+.dt-event-carry {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: var(--radius-l);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 0.78em;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.dt-event-carry:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+.dt-event.is-short .dt-event-carry,
+.dt-event.is-tiny .dt-event-carry {
+  display: none;
+}
+
 /* 編集ダイアログの「＋ 新規作成…」の入力欄 */
 .dt-modal .dt-project-new {
   display: none;

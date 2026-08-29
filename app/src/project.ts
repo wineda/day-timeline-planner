@@ -102,7 +102,7 @@ export function buildTaskListSection(children: ProjectChild[]): string[] {
       const linkBase = c.path.replace(/\.md$/, "");
       const titleCell = t.blockId ? `[[${linkBase}#^${t.blockId}\\|${title}]]` : title;
       lines.push(
-        `| ${t.done ? "✅" : "⬜"} | ${dateLabel} | ${titleCell} | ${hmm(plan)} | ${hmm(act)} |`
+        `| ${t.done ? "✅" : t.forwarded ? "▶" : "⬜"} | ${dateLabel} | ${titleCell} | ${hmm(plan)} | ${hmm(act)} |`
       );
     }
     lines.push(`| | | **合計（${rows.length}件）** | **${hmm(planTotal)}** | **${hmm(actTotal)}** |`);
