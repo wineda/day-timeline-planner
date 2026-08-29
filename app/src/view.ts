@@ -955,26 +955,30 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-  /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク） */
+  /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない */
   private renderProjects(): void {
+    const active = this.projectData.filter((s) => !s.done);
+    const hiddenDone = this.projectData.length - active.length;
     const wrap = this.inboxEl.createDiv("dt-projects");
     const head = wrap.createDiv("dt-projects-head");
     head.createSpan({ cls: "dt-inbox-label", text: "プロジェクト" });
-    head.createSpan({ cls: "dt-inbox-count", text: String(this.projectData.length) });
+    head.createSpan({ cls: "dt-inbox-count", text: String(active.length) });
     const refresh = this.iconButton(head, "file-text", "全プロジェクトノートのタスク一覧を更新", () =>
       void this.plugin.updateAllProjectNotes()
     );
     refresh.addClass("dt-inbox-open");
 
     const list = wrap.createDiv("dt-projects-list");
-    if (!this.projectData.length) {
+    if (!active.length) {
       list.createSpan({
         cls: "dt-tray-empty",
-        text: "タスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
+        text: hiddenDone
+          ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
+          : "タスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
       });
       return;
     }
-    for (const sum of this.projectData) {
+    for (const sum of active) {
       const key = sum.ref.linktext;
       const expanded = this.expandedProjects.has(key);
 
@@ -1002,6 +1006,32 @@ export class DayTimelineView extends ItemView {
         this.openCreateModal(this.date, undefined, undefined, undefined, { project: key })
       );
       addBtn.addClass("dt-project-add");
+      const doneBtn = this.iconButton(row, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
+        const projects = this.plugin.projects;
+        if (!projects) return;
+        const run = async () => {
+          const ok = await projects.setDone(key, true);
+          if (!ok) {
+            new Notice("プロジェクトノートの先頭にメタ行（- [ ] ^id）が無いため、完了にできませんでした");
+            return;
+          }
+          sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
+          new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
+          this.renderInbox();
+        };
+        const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
+        if (open) {
+          new ConfirmModal(
+            this.app,
+            `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
+            "完了にする",
+            run
+          ).open();
+        } else {
+          void run();
+        }
+      });
+      doneBtn.addClass("dt-project-done-btn");
 
       const toggleExpand = () => {
         if (this.expandedProjects.has(key)) this.expandedProjects.delete(key);

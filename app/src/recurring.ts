@@ -288,7 +288,11 @@ export class RecurringModal extends Modal {
         .setDesc("作られるタスクをプロジェクト（大きなタスク）に結びつけます。")
         .addDropdown((d) => {
           d.addOption("", "なし");
-          for (const p of projects) d.addOption(p.linktext, p.name);
+          // 完了済のプロジェクトは選択肢に出さない（既に選ばれているものは表示を保つ）
+          for (const p of projects) {
+            if (p.done && p.linktext !== this.project) continue;
+            d.addOption(p.linktext, p.done ? p.name + "（完了）" : p.name);
+          }
           if (this.project && !projects.some((p) => p.linktext === this.project)) {
             d.addOption(this.project, projectDisplayName(this.project));
           }

@@ -16,6 +16,8 @@ export interface ProjectRef {
   linktext: string;
   /** 表示名（ファイル名） */
   name: string;
+  /** ノート自身の完了チェックが付いているか（選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
+  done?: boolean;
 }
 
 /** プロジェクトに結びついた子タスク */
@@ -36,6 +38,8 @@ export interface ProjectSummary {
   planMin: number;
   actMin: number;
   doneCount: number;
+  /** プロジェクト自身（ノートのメタ行）が完了か。完了済はパネルに出さない */
+  done?: boolean;
 }
 
 export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSummary {
@@ -157,10 +161,22 @@ export class ProjectStore {
     const out: ProjectRef[] = [];
     for (const f of folder.children) {
       if (f instanceof TFile && f.extension === "md") {
-        out.push({ linktext: f.path.replace(/\.md$/, ""), name: f.basename });
+        out.push({ linktext: f.path.replace(/\.md$/, ""), name: f.basename, done: this.isDoneCached(f) });
       }
     }
     return out.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }
+
+  /**
+   * ノート先頭のチェック（メタ行 `- [x] ^id`）が付いているかをメタデータキャッシュから読む。
+   * list() を同期のままにするための近道で、正確な判定は isDone() / setDone() が行う
+   */
+  private isDoneCached(file: TFile): boolean {
+    const items = this.app.metadataCache.getFileCache(file)?.listItems;
+    if (!items?.length) return false;
+    let first = items[0];
+    for (const it of items) if (it.position.start.line < first.position.start.line) first = it;
+    return typeof first.task === "string" && first.task.toLowerCase() === "x";
   }
 
   /**

@@ -551,6 +551,9 @@
   width: 14px;
   height: 14px;
 }
+.dt-project-done-btn:hover {
+  color: var(--color-green);
+}
 .dt-project-children {
   margin: 0 0 4px 16px;
   border-left: 1px solid var(--background-modifier-border);

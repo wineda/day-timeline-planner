@@ -522,7 +522,18 @@ export default class DayTimelinePlugin extends Plugin {
         });
       }
     }
-    return refs.map((r) => summarize(r, children.get(r.linktext + ".md") ?? []));
+    const sums = refs.map((r) => summarize(r, children.get(r.linktext + ".md") ?? []));
+    // プロジェクト自身の完了はノートを読んで正確に判定する（書き込み直後のキャッシュ遅れを避ける）
+    await Promise.all(
+      sums.map(async (s) => {
+        try {
+          s.done = (await projects.isDone(s.ref.linktext)) === true;
+        } catch (e) {
+          console.error(e);
+        }
+      })
+    );
+    return sums;
   }
 
   /** 1つのプロジェクトの子タスクを集める */
