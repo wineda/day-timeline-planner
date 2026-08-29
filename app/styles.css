@@ -1339,6 +1339,65 @@
   width: 240px;
   font-variant-numeric: tabular-nums;
 }
+/* タイトル行の右端に出す「完了」トグル */
+.dt-modal .dt-done-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: 4px;
+}
+.dt-modal .dt-done-inline-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+/* 「時間」の直下に「実績」を詰めて出す */
+.dt-modal .setting-item.dt-tight {
+  padding-top: 0;
+}
+/* 2つの欄を横に並べる行 */
+.dt-modal .dt-row-pair {
+  display: flex;
+  gap: 16px;
+}
+.dt-modal .dt-row-pair .setting-item {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+.dt-modal .dt-row-pair .setting-item-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* 空の任意項目は「＋」チップで開くまで隠す */
+.dt-modal .dt-collapsed {
+  display: none !important;
+}
+.dt-modal .dt-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 8px 0 2px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.dt-modal .dt-add-field-chip {
+  height: auto;
+  min-height: 0;
+  padding: 2px 10px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px dashed var(--background-modifier-border-hover);
+  box-shadow: none;
+  cursor: pointer;
+}
+.dt-modal .dt-add-field-chip:hover {
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
 .dt-modal .dt-tag-setting .setting-item-control {
   flex-wrap: wrap;
   justify-content: flex-start;
@@ -1387,11 +1446,6 @@
   margin-left: 8px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
-}
-.dt-steps-desc {
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  text-align: right;
 }
 .dt-steps-progress {
   height: 4px;
@@ -1500,11 +1554,6 @@
 }
 .dt-step-add input {
   flex: 1 1 auto;
-}
-.dt-steps-hint {
-  color: var(--text-faint);
-  font-size: var(--font-ui-smaller);
-  margin-top: 6px;
 }
 
 /* 定期タスクの一覧ダイアログ */

@@ -124,7 +124,25 @@ export class TaskModal extends Modal {
       }
     };
 
-    new Setting(contentEl).setName("タイトル").addText((t) => {
+    // 項目の説明は行のツールチップ（ホバー）で出す
+    const tip = (el: HTMLElement, text: string) => el.setAttr("title", text);
+
+    // 値が空の任意項目は隠しておき、下の「＋」チップで開く
+    const collapsed: { label: string; el: HTMLElement; focus?: () => void }[] = [];
+    const collapsible = (el: HTMLElement, label: string, hasValue: boolean, focus?: () => void) => {
+      if (hasValue) return;
+      el.addClass("dt-collapsed");
+      collapsed.push({ label, el, focus });
+    };
+    /** 横に並べた2欄が両方隠れていたら行ごと隠す（欄が無ければ行ごと消す） */
+    const finishPair = (pair: HTMLElement) => {
+      if (!pair.childElementCount) pair.remove();
+      else if (!pair.querySelector(".setting-item:not(.dt-collapsed)")) pair.addClass("dt-collapsed");
+    };
+
+    // ---- タイトル（編集時は「完了」も同じ行に）----
+    const titleSetting = new Setting(contentEl).setName("タイトル");
+    titleSetting.addText((t) => {
       t.setPlaceholder("タスクの名前")
         .setValue(this.title)
         .onChange((v) => (this.title = v));
@@ -135,170 +153,17 @@ export class TaskModal extends Modal {
         t.inputEl.select();
       }, 0);
     });
-
-    if (this.opts.owners?.length) {
-      const owners = this.opts.owners;
-      const ownerSetting = new Setting(contentEl).setName("誰の予定か");
-      const dot = ownerSetting.controlEl.createSpan("dt-owner-dot");
-      const paintDot = () => {
-        const o = owners.find((x) => (x.id ?? null) === (this.owner ?? null));
-        dot.style.background = o?.color || "transparent";
-        dot.toggleClass("is-self", !o?.color);
-      };
-      ownerSetting.addDropdown((d) => {
-        for (const o of owners) d.addOption(o.id ?? "", o.name);
-        d.setValue(this.owner ?? "").onChange((v) => {
-          this.owner = v || null;
-          paintDot();
-        });
+    if (this.opts.mode === "edit") {
+      const doneWrap = titleSetting.controlEl.createDiv("dt-done-inline");
+      doneWrap.createSpan({ cls: "dt-done-inline-label", text: "完了" });
+      tip(doneWrap, "チェックすると完了（[x]）として保存されます。");
+      titleSetting.addToggle((tg) => {
+        tg.setValue(this.done).onChange((v) => (this.done = v));
+        doneWrap.appendChild(tg.toggleEl);
       });
-      paintDot();
-      if (this.opts.mode === "edit") {
-        ownerSetting.setDesc("変えると、その人のノートへブロックごと移ります。");
-      }
     }
 
-    if (this.opts.projects) {
-      this.buildProjectSection(contentEl);
-    }
-
-    if (this.opts.showDoneCondition) {
-      new Setting(contentEl)
-        .setName("完了条件")
-        .setDesc("何ができたら終わりか。ノートには「- 完了条件: …」として保存されます。")
-        .addText((t) => {
-          t.setPlaceholder("例: レビューが通ってマージされている")
-            .setValue(this.doneCondition)
-            .onChange((v) => (this.doneCondition = v));
-          t.inputEl.addClass("dt-title-input");
-          t.inputEl.addEventListener("keydown", onKey);
-        });
-      this.buildStepsSection(contentEl);
-
-      const detailSetting = new Setting(contentEl)
-        .setName("詳細")
-        .setDesc("自由なメモ（Markdown）。ノートのブロック本文と相互に反映されます。");
-      detailSetting.settingEl.addClass("dt-retro-setting");
-      const detailTa = detailSetting.controlEl.createEl("textarea", {
-        cls: "dt-retro-field dt-details-field",
-        attr: { rows: "1", placeholder: "例: - 参考リンク\n- 気づいたことのメモ" },
-      });
-      detailTa.value = this.details;
-      const growDetail = () => {
-        detailTa.style.height = "auto";
-        detailTa.style.height = Math.min(Math.max(detailTa.scrollHeight, 36), 320) + "px";
-      };
-      detailTa.addEventListener("input", () => {
-        this.details = detailTa.value;
-        growDetail();
-      });
-      detailTa.addEventListener("focus", () => {
-        detailTa.addClass("is-active");
-        growDetail();
-      });
-      detailTa.addEventListener("blur", () => {
-        detailTa.removeClass("is-active");
-        growDetail();
-      });
-      // Enter は改行（Markdown なので変換しない）。保存は Ctrl+Enter
-      detailTa.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
-          e.preventDefault();
-          void this.submit();
-        }
-      });
-      window.setTimeout(growDetail, 0);
-
-      const retroSetting = new Setting(contentEl)
-        .setName("ふりかえり")
-        .setDesc("作業してみてどうだったか・次はどう改善するか。");
-      retroSetting.settingEl.addClass("dt-retro-setting");
-      const retroTa = retroSetting.controlEl.createEl("textarea", {
-        cls: "dt-retro-field",
-        attr: { rows: "1", placeholder: "例: 調査に時間がかかった。次は先に既知の事例を探す" },
-      });
-      retroTa.value = this.retrospective.replace(/ \/ /g, "\n");
-      const growRetro = () => {
-        retroTa.style.height = "auto";
-        retroTa.style.height = Math.min(Math.max(retroTa.scrollHeight, 36), 220) + "px";
-      };
-      retroTa.addEventListener("input", () => {
-        this.retrospective = retroTa.value;
-        growRetro();
-      });
-      // フォーカスで広がり、離れたら（内容ぶんの高さを保ちつつ）縮む
-      retroTa.addEventListener("focus", () => {
-        retroTa.addClass("is-active");
-        growRetro();
-      });
-      retroTa.addEventListener("blur", () => {
-        retroTa.removeClass("is-active");
-        growRetro();
-      });
-      // Enter は改行（保存は Ctrl+Enter）
-      retroTa.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
-          e.preventDefault();
-          void this.submit();
-        }
-      });
-      window.setTimeout(growRetro, 0);
-    }
-
-    if (this.tagChoices.length) {
-      const tagSetting = new Setting(contentEl).setName("タグ");
-      tagSetting.settingEl.addClass("dt-tag-setting");
-      renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags);
-      tagSetting.descEl.setText("選んだタグは見出しの末尾に #タグ として書き込まれます。");
-    }
-
-    const trackers = this.opts.trackers ?? [];
-    if (this.opts.showDoneCondition && trackers.length) {
-      const tkSetting = new Setting(contentEl).setName("チケット");
-      const updateDesc = () => {
-        const url = this.ticketId.trim()
-          ? ticketUrl(trackers, this.ticketTracker, this.ticketId.trim())
-          : null;
-        tkSetting.descEl.empty();
-        if (url) {
-          tkSetting.descEl.createEl("a", {
-            cls: "dt-ticket-link",
-            text: url,
-            href: url,
-            attr: { target: "_blank", rel: "noopener" },
-          });
-        } else {
-          tkSetting.descEl.setText("管理ツールと番号を選ぶと、ブロックからチケットを開けます。");
-        }
-      };
-      tkSetting.addDropdown((d) => {
-        for (const tr of trackers) if (tr.name) d.addOption(tr.name, tr.name);
-        const cur =
-          this.ticketTracker && trackers.some((tr) => tr.name === this.ticketTracker)
-            ? this.ticketTracker
-            : trackers.find((tr) => tr.name)?.name ?? "";
-        if (this.ticketTracker && !trackers.some((tr) => tr.name === this.ticketTracker)) {
-          d.addOption(this.ticketTracker, this.ticketTracker + "（未登録）");
-        }
-        this.ticketTracker = this.ticketId ? this.ticketTracker || cur : cur;
-        d.setValue(this.ticketTracker || cur).onChange((v) => {
-          this.ticketTracker = v;
-          updateDesc();
-        });
-      });
-      tkSetting.addText((t) => {
-        t.setPlaceholder("番号（例: 65130）")
-          .setValue(this.ticketId)
-          .onChange((v) => {
-            this.ticketId = v.trim().replace(/^#+/, "");
-            updateDesc();
-          });
-        t.inputEl.addClass("dt-ticket-input");
-        t.inputEl.addEventListener("keydown", onKey);
-      });
-      updateDesc();
-    }
-
+    // ---- 時間・実績 ----
     // 時刻の候補リスト（入力欄をクリックすると選べる）
     const listId = "dt-times-" + Math.random().toString(36).slice(2, 8);
     const datalist = contentEl.createEl("datalist", { attr: { id: listId } });
@@ -350,6 +215,8 @@ export class TaskModal extends Modal {
 
     if (this.opts.showActual) {
       const actSetting = new Setting(contentEl).setName("実績");
+      actSetting.settingEl.addClass("dt-tight");
+      tip(actSetting.settingEl, "実際に作業した時間。中断したら / で区切って複数書けます。");
       let actualInput: HTMLInputElement | null = null;
       const updateActualDesc = () => {
         const r = this.parseActual();
@@ -357,7 +224,7 @@ export class TaskModal extends Modal {
         if (r === null) {
           actSetting.descEl.setText("実績は 10:05 - 11:20 / 13:00 - 13:30 のように入力してください");
         } else if (r.length === 0) {
-          actSetting.descEl.setText("実際に作業した時間。中断したら / で区切って複数書けます。");
+          actSetting.descEl.setText("");
         } else {
           actSetting.descEl.setText(`実績合計: ${formatDuration(actualTotal(r))}`);
         }
@@ -391,30 +258,232 @@ export class TaskModal extends Modal {
       updateActualDesc();
     }
 
-    if (this.opts.reminderDefault !== undefined) {
-      const def = this.opts.reminderDefault;
-      new Setting(contentEl)
-        .setName("リマインド")
-        .setDesc("開始の何分前に通知するか。")
-        .addDropdown((d) => {
-          d.addOption("default", `既定（${def === 0 ? "開始時刻" : `${def}分前`}）`);
-          d.addOption("off", "しない");
-          for (const m of [0, 1, 3, 5, 10, 15, 30, 60]) d.addOption(String(m), m === 0 ? "開始時刻" : `${m}分前`);
-          const cur = this.reminder;
-          const val = cur === null ? "default" : cur === "off" ? "off" : String(cur);
-          if (cur !== null && cur !== "off" && !d.selectEl.querySelector(`option[value="${cur}"]`)) {
-            d.addOption(String(cur), `${cur}分前`);
-          }
-          d.setValue(val).onChange((v) => {
-            this.reminder = v === "default" ? null : v === "off" ? "off" : Number(v);
-          });
+    // ---- プロジェクト・誰の予定か（横並び）----
+    const pairMain = contentEl.createDiv("dt-row-pair");
+    if (this.opts.projects) {
+      this.buildProjectSection(pairMain);
+    }
+    if (this.opts.owners?.length) {
+      const owners = this.opts.owners;
+      const ownerSetting = new Setting(pairMain).setName("誰の予定か");
+      tip(
+        ownerSetting.settingEl,
+        this.opts.mode === "edit"
+          ? "変えると、その人のノートへブロックごと移ります。"
+          : "自分以外を選ぶと、その人の予定として登録します。"
+      );
+      const dot = ownerSetting.controlEl.createSpan("dt-owner-dot");
+      const paintDot = () => {
+        const o = owners.find((x) => (x.id ?? null) === (this.owner ?? null));
+        dot.style.background = o?.color || "transparent";
+        dot.toggleClass("is-self", !o?.color);
+      };
+      let ownerSelect: HTMLSelectElement | null = null;
+      ownerSetting.addDropdown((d) => {
+        for (const o of owners) d.addOption(o.id ?? "", o.name);
+        d.setValue(this.owner ?? "").onChange((v) => {
+          this.owner = v || null;
+          paintDot();
         });
+        ownerSelect = d.selectEl;
+      });
+      paintDot();
+      collapsible(ownerSetting.settingEl, "誰の予定か", this.owner !== null, () => ownerSelect?.focus());
+    }
+    finishPair(pairMain);
+
+    // ---- タグ ----
+    if (this.tagChoices.length) {
+      const tagSetting = new Setting(contentEl).setName("タグ");
+      tagSetting.settingEl.addClass("dt-tag-setting");
+      tip(tagSetting.settingEl, "選んだタグは見出しの末尾に #タグ として書き込まれます。");
+      renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags);
     }
 
-    if (this.opts.mode === "edit") {
-      new Setting(contentEl)
-        .setName("完了")
-        .addToggle((t) => t.setValue(this.done).onChange((v) => (this.done = v)));
+    if (this.opts.showDoneCondition) {
+      // ---- ステップ（空のときは「＋」チップから開く）----
+      const stepsEl = this.buildStepsSection(contentEl);
+      collapsible(stepsEl, "ステップ", this.steps.length > 0, () => this.stepAddInput?.focus());
+
+      // ---- 完了条件 ----
+      const dcSetting = new Setting(contentEl).setName("完了条件");
+      tip(dcSetting.settingEl, "何ができたら終わりか。ノートには「- 完了条件: …」として保存されます。");
+      let dcInput: HTMLInputElement | null = null;
+      dcSetting.addText((t) => {
+        t.setPlaceholder("例: レビューが通ってマージされている")
+          .setValue(this.doneCondition)
+          .onChange((v) => (this.doneCondition = v));
+        t.inputEl.addClass("dt-title-input");
+        t.inputEl.addEventListener("keydown", onKey);
+        dcInput = t.inputEl;
+      });
+      collapsible(dcSetting.settingEl, "完了条件", this.doneCondition.trim() !== "", () => dcInput?.focus());
+
+      // ---- 詳細 ----
+      const detailSetting = new Setting(contentEl).setName("詳細");
+      tip(detailSetting.settingEl, "自由なメモ（Markdown）。ノートのブロック本文と相互に反映されます。");
+      detailSetting.settingEl.addClass("dt-retro-setting");
+      const detailTa = detailSetting.controlEl.createEl("textarea", {
+        cls: "dt-retro-field dt-details-field",
+        attr: { rows: "1", placeholder: "例: - 参考リンク\n- 気づいたことのメモ" },
+      });
+      detailTa.value = this.details;
+      const growDetail = () => {
+        detailTa.style.height = "auto";
+        detailTa.style.height = Math.min(Math.max(detailTa.scrollHeight, 36), 320) + "px";
+      };
+      detailTa.addEventListener("input", () => {
+        this.details = detailTa.value;
+        growDetail();
+      });
+      detailTa.addEventListener("focus", () => {
+        detailTa.addClass("is-active");
+        growDetail();
+      });
+      detailTa.addEventListener("blur", () => {
+        detailTa.removeClass("is-active");
+        growDetail();
+      });
+      // Enter は改行（Markdown なので変換しない）。保存は Ctrl+Enter
+      detailTa.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+          e.preventDefault();
+          void this.submit();
+        }
+      });
+      window.setTimeout(growDetail, 0);
+      collapsible(detailSetting.settingEl, "詳細", this.details.trim() !== "", () => detailTa.focus());
+
+      // ---- ふりかえり（編集時のみ。作った直後には要らない）----
+      if (this.opts.mode === "edit") {
+        const retroSetting = new Setting(contentEl).setName("ふりかえり");
+        tip(retroSetting.settingEl, "作業してみてどうだったか・次はどう改善するか。");
+        retroSetting.settingEl.addClass("dt-retro-setting");
+        const retroTa = retroSetting.controlEl.createEl("textarea", {
+          cls: "dt-retro-field",
+          attr: { rows: "1", placeholder: "例: 調査に時間がかかった。次は先に既知の事例を探す" },
+        });
+        retroTa.value = this.retrospective.replace(/ \/ /g, "\n");
+        const growRetro = () => {
+          retroTa.style.height = "auto";
+          retroTa.style.height = Math.min(Math.max(retroTa.scrollHeight, 36), 220) + "px";
+        };
+        retroTa.addEventListener("input", () => {
+          this.retrospective = retroTa.value;
+          growRetro();
+        });
+        // フォーカスで広がり、離れたら（内容ぶんの高さを保ちつつ）縮む
+        retroTa.addEventListener("focus", () => {
+          retroTa.addClass("is-active");
+          growRetro();
+        });
+        retroTa.addEventListener("blur", () => {
+          retroTa.removeClass("is-active");
+          growRetro();
+        });
+        // Enter は改行（保存は Ctrl+Enter）
+        retroTa.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+            e.preventDefault();
+            void this.submit();
+          }
+        });
+        window.setTimeout(growRetro, 0);
+        collapsible(retroSetting.settingEl, "ふりかえり", this.retrospective.trim() !== "", () => retroTa.focus());
+      }
+    }
+
+    // ---- チケット・リマインド（横並び）----
+    const pairSub = contentEl.createDiv("dt-row-pair");
+    const trackers = this.opts.trackers ?? [];
+    if (this.opts.showDoneCondition && trackers.length) {
+      const tkSetting = new Setting(pairSub).setName("チケット");
+      tip(tkSetting.settingEl, "管理ツールと番号を選ぶと、ブロックからチケットを開けます。");
+      const updateDesc = () => {
+        const url = this.ticketId.trim()
+          ? ticketUrl(trackers, this.ticketTracker, this.ticketId.trim())
+          : null;
+        tkSetting.descEl.empty();
+        if (url) {
+          tkSetting.descEl.createEl("a", {
+            cls: "dt-ticket-link",
+            text: url,
+            href: url,
+            attr: { target: "_blank", rel: "noopener" },
+          });
+        }
+      };
+      tkSetting.addDropdown((d) => {
+        for (const tr of trackers) if (tr.name) d.addOption(tr.name, tr.name);
+        const cur =
+          this.ticketTracker && trackers.some((tr) => tr.name === this.ticketTracker)
+            ? this.ticketTracker
+            : trackers.find((tr) => tr.name)?.name ?? "";
+        if (this.ticketTracker && !trackers.some((tr) => tr.name === this.ticketTracker)) {
+          d.addOption(this.ticketTracker, this.ticketTracker + "（未登録）");
+        }
+        this.ticketTracker = this.ticketId ? this.ticketTracker || cur : cur;
+        d.setValue(this.ticketTracker || cur).onChange((v) => {
+          this.ticketTracker = v;
+          updateDesc();
+        });
+      });
+      let tkInput: HTMLInputElement | null = null;
+      tkSetting.addText((t) => {
+        t.setPlaceholder("番号（例: 65130）")
+          .setValue(this.ticketId)
+          .onChange((v) => {
+            this.ticketId = v.trim().replace(/^#+/, "");
+            updateDesc();
+          });
+        t.inputEl.addClass("dt-ticket-input");
+        t.inputEl.addEventListener("keydown", onKey);
+        tkInput = t.inputEl;
+      });
+      updateDesc();
+      collapsible(tkSetting.settingEl, "チケット", this.ticketId.trim() !== "", () => tkInput?.focus());
+    }
+    if (this.opts.reminderDefault !== undefined) {
+      const def = this.opts.reminderDefault;
+      const rmSetting = new Setting(pairSub).setName("リマインド");
+      tip(rmSetting.settingEl, "開始の何分前に通知するか。");
+      let rmSelect: HTMLSelectElement | null = null;
+      rmSetting.addDropdown((d) => {
+        d.addOption("default", `既定（${def === 0 ? "開始時刻" : `${def}分前`}）`);
+        d.addOption("off", "しない");
+        for (const m of [0, 1, 3, 5, 10, 15, 30, 60]) d.addOption(String(m), m === 0 ? "開始時刻" : `${m}分前`);
+        const cur = this.reminder;
+        const val = cur === null ? "default" : cur === "off" ? "off" : String(cur);
+        if (cur !== null && cur !== "off" && !d.selectEl.querySelector(`option[value="${cur}"]`)) {
+          d.addOption(String(cur), `${cur}分前`);
+        }
+        d.setValue(val).onChange((v) => {
+          this.reminder = v === "default" ? null : v === "off" ? "off" : Number(v);
+        });
+        rmSelect = d.selectEl;
+      });
+      collapsible(rmSetting.settingEl, "リマインド", this.reminder !== null, () => rmSelect?.focus());
+    }
+    finishPair(pairSub);
+
+    // ---- 隠している項目を開く「＋」チップ ----
+    if (collapsed.length) {
+      const addRow = contentEl.createDiv("dt-add-fields");
+      for (const c of collapsed) {
+        const chip = addRow.createEl("button", {
+          cls: "dt-add-field-chip",
+          text: "＋ " + c.label,
+          attr: { type: "button", title: `${c.label}の欄を開く` },
+        });
+        chip.onclick = () => {
+          c.el.removeClass("dt-collapsed");
+          const pair = c.el.parentElement;
+          if (pair && pair.hasClass("dt-row-pair")) pair.removeClass("dt-collapsed");
+          chip.remove();
+          if (!addRow.querySelector("button")) addRow.remove();
+          c.focus?.();
+        };
+      }
     }
 
     const buttons = new Setting(contentEl);
@@ -582,14 +651,11 @@ export class TaskModal extends Modal {
   private buildProjectSection(contentEl: HTMLElement): void {
     const projects = this.opts.projects ?? [];
     const setting = new Setting(contentEl).setName("プロジェクト");
+    setting.settingEl.setAttr(
+      "title",
+      "大きなタスクにまとめると、日をまたいでメモや進捗を共有できます。↗ ボタンでプロジェクトノートを開けます。"
+    );
     let dd: DropdownComponent | null = null;
-    const updateDesc = () => {
-      setting.descEl.setText(
-        this.project
-          ? "メモや進捗はプロジェクトノートにまとまります。→ ボタンで開けます。"
-          : "大きなタスクにまとめると、日をまたいでメモや進捗を共有できます。"
-      );
-    };
 
     // 「＋ 新規作成…」を選んだときに出す入力欄
     const newInput = setting.controlEl.createEl("input", {
@@ -621,7 +687,6 @@ export class TaskModal extends Modal {
       dd?.setValue(link);
       newInput.value = "";
       hideNew();
-      updateDesc();
       this.scheduleAutosave(); // setValue はイベントを出さないので明示的に
     };
     newInput.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -654,7 +719,6 @@ export class TaskModal extends Modal {
         }
         hideNew();
         this.project = v || null;
-        updateDesc();
       });
     });
     // 入力欄はドロップダウンの後ろに出す
@@ -676,19 +740,21 @@ export class TaskModal extends Modal {
           void open(link);
         })
     );
-    updateDesc();
   }
 
   // ---------- ステップ ----------
 
-  /** 「ステップ」の入力欄（チェック・並べ替え・追加・削除） */
-  private buildStepsSection(contentEl: HTMLElement): void {
+  /** 「ステップ」の入力欄（チェック・並べ替え・追加・削除）。折りたたみ用に外枠を返す */
+  private buildStepsSection(contentEl: HTMLElement): HTMLElement {
     const wrap = contentEl.createDiv("dt-steps");
     const head = wrap.createDiv("dt-steps-head");
+    head.setAttr(
+      "title",
+      "⋮⋮ をドラッグで並べ替え・Enter で次を追加。ノートには「- [ ] ステップ」のチェックリストとして保存されます。"
+    );
     const name = head.createDiv("dt-steps-name");
     name.createSpan({ text: "ステップ" });
     this.stepsCountEl = name.createSpan({ cls: "dt-steps-count" });
-    head.createDiv({ cls: "dt-steps-desc", text: "⋮⋮ をドラッグで並べ替え・Enter で次を追加" });
     const bar = wrap.createDiv("dt-steps-progress");
     this.stepsBarEl = bar.createDiv();
     this.stepsListEl = wrap.createDiv("dt-steps-list");
@@ -713,11 +779,8 @@ export class TaskModal extends Modal {
       }
     });
     addInput.addEventListener("blur", commitAdd);
-    wrap.createDiv({
-      cls: "dt-steps-hint",
-      text: "ノートには「- [ ] ステップ」のチェックリストとして保存され、ノート側の変更も反映されます。",
-    });
     this.renderSteps();
+    return wrap;
   }
 
   private renderSteps(focusIndex?: number): void {
