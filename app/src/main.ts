@@ -7,7 +7,8 @@ import {
   ticketUrl,
 } from "./settings";
 import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, migrateNote } from "./store";
-import { RecurringListModal, RecurringModal } from "./recurring";
+import { RecurringModal } from "./recurring";
+import { RecurringManagerView, VIEW_TYPE_RECURRING } from "./recurring-view";
 import { TaskModal } from "./modal";
 import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
 import type { Task, TaskSource } from "./model";
@@ -47,6 +48,7 @@ export default class DayTimelinePlugin extends Plugin {
     if (this.settings.notifyStyle !== "banner") requestNotificationPermission();
 
     this.registerView(VIEW_TYPE_DAY_TIMELINE, (leaf) => new DayTimelineView(leaf, this));
+    this.registerView(VIEW_TYPE_RECURRING, (leaf) => new RecurringManagerView(leaf, this));
 
     this.addRibbonIcon("calendar-clock", "タイムスケジュールを開く", () => {
       void this.activateView();
@@ -157,7 +159,7 @@ export default class DayTimelinePlugin extends Plugin {
     this.addCommand({
       id: "recurring-manage",
       name: "定期タスクを管理",
-      callback: () => new RecurringListModal(this).open(),
+      callback: () => void this.activateRecurringView(),
     });
     this.addCommand({
       id: "recurring-add",
@@ -438,6 +440,17 @@ export default class DayTimelinePlugin extends Plugin {
         return;
       }
       await leaf.setViewState({ type: VIEW_TYPE_DAY_TIMELINE, active: true });
+    }
+    void workspace.revealLeaf(leaf);
+  }
+
+  /** 定期タスクの管理画面を開く（既にあればそれを前面に） */
+  async activateRecurringView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_RECURRING)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VIEW_TYPE_RECURRING, active: true });
     }
     void workspace.revealLeaf(leaf);
   }

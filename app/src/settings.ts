@@ -1,6 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting, moment } from "obsidian";
 import type DayTimelinePlugin from "./main";
-import { RecurringModal, describeRule, propagateRecurringUpdate } from "./recurring";
+import { RecurringModal, describeRule, propagateAndNotify } from "./recurring";
 import { requestNotificationPermission, showAlert } from "./notify";
 
 export type ViewLocation = "tab" | "right" | "left";
@@ -85,6 +85,29 @@ export interface RecurringRule {
   enabled: boolean;
   /** 作るタスクを結びつけるプロジェクト（リンク先）。無ければ undefined */
   project?: string;
+  /** 毎回のタスクの本文（詳細）に入れる共通のメモ。無ければ undefined */
+  details?: string;
+}
+
+/** 定期タスクの発生日（日 × ルール）ごとの個別の上書き（管理画面の「個別詳細」） */
+export interface RecurringOverride {
+  /** この日だけの詳細（本文）。undefined = ルールの「共通の詳細」を使う */
+  details?: string;
+  /** この日だけの時刻。undefined = ルールどおり */
+  start?: number | null;
+  end?: number | null;
+}
+
+/** 定期タスクの発生日（日 × ルール）ごとの記録 */
+export interface RecurringInstance {
+  /** 書き込んだタスクのブロックID。まだ書き込んでいなければ null */
+  blockId: string | null;
+  /** この日は入れない（取り消し済み）。タイムラインでの削除や管理画面の操作で付く */
+  skipped?: boolean;
+  /** 個別調整済み: ルールを編集してもこの日のタスクの時刻・タイトルは書き換えない */
+  detached?: boolean;
+  /** まだ書き込んでいない日の個別の上書き。書き込むときに使われて消える */
+  override?: RecurringOverride;
 }
 
 /** 既定の保存フォルダ（空欄にはできない） */
@@ -92,7 +115,7 @@ export const DEFAULT_FOLDER = "Timeline";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
@@ -160,8 +183,8 @@ export interface DayTimelineSettings {
   autoApplyRecurring: boolean;
   /** 日付キー → 反映済みのルール ID（消したタスクが復活しないように覚えておく） */
   recurringApplied: Record<string, string[]>;
-  /** 日付キー → ルール ID → 書き込んだタスクのブロックID（ルール編集を将来分に反映するため） */
-  recurringInstances: Record<string, Record<string, string>>;
+  /** 日付キー → ルール ID → 発生日ごとの記録（ブロックID・取り消し・個別調整） */
+  recurringInstances: Record<string, Record<string, RecurringInstance>>;
 
   /** Inbox のノート（拡張子なしでも可） */
   inboxPath: string;
@@ -237,6 +260,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
 /**
  * 保存されている設定を現在の版に合わせる。
  * v1（版なし）: 表示時間帯の既定が 0:00〜24:00、フォルダの既定が保管庫直下だった。
+ * v2: recurringInstances が「ルールID → ブロックID の文字列」だった。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -252,6 +276,15 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   if (!Array.isArray(s.recurring)) s.recurring = [];
   if (!s.recurringApplied || typeof s.recurringApplied !== "object") s.recurringApplied = {};
   if (!s.recurringInstances || typeof s.recurringInstances !== "object") s.recurringInstances = {};
+  // 旧形式（文字列）の発生日記録をオブジェクトに揃える（何度通っても安全）
+  for (const map of Object.values(s.recurringInstances)) {
+    if (!map || typeof map !== "object") continue;
+    const m = map as Record<string, unknown>;
+    for (const [ruleId, inst] of Object.entries(m)) {
+      if (typeof inst === "string") m[ruleId] = { blockId: inst };
+      else if (!inst || typeof inst !== "object") delete m[ruleId];
+    }
+  }
   if (!s.inboxPath.trim()) s.inboxPath = DEFAULT_INBOX_PATH;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
@@ -676,6 +709,22 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     // ---------- 定期タスク ----------
     new Setting(containerEl).setName("定期タスク").setHeading();
     new Setting(containerEl)
+      .setName("管理画面")
+      .setDesc(
+        "ルールの登録・編集、今後の予定の状態（反映済み / 取り消しなど）の確認、" +
+          "回ごとの「個別詳細」の入力をまとめて行える画面を開きます。"
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("定期タスクの管理画面を開く")
+          .setCta()
+          .onClick(() => {
+            void this.plugin.activateRecurringView();
+            // 後ろに開くビューが見えるよう、設定ダイアログを閉じる
+            (this.app as unknown as { setting?: { close?: () => void } }).setting?.close?.();
+          })
+      );
+    new Setting(containerEl)
       .setName("定期タスクを自動で入れる")
       .setDesc(
         "タイムラインで今日以降の日を表示したとき、まだ入っていない定期タスクをその日のノートに書き込みます。" +
@@ -731,6 +780,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
             .setIcon("pencil")
             .setTooltip("編集")
             .onClick(() => {
+              const prev = { ...rule };
               new RecurringModal(this.app, {
                 initial: rule,
                 tagChoices: s.tagColors,
@@ -739,8 +789,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
                   s.recurring[idx] = next;
                   await save();
                   this.display();
-                  const n = await propagateRecurringUpdate(this.plugin, next);
-                  if (n) new Notice(`今日以降の ${n} 件のタスクにも反映しました`);
+                  await propagateAndNotify(this.plugin, next, prev);
                 },
               }).open();
             })

@@ -244,7 +244,13 @@ export class BlockTaskStore extends NoteStore {
   async updateByBlockId(
     date: Date,
     blockId: string,
-    patch: { title?: string; start?: number | null; end?: number | null; project?: string | null }
+    patch: {
+      title?: string;
+      start?: number | null;
+      end?: number | null;
+      project?: string | null;
+      details?: string;
+    }
   ): Promise<boolean> {
     if (!this.getFile(date)) return false;
     return this.process(date, (c) =>

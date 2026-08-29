@@ -18,7 +18,7 @@ import { projectDisplayName, type ProjectSummary } from "./project";
 import { newBlockId } from "./markdown/id";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
-import { applyRecurring, RecurringListModal, RecurringModal } from "./recurring";
+import { applyRecurring, instanceOf, noteRecurringDeletion, RecurringModal } from "./recurring";
 import { INBOX_DATE } from "./store";
 import { formatSeconds } from "./notify";
 import {
@@ -413,7 +413,7 @@ export class DayTimelineView extends ItemView {
     this.renderTimer();
     this.register(this.plugin.timer.onChange(() => this.renderTimer()));
     this.iconButton(actions, "repeat", "定期タスクを管理", () =>
-      new RecurringListModal(this.plugin).open()
+      void this.plugin.activateRecurringView()
     );
     this.iconButton(actions, "plus", "タスクを追加", () => this.openCreateModal(this.date));
     this.noteBtnEl = this.iconButton(actions, "file-text", "ノートを開く", () =>
@@ -1608,13 +1608,24 @@ export class DayTimelineView extends ItemView {
         });
         this.attachHoverPreview(item, cell.date, task);
       }
-      // まだノートに入れていない将来の定期タスクは薄く表示
+      // まだノートに入れていない将来の定期タスクは薄く表示。取り消した回は打ち消し線で出す
       if (cell.date >= today && s.autoApplyRecurring) {
         const applied = new Set(s.recurringApplied[key] ?? []);
         for (const r of rules) {
-          if (!r.weekdays.includes(cell.date.getDay()) || applied.has(r.id)) continue;
+          if (!r.weekdays.includes(cell.date.getDay())) continue;
+          const inst = instanceOf(s, key, r.id);
+          if (inst?.skipped) {
+            const item = cell.listEl.createDiv("dt-month-item is-recurring-preview is-recurring-skipped");
+            if (r.start !== null) item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(r.start) });
+            item.createSpan({ cls: "dt-month-item-title", text: r.title });
+            item.setAttr("aria-label", "定期タスク（この日は取り消し済み。管理画面から入れ直せます）");
+            continue;
+          }
+          if (applied.has(r.id)) continue;
+          const ov = inst?.override;
+          const start = ov && ov.start !== undefined ? ov.start : r.start;
           const item = cell.listEl.createDiv("dt-month-item is-recurring-preview");
-          if (r.start !== null) item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(r.start) });
+          if (start !== null) item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(start) });
           item.createSpan({ cls: "dt-month-item-title", text: r.title });
           item.setAttr("aria-label", "定期タスク（この日を開くとノートに入ります）");
         }
@@ -2630,6 +2641,8 @@ export class DayTimelineView extends ItemView {
       try {
         const ok = await this.storeOf(task).remove(date, task);
         if (!ok) new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+        // 定期タスクの回だったら「その日は取り消した」として記録する（勝手に復活しない・管理画面で区別できる）
+        else await noteRecurringDeletion(this.plugin, date, task);
       } catch (e) {
         console.error(e);
         new Notice("タスクを削除できませんでした: " + String(e));
