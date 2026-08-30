@@ -226,10 +226,28 @@ date: 2026-08-18
 - 表示する時間帯が旧既定値（0:00〜24:00）のままだった場合、7:00〜22:00 に切り替わります（変更していた場合はそのまま）
 - フォルダが空欄（保管庫直下）だった場合、`Timeline` に切り替わります。既に保管庫直下に置いていたノートは、必要なら `Timeline/` へ移動してください
 
+## インストール・更新（BRAT — スマホにおすすめ）
+
+Android / iOS の Obsidian ではファイルを手でコピーするのが大変なので、[BRAT](https://github.com/TfTHacker/obsidian42-brat)（Beta Reviewers Auto-update Tool）を使うと、この GitHub リポジトリから直接インストール・更新できます（PC でも使えます）。
+
+### 初回セットアップ
+
+1. **設定 → コミュニティプラグイン** で「制限モード」をオフにし、「閲覧」から **BRAT** を検索してインストール・有効化する
+2. **設定 → BRAT → Add beta plugin** を開く
+3. リポジトリに `wineda/day-timeline-planner` と入力し、バージョンは **Latest version** のまま **Add plugin** を押す
+4. プラグインがダウンロードされ、そのまま有効化される
+
+### 更新するとき
+
+- コマンドパレットで **「BRAT: Check for updates to all beta plugins and UPDATE」** を実行すると、最新リリースに更新されます
+- BRAT の設定で **「Auto-update plugins at startup」** をオンにすると、Obsidian の起動時に自動で更新されます
+
+新しいバージョンは、`master` ブランチにバージョン更新が入ると GitHub Actions が自動で [Releases](https://github.com/wineda/day-timeline-planner/releases) を作成し、BRAT がそれを拾います。
+
 ## インストール（手動）
 
-1. 保管庫（Vault）の `.obsidian/plugins/` の中に `day-timeline-planner` というフォルダを作る
-2. そのフォルダに `main.js` / `manifest.json` / `styles.css` の3つを入れる
+1. [Releases](https://github.com/wineda/day-timeline-planner/releases) か `app/dist/` から `main.js` / `manifest.json` / `styles.css` の3つを入手する
+2. 保管庫（Vault）の `.obsidian/plugins/` の中に `day-timeline-planner` というフォルダを作り、そこへ3つのファイルを入れる
 3. Obsidian の **設定 → コミュニティプラグイン** で「制限モード」をオフにし、一覧を再読み込みして **Day Timeline Planner** をオンにする
 
 ## 使い方
@@ -322,6 +340,17 @@ npm install
 npm run build      # main.js を生成
 npm run dev        # 変更を監視して自動ビルド
 ```
+
+### リリースの仕組み
+
+`master` に push されると GitHub Actions（`.github/workflows/release.yml`）が `app/manifest.json` のバージョンを読み、そのバージョンのタグがまだ無ければ `app/dist/` の `main.js` / `manifest.json` / `styles.css` を添付した GitHub Release を自動作成します。BRAT はこの Release を見て各端末のプラグインを更新します。
+
+バージョンを上げるときは次の4つを揃えてください（不一致だと CI が失敗し、リリースは作られません）:
+
+1. `app/manifest.json` の `version`
+2. `app/dist/` の中身（`npm run build` した `main.js` と、`manifest.json` / `styles.css` のコピー）
+3. リポジトリ直下の `manifest.json`（BRAT がリポジトリを認識するためのコピー）
+4. `app/versions.json` に新バージョンの行を追加
 
 `src/` の構成:
 

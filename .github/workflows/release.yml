@@ -1,0 +1,50 @@
+# master にバージョン更新が入るたびに、app/dist/ の成果物を添付した
+# GitHub Release を自動作成する。BRAT はこの Release を見てプラグインを更新する。
+name: Release Obsidian plugin
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: バージョンの整合性を確認
+        id: version
+        run: |
+          VERSION=$(jq -r .version app/manifest.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          for f in manifest.json app/dist/manifest.json; do
+            V=$(jq -r .version "$f")
+            if [ "$V" != "$VERSION" ]; then
+              echo "::error file=$f::$f の version ($V) が app/manifest.json ($VERSION) と一致していません"
+              exit 1
+            fi
+          done
+
+      - name: リリース済みか確認
+        id: tag
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.version }}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: GitHub Release を作成
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            app/dist/main.js app/dist/manifest.json app/dist/styles.css \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.version.outputs.version }}" \
+            --notes "$(git log -1 --pretty=%B)"
