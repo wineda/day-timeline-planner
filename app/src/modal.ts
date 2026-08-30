@@ -1204,6 +1204,59 @@ export class ConfirmModal extends Modal {
   }
 }
 
+export interface PromptOptions {
+  title: string;
+  placeholder?: string;
+  /** 決定ボタンのラベル */
+  cta: string;
+  initial?: string;
+  /** 空欄のままでは呼ばれない（trim 済みの値を渡す） */
+  onSubmit: (value: string) => void | Promise<void>;
+}
+
+/** 1行テキストの入力ダイアログ（プロジェクトのグループ名など） */
+export class PromptModal extends Modal {
+  constructor(
+    app: App,
+    private opts: PromptOptions
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal");
+    this.titleEl.setText(this.opts.title);
+    const input = this.contentEl.createEl("input", {
+      type: "text",
+      cls: "dt-prompt-input",
+      attr: { placeholder: this.opts.placeholder ?? "" },
+    });
+    input.value = this.opts.initial ?? "";
+    const submit = () => {
+      const v = input.value.trim();
+      if (!v) return;
+      this.close();
+      void this.opts.onSubmit(v);
+    };
+    input.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      }
+    });
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+    buttons.addButton((b) => b.setButtonText(this.opts.cta).setCta().onClick(submit));
+    window.setTimeout(() => input.focus(), 0);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export interface RetrospectiveOptions {
   taskTitle: string;
   durationLabel: string;

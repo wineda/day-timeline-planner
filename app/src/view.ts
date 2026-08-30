@@ -12,9 +12,9 @@ import {
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
-import { ConfirmModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
+import { ConfirmModal, PromptModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
 import type { ActualRange } from "./markdown/blocks";
-import { projectDisplayName, type ProjectSummary } from "./project";
+import { groupProjects, knownGroupNames, projectDisplayName, type ProjectSummary } from "./project";
 import { newBlockId } from "./markdown/id";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
@@ -100,6 +100,8 @@ export class DayTimelineView extends ItemView {
   private projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
   private expandedProjects = new Set<string>();
+  /** パネルで畳んでいるプロジェクトグループ（"" = 未分類） */
+  private collapsedGroups = new Set<string>();
   private scrollEl!: HTMLElement;
   private headersEl!: HTMLElement;
   private labelsEl!: HTMLElement;
@@ -600,6 +602,12 @@ export class DayTimelineView extends ItemView {
       this.reloadDebounced();
       return;
     }
+    // プロジェクトノートの変更もパネルに反映する（グループ・完了チェックの手書き編集など）
+    const projects = this.plugin.projects;
+    if (projects && this.plugin.settings.showProjects && path.startsWith(projects.folder() + "/")) {
+      this.reloadDebounced();
+      return;
+    }
     const stores = [this.plugin.store, ...this.visibleMembers().map((m) => this.plugin.memberStores.get(m.id)!)];
     for (const d of this.visibleDays()) {
       for (const st of stores) {
@@ -1034,6 +1042,8 @@ export class DayTimelineView extends ItemView {
       for (const s of this.projectData) {
         if (!s.done) this.expandedProjects.add(s.ref.linktext);
       }
+      // 畳んだグループの中のプロジェクトも見えるように、グループも開く
+      this.collapsedGroups.clear();
     } else {
       this.expandedProjects.clear();
     }
@@ -1092,164 +1102,251 @@ export class DayTimelineView extends ItemView {
       });
       return;
     }
-    for (const sum of active) {
-      const key = sum.ref.linktext;
-      const expanded = this.expandedProjects.has(key);
-
-      const row = list.createDiv("dt-project-row");
-      const chev = row.createDiv("dt-project-chevron");
-      setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-      const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
-      const total = sum.children.length;
-      const stats = row.createSpan({ cls: "dt-project-stats" });
-      stats.setText(
-        total
-          ? `${sum.doneCount}/${total}・予${hmm(sum.planMin)}・実${hmm(sum.actMin)}`
-          : "タスクなし"
-      );
-      row.setAttr(
+    const groups = groupProjects(active, this.plugin.settings.projectGroupOrder);
+    // どのプロジェクトにもグループが無ければ、今までどおりのフラットな一覧
+    if (!groups.some((g) => g.name !== null)) {
+      for (const sum of active) this.renderProjectRow(list, sum);
+      return;
+    }
+    for (const g of groups) {
+      const groupKey = g.name ?? "";
+      const collapsed = this.collapsedGroups.has(groupKey);
+      const groupHead = list.createDiv("dt-project-group");
+      const groupChev = groupHead.createDiv("dt-project-chevron");
+      setIcon(groupChev, collapsed ? "chevron-right" : "chevron-down");
+      groupHead.createSpan({ cls: "dt-project-group-name", text: g.name ?? "未分類" });
+      groupHead.createSpan({ cls: "dt-project-group-count", text: String(g.items.length) });
+      groupHead.setAttr(
         "aria-label",
-        `${sum.ref.name}\n${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
-          "クリックで展開、ドラッグでタイムラインに子タスクを作成"
+        `${g.name ?? "未分類"}: プロジェクト ${g.items.length} 件\nクリックでグループを開閉`
       );
-      const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
-        void this.plugin.openProject(key)
-      );
-      openBtn.addClass("dt-project-open");
-      const addBtn = this.iconButton(
-        row,
-        "plus",
-        "このプロジェクトのタスクを追加（時刻を入れなければ日付未定で登録）",
-        () => this.openProjectCreateModal(key)
-      );
-      addBtn.addClass("dt-project-add");
-      const doneBtn = this.iconButton(row, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
-        const projects = this.plugin.projects;
-        if (!projects) return;
-        const run = async () => {
-          const ok = await projects.setDone(key, true);
-          if (!ok) {
-            new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
-            return;
-          }
-          sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
-          new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
-          this.renderInbox();
-        };
-        const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
-        if (open) {
-          new ConfirmModal(
-            this.app,
-            `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
-            "完了にする",
-            run
-          ).open();
-        } else {
-          void run();
-        }
+      groupHead.addEventListener("click", () => {
+        if (collapsed) this.collapsedGroups.delete(groupKey);
+        else this.collapsedGroups.add(groupKey);
+        this.renderInbox();
       });
-      doneBtn.addClass("dt-project-done-btn");
+      if (collapsed) continue;
+      const itemsEl = list.createDiv("dt-project-group-items");
+      for (const sum of g.items) this.renderProjectRow(itemsEl, sum);
+    }
+  }
 
-      const toggleExpand = () => {
-        if (this.expandedProjects.has(key)) this.expandedProjects.delete(key);
-        else this.expandedProjects.add(key);
+  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する */
+  private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
+    const key = sum.ref.linktext;
+    const expanded = this.expandedProjects.has(key);
+
+    const row = container.createDiv("dt-project-row");
+    const chev = row.createDiv("dt-project-chevron");
+    setIcon(chev, expanded ? "chevron-down" : "chevron-right");
+    const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    const total = sum.children.length;
+    const stats = row.createSpan({ cls: "dt-project-stats" });
+    stats.setText(
+      total
+        ? `${sum.doneCount}/${total}・予${hmm(sum.planMin)}・実${hmm(sum.actMin)}`
+        : "タスクなし"
+    );
+    row.setAttr(
+      "aria-label",
+      `${sum.ref.name}\n${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
+        "クリックで展開、ドラッグでタイムラインに子タスクを作成、右クリックでグループを変更"
+    );
+    const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
+      void this.plugin.openProject(key)
+    );
+    openBtn.addClass("dt-project-open");
+    const addBtn = this.iconButton(
+      row,
+      "plus",
+      "このプロジェクトのタスクを追加（時刻を入れなければ日付未定で登録）",
+      () => this.openProjectCreateModal(key)
+    );
+    addBtn.addClass("dt-project-add");
+    const doneBtn = this.iconButton(row, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
+      const projects = this.plugin.projects;
+      if (!projects) return;
+      const run = async () => {
+        const ok = await projects.setDone(key, true);
+        if (!ok) {
+          new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
+          return;
+        }
+        sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
+        new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
         this.renderInbox();
       };
-      chev.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleExpand();
-      });
-      this.attachProjectDrag(row, sum, toggleExpand);
+      const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
+      if (open) {
+        new ConfirmModal(
+          this.app,
+          `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
+          "完了にする",
+          run
+        ).open();
+      } else {
+        void run();
+      }
+    });
+    doneBtn.addClass("dt-project-done-btn");
 
-      if (!expanded) continue;
-      const childrenEl = list.createDiv("dt-project-children");
-      // 「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない
-      const shown = this.plugin.settings.projectsHideDone
-        ? sum.children.filter((c) => !c.task.done && !c.task.forwarded)
-        : sum.children;
-      if (!sum.children.length) {
-        childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
-      } else if (!shown.length) {
-        childrenEl.createSpan({
-          cls: "dt-tray-empty",
-          text: `完了済み ${sum.children.length} 件を非表示`,
+    const toggleExpand = () => {
+      if (this.expandedProjects.has(key)) this.expandedProjects.delete(key);
+      else this.expandedProjects.add(key);
+      this.renderInbox();
+    };
+    chev.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleExpand();
+    });
+    this.attachProjectDrag(row, sum, toggleExpand);
+    row.addEventListener("contextmenu", (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showProjectMenu(sum, e);
+    });
+
+    if (!expanded) return;
+    const childrenEl = container.createDiv("dt-project-children");
+    // 「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない
+    const shown = this.plugin.settings.projectsHideDone
+      ? sum.children.filter((c) => !c.task.done && !c.task.forwarded)
+      : sum.children;
+    if (!sum.children.length) {
+      childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
+    } else if (!shown.length) {
+      childrenEl.createSpan({
+        cls: "dt-tray-empty",
+        text: `完了済み ${sum.children.length} 件を非表示`,
+      });
+    }
+    for (const child of shown) {
+      const t = child.task;
+      const item = childrenEl.createDiv("dt-project-child");
+      item.toggleClass("is-done", t.done);
+      const box = item.createDiv("dt-tray-check");
+      setIcon(box, t.done ? "check-circle-2" : "circle");
+      box.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
+        else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
+      });
+      const dateEl = item.createSpan({
+        cls: "dt-project-child-date",
+        text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "未定",
+      });
+      // 日時が決まっていないものは破線のバッジで見分ける（日付ごと未定はアクセント色）
+      const scheduled = t.start !== null && t.end !== null;
+      if (child.date === null) dateEl.addClass("is-undated");
+      else if (!scheduled) dateEl.addClass("is-unscheduled");
+      item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+      const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
+      const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
+      if (plan || act) {
+        item.createSpan({
+          cls: "dt-project-child-times",
+          text: `${plan ? hmm(plan) : "–"}/${act ? hmm(act) : "–"}`,
         });
       }
-      for (const child of shown) {
-        const t = child.task;
-        const item = childrenEl.createDiv("dt-project-child");
-        item.toggleClass("is-done", t.done);
-        const box = item.createDiv("dt-tray-check");
-        setIcon(box, t.done ? "check-circle-2" : "circle");
-        box.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
-          else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
-        });
-        const dateEl = item.createSpan({
-          cls: "dt-project-child-date",
-          text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "未定",
-        });
-        // 日時が決まっていないものは破線のバッジで見分ける（日付ごと未定はアクセント色）
-        const scheduled = t.start !== null && t.end !== null;
-        if (child.date === null) dateEl.addClass("is-undated");
-        else if (!scheduled) dateEl.addClass("is-unscheduled");
-        item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-        const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
-        const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
-        if (plan || act) {
-          item.createSpan({
-            cls: "dt-project-child-times",
-            text: `${plan ? hmm(plan) : "–"}/${act ? hmm(act) : "–"}`,
-          });
-        }
-        item.setAttr(
-          "aria-label",
-          `${t.title || "(無題)"}\n` +
-            (child.date
-              ? moment(child.date).format("M月D日 (ddd)") +
-                (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
-              : "日付は未定") +
-            (child.date
-              ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
-              : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
+      item.setAttr(
+        "aria-label",
+        `${t.title || "(無題)"}\n` +
+          (child.date
+            ? moment(child.date).format("M月D日 (ddd)") +
+              (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
+            : "日付は未定") +
+          (child.date
+            ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
+            : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
+      );
+      if (child.date === null) {
+        // 日付未定: タイムラインへドラッグで日時を割り当て、クリックで編集できるようにする
+        this.attachChipDrag(
+          item,
+          ".dt-tray-check",
+          () => this.displayTitle(t),
+          (date, start, end) =>
+            void this.commitInboxToDay(t, date, { ...this.draftOf(t), start, end }),
+          () => this.openInboxEditModal(t)
         );
-        if (child.date === null) {
-          // 日付未定: タイムラインへドラッグで日時を割り当て、クリックで編集できるようにする
-          this.attachChipDrag(
-            item,
-            ".dt-tray-check",
-            () => this.displayTitle(t),
-            (date, start, end) =>
-              void this.commitInboxToDay(t, date, { ...this.draftOf(t), start, end }),
-            () => this.openInboxEditModal(t)
-          );
-          item.addEventListener("contextmenu", (e: MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.showInboxTaskMenu(t, e);
-          });
-        } else {
-          const childDate = child.date;
-          this.attachChipDrag(
-            item,
-            ".dt-tray-check",
-            () => this.displayTitle(t),
-            (date, start, end) => {
-              const draft = { ...this.draftOf(t), start, end };
-              if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
-              else void this.commitMove(childDate, t, date, draft);
-            },
-            () => this.setDate(childDate)
-          );
-          item.addEventListener("contextmenu", (e: MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.showTaskMenu(childDate, t, e);
-          });
-        }
+        item.addEventListener("contextmenu", (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.showInboxTaskMenu(t, e);
+        });
+      } else {
+        const childDate = child.date;
+        this.attachChipDrag(
+          item,
+          ".dt-tray-check",
+          () => this.displayTitle(t),
+          (date, start, end) => {
+            const draft = { ...this.draftOf(t), start, end };
+            if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
+            else void this.commitMove(childDate, t, date, draft);
+          },
+          () => this.setDate(childDate)
+        );
+        item.addEventListener("contextmenu", (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.showTaskMenu(childDate, t, e);
+        });
       }
     }
+  }
+
+  /** プロジェクト行の右クリックメニュー（グループの付け替え） */
+  private showProjectMenu(sum: ProjectSummary, e: MouseEvent): void {
+    if (!this.plugin.projects) return;
+    const menu = new Menu();
+    const current = sum.ref.group ?? null;
+    // 完了済みプロジェクトだけが使っているグループへも移せるよう、候補は全プロジェクトから集める
+    const names = knownGroupNames(
+      this.projectData.map((s) => s.ref),
+      this.plugin.settings.projectGroupOrder
+    );
+    for (const groupName of names) {
+      menu.addItem((i) => {
+        i.setTitle(`グループ: ${groupName}`).onClick(() => void this.setProjectGroup(sum, groupName));
+        if (groupName === current) i.setIcon("check");
+      });
+    }
+    if (names.length) menu.addSeparator();
+    menu.addItem((i) =>
+      i
+        .setTitle("新しいグループへ…")
+        .setIcon("folder-plus")
+        .onClick(() =>
+          new PromptModal(this.app, {
+            title: `「${sum.ref.name}」のグループ`,
+            placeholder: "グループ名（例: 仕事）",
+            cta: "移動",
+            onSubmit: (groupName) => void this.setProjectGroup(sum, groupName),
+          }).open()
+        )
+    );
+    if (current) {
+      menu.addItem((i) =>
+        i.setTitle("グループを外す").setIcon("x").onClick(() => void this.setProjectGroup(sum, null))
+      );
+    }
+    menu.showAtMouseEvent(e);
+  }
+
+  /** プロジェクトのグループを付け替えて、パネルへ即反映する */
+  private async setProjectGroup(sum: ProjectSummary, group: string | null): Promise<void> {
+    const projects = this.plugin.projects;
+    if (!projects) return;
+    const g = group?.trim() || null;
+    if (g === (sum.ref.group ?? null)) return;
+    const ok = await projects.setGroup(sum.ref.linktext, g);
+    if (!ok) {
+      new Notice("グループを変更できませんでした（ノートが開けるか確認してください）");
+      return;
+    }
+    sum.ref.group = g; // メタデータキャッシュの反映を待たずに表示へ
+    this.renderInbox();
   }
 
   /**

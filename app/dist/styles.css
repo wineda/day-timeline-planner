@@ -527,6 +527,37 @@
   min-height: 0;
   padding: 2px 6px 8px;
 }
+/* グループの見出し行（frontmatter の group で分けたプロジェクトの区切り） */
+.dt-project-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 2px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-muted);
+}
+.dt-project-group:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-project-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+.dt-project-group-count {
+  flex: 0 0 auto;
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+}
+.dt-project-group-items {
+  margin-left: 8px;
+}
 .dt-project-row {
   display: flex;
   align-items: center;
@@ -1272,6 +1303,9 @@
 }
 
 /* 編集ダイアログの「＋ 新規作成…」の入力欄 */
+.dt-modal .dt-prompt-input {
+  width: 100%;
+}
 .dt-modal .dt-project-new {
   display: none;
   width: 200px;

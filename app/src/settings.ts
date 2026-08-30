@@ -196,6 +196,8 @@ export interface DayTimelineSettings {
   showProjects: boolean;
   /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
   projectsHideDone: boolean;
+  /** プロジェクトのグループ（frontmatter の group）の表示順。載っていないグループは名前順で後ろに */
+  projectGroupOrder: string[];
   /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
 
@@ -251,6 +253,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxCollapsed: false,
   showProjects: true,
   projectsHideDone: false,
+  projectGroupOrder: [],
   sidebarWidth: 220,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
@@ -289,6 +292,8 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
     }
   }
   if (!s.inboxPath.trim()) s.inboxPath = DEFAULT_INBOX_PATH;
+  if (!Array.isArray(s.projectGroupOrder)) s.projectGroupOrder = [];
+  else s.projectGroupOrder = s.projectGroupOrder.filter((g): g is string => typeof g === "string");
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -843,6 +848,64 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           await save();
         })
       );
+    new Setting(containerEl)
+      .setName("プロジェクトのグループ")
+      .setDesc(
+        "プロジェクトはグループ分けでき、パネルのツリーがグループごとに区切られます" +
+          "（割り当てはパネルのプロジェクト行の右クリック、またはプロジェクトノートの frontmatter「group: 名前」）。" +
+          "ここではグループの表示順を管理します。載っていないグループは名前順で後ろに、" +
+          "グループなしのプロジェクトは「未分類」として末尾に並びます。"
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("追加")
+          .setCta()
+          .onClick(async () => {
+            s.projectGroupOrder.push("");
+            await save();
+            this.display();
+          })
+      );
+    s.projectGroupOrder.forEach((name, idx) => {
+      const row = new Setting(containerEl).setName(name.trim() || "(名前未設定)");
+      row.settingEl.addClass("dt-group-order-row");
+      row
+        .addText((t) =>
+          t
+            .setPlaceholder("グループ名（例: 仕事）")
+            .setValue(name)
+            .onChange(async (v) => {
+              s.projectGroupOrder[idx] = v.trim();
+              row.setName(v.trim() || "(名前未設定)");
+              await save();
+            })
+        )
+        .addExtraButton((b) =>
+          b
+            .setIcon("arrow-up")
+            .setTooltip("上へ")
+            .setDisabled(idx === 0)
+            .onClick(async () => {
+              if (idx === 0) return;
+              [s.projectGroupOrder[idx - 1], s.projectGroupOrder[idx]] = [
+                s.projectGroupOrder[idx],
+                s.projectGroupOrder[idx - 1],
+              ];
+              await save();
+              this.display();
+            })
+        )
+        .addExtraButton((b) =>
+          b
+            .setIcon("trash")
+            .setTooltip("並び順から削除（プロジェクトのグループ自体は変わりません）")
+            .onClick(async () => {
+              s.projectGroupOrder.splice(idx, 1);
+              await save();
+              this.display();
+            })
+        );
+    });
     new Setting(containerEl)
       .setName("Inbox のノート")
       .setDesc("Inbox のタスクを保存するノートのパス（拡張子は省略可）。")
