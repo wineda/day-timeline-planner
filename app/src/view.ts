@@ -1022,6 +1022,29 @@ export class DayTimelineView extends ItemView {
     });
   }
 
+  /** 進行中のプロジェクトがすべて展開されているか */
+  private areAllProjectsExpanded(): boolean {
+    const active = this.projectData.filter((s) => !s.done);
+    return active.length > 0 && active.every((s) => this.expandedProjects.has(s.ref.linktext));
+  }
+
+  /** プロジェクトのツリーをまとめて展開 / 閉じる（パネルのボタン・コマンドから） */
+  setAllProjectsExpanded(expand: boolean): void {
+    if (expand) {
+      for (const s of this.projectData) {
+        if (!s.done) this.expandedProjects.add(s.ref.linktext);
+      }
+    } else {
+      this.expandedProjects.clear();
+    }
+    this.renderInbox();
+  }
+
+  /** すべて展開 ⇄ すべて閉じるを切り替える（コマンド用） */
+  toggleAllProjects(): void {
+    this.setAllProjectsExpanded(!this.areAllProjectsExpanded());
+  }
+
   /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない */
   private renderProjects(): void {
     const active = this.projectData.filter((s) => !s.done);
@@ -1030,6 +1053,16 @@ export class DayTimelineView extends ItemView {
     const head = wrap.createDiv("dt-projects-head");
     head.createSpan({ cls: "dt-inbox-label", text: "プロジェクト" });
     head.createSpan({ cls: "dt-inbox-count", text: String(active.length) });
+    if (active.length) {
+      const allExpanded = this.areAllProjectsExpanded();
+      const toggleAll = this.iconButton(
+        head,
+        allExpanded ? "chevrons-down-up" : "chevrons-up-down",
+        allExpanded ? "すべてのプロジェクトを閉じる" : "すべてのプロジェクトを展開",
+        () => this.setAllProjectsExpanded(!allExpanded)
+      );
+      toggleAll.addClass("dt-inbox-open");
+    }
     const refresh = this.iconButton(head, "file-text", "全プロジェクトノートのタスク一覧を更新", () =>
       void this.plugin.updateAllProjectNotes()
     );
