@@ -194,6 +194,8 @@ export interface DayTimelineSettings {
   inboxCollapsed: boolean;
   /** プロジェクトのパネルを表示するか */
   showProjects: boolean;
+  /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
+  projectsHideDone: boolean;
   /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
 
@@ -248,6 +250,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showInbox: true,
   inboxCollapsed: false,
   showProjects: true,
+  projectsHideDone: false,
   sidebarWidth: 220,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
@@ -826,6 +829,17 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.showProjects).onChange(async (v) => {
           s.showProjects = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトの完了済みタスクを隠す")
+      .setDesc(
+        "プロジェクトパネルのツリーに、完了済み・持ち越し済みの子タスクを出しません。パネルの目のボタンでも切り替えられます。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.projectsHideDone).onChange(async (v) => {
+          s.projectsHideDone = v;
           await save();
         })
       );
