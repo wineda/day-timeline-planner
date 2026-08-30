@@ -1,4 +1,5 @@
 import { App, Notice, PluginSettingTab, Setting, moment } from "obsidian";
+import { renderGroupIcon } from "./project";
 import type DayTimelinePlugin from "./main";
 import { RecurringModal, describeRule, propagateAndNotify } from "./recurring";
 import { requestNotificationPermission, showAlert } from "./notify";
@@ -33,6 +34,14 @@ export interface TagColor {
   tag: string;
   /** "#rrggbb" */
   color: string;
+}
+
+/** プロジェクトのグループの表示設定（配列の順 = パネルでの表示順） */
+export interface ProjectGroupSetting {
+  /** グループ名（プロジェクトノートの frontmatter「group」の値と一致させる） */
+  name: string;
+  /** Lucide のアイコン名（例: briefcase）か絵文字などの短いテキスト。"" = アイコンなし */
+  icon: string;
 }
 
 /** チケット管理ツール（Redmine / Gitea / Backlog など） */
@@ -196,8 +205,8 @@ export interface DayTimelineSettings {
   showProjects: boolean;
   /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
   projectsHideDone: boolean;
-  /** プロジェクトのグループ（frontmatter の group）の表示順。載っていないグループは名前順で後ろに */
-  projectGroupOrder: string[];
+  /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
+  projectGroups: ProjectGroupSetting[];
   /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
 
@@ -253,7 +262,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxCollapsed: false,
   showProjects: true,
   projectsHideDone: false,
-  projectGroupOrder: [],
+  projectGroups: [],
   sidebarWidth: 220,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
@@ -292,8 +301,18 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
     }
   }
   if (!s.inboxPath.trim()) s.inboxPath = DEFAULT_INBOX_PATH;
-  if (!Array.isArray(s.projectGroupOrder)) s.projectGroupOrder = [];
-  else s.projectGroupOrder = s.projectGroupOrder.filter((g): g is string => typeof g === "string");
+  if (!Array.isArray(s.projectGroups)) s.projectGroups = [];
+  s.projectGroups = s.projectGroups
+    .filter((g) => !!g && typeof g === "object" && typeof g.name === "string")
+    .map((g) => ({ name: g.name, icon: typeof g.icon === "string" ? g.icon : "" }));
+  // v2.29.0 の projectGroupOrder（グループ名だけの配列）から移行（何度通っても安全）
+  const legacyGroupOrder = (loaded as Record<string, unknown>).projectGroupOrder;
+  if (!s.projectGroups.length && Array.isArray(legacyGroupOrder)) {
+    s.projectGroups = legacyGroupOrder
+      .filter((n): n is string => typeof n === "string" && !!n.trim())
+      .map((name) => ({ name, icon: "" }));
+  }
+  delete (s as unknown as Record<string, unknown>).projectGroupOrder;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -853,7 +872,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       .setDesc(
         "プロジェクトはグループ分けでき、パネルのツリーがグループごとに区切られます" +
           "（割り当てはパネルのプロジェクト行の右クリック、またはプロジェクトノートの frontmatter「group: 名前」）。" +
-          "ここではグループの表示順を管理します。載っていないグループは名前順で後ろに、" +
+          "ここではグループの表示順とアイコンを管理します。アイコンは Lucide のアイコン名" +
+          "（例: briefcase・home・book）か絵文字（例: 💼）。載っていないグループは名前順で後ろに、" +
           "グループなしのプロジェクトは「未分類」として末尾に並びます。"
       )
       .addButton((b) =>
@@ -861,25 +881,44 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           .setButtonText("追加")
           .setCta()
           .onClick(async () => {
-            s.projectGroupOrder.push("");
+            s.projectGroups.push({ name: "", icon: "" });
             await save();
             this.display();
           })
       );
-    s.projectGroupOrder.forEach((name, idx) => {
-      const row = new Setting(containerEl).setName(name.trim() || "(名前未設定)");
+    s.projectGroups.forEach((grp, idx) => {
+      const row = new Setting(containerEl);
       row.settingEl.addClass("dt-group-order-row");
+      const preview = row.nameEl.createSpan({ cls: "dt-group-icon-preview" });
+      const nameSpan = row.nameEl.createSpan();
+      const updateName = () => nameSpan.setText(grp.name.trim() || "(名前未設定)");
+      const updatePreview = () => {
+        preview.empty();
+        if (grp.icon.trim()) renderGroupIcon(preview, grp.icon.trim());
+      };
+      updateName();
+      updatePreview();
       row
         .addText((t) =>
           t
             .setPlaceholder("グループ名（例: 仕事）")
-            .setValue(name)
+            .setValue(grp.name)
             .onChange(async (v) => {
-              s.projectGroupOrder[idx] = v.trim();
-              row.setName(v.trim() || "(名前未設定)");
+              grp.name = v.trim();
+              updateName();
               await save();
             })
         )
+        .addText((t) => {
+          t.setPlaceholder("アイコン（briefcase / 💼）")
+            .setValue(grp.icon)
+            .onChange(async (v) => {
+              grp.icon = v.trim();
+              updatePreview();
+              await save();
+            });
+          t.inputEl.addClass("dt-group-icon-input");
+        })
         .addExtraButton((b) =>
           b
             .setIcon("arrow-up")
@@ -887,9 +926,9 @@ export class DayTimelineSettingTab extends PluginSettingTab {
             .setDisabled(idx === 0)
             .onClick(async () => {
               if (idx === 0) return;
-              [s.projectGroupOrder[idx - 1], s.projectGroupOrder[idx]] = [
-                s.projectGroupOrder[idx],
-                s.projectGroupOrder[idx - 1],
+              [s.projectGroups[idx - 1], s.projectGroups[idx]] = [
+                s.projectGroups[idx],
+                s.projectGroups[idx - 1],
               ];
               await save();
               this.display();
@@ -898,9 +937,9 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         .addExtraButton((b) =>
           b
             .setIcon("trash")
-            .setTooltip("並び順から削除（プロジェクトのグループ自体は変わりません）")
+            .setTooltip("削除（プロジェクトのグループ割り当ては変わりません）")
             .onClick(async () => {
-              s.projectGroupOrder.splice(idx, 1);
+              s.projectGroups.splice(idx, 1);
               await save();
               this.display();
             })

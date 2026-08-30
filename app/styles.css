@@ -541,6 +541,18 @@
 .dt-project-group:hover {
   background: var(--background-modifier-hover);
 }
+/* グループのアイコン（Lucide の svg か、絵文字などのテキスト） */
+.dt-project-group-icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  font-size: 0.85em;
+  line-height: 1;
+}
+.dt-project-group-icon svg {
+  width: 14px;
+  height: 14px;
+}
 .dt-project-group-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -557,6 +569,20 @@
 }
 .dt-project-group-items {
   margin-left: 8px;
+}
+/* 設定「プロジェクトのグループ」のアイコンプレビューと入力欄 */
+.dt-group-order-row .dt-group-icon-preview {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+.dt-group-order-row .dt-group-icon-preview svg {
+  width: 16px;
+  height: 16px;
+}
+.dt-group-order-row .dt-group-icon-input {
+  width: 150px;
 }
 .dt-project-row {
   display: flex;
