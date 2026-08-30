@@ -24,6 +24,7 @@ import {
   type OccurrenceInfo,
 } from "./recurring";
 import { ConfirmModal } from "./modal";
+import { iconName } from "./icons";
 import { addDays, dateKey, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
 
 export const VIEW_TYPE_RECURRING = "day-timeline-recurring-view";
@@ -127,7 +128,7 @@ export class RecurringManagerView extends ItemView {
         cls: "dt-rec-item-dot",
         attr: { "aria-label": rule.enabled ? "有効" : "無効" },
       });
-      setIcon(dot, rule.enabled ? "check-circle-2" : "circle");
+      setIcon(dot, iconName(rule.enabled ? "check-circle-2" : "circle"));
       const body = item.createDiv("dt-rec-item-body");
       body.createDiv({ cls: "dt-rec-item-title", text: rule.title || "(無題)" });
       body.createDiv({ cls: "dt-rec-item-desc", text: describeRule(rule) });

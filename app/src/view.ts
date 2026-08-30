@@ -24,6 +24,7 @@ import {
   type ProjectSummary,
 } from "./project";
 import { newBlockId } from "./markdown/id";
+import { iconName } from "./icons";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import {
   colorForTags,
@@ -471,7 +472,7 @@ export class DayTimelineView extends ItemView {
         cls: "dt-mode-btn dt-pane-btn",
         attr: { "aria-label": tip },
       });
-      setIcon(b, icon);
+      setIcon(b, iconName(icon));
       b.onclick = () => this.setNarrowPane(pane);
       this.paneBtns.set(pane, b);
     }
@@ -655,7 +656,7 @@ export class DayTimelineView extends ItemView {
       cls: "clickable-icon dt-icon-btn",
       attr: { "aria-label": label, role: "button", tabindex: "0" },
     });
-    setIcon(btn, icon);
+    setIcon(btn, iconName(icon));
     btn.addEventListener("click", onClick);
     btn.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -680,7 +681,7 @@ export class DayTimelineView extends ItemView {
       cls: "clickable-icon dt-icon-btn dt-kebab-btn",
       attr: { "aria-label": label, role: "button", tabindex: "0" },
     });
-    setIcon(btn, "more-vertical");
+    setIcon(btn, iconName("more-vertical"));
     const open = (e: MouseEvent | null) => {
       const menu = new Menu();
       build(menu);
@@ -1208,7 +1209,7 @@ export class DayTimelineView extends ItemView {
         dot.style.background = color;
       }
       const box = chip.createDiv("dt-tray-check");
-      setIcon(box, t.done ? "check-square" : "square");
+      setIcon(box, iconName(t.done ? "check-square" : "square"));
       box.addEventListener("click", (e) => {
         e.stopPropagation();
         void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
@@ -1550,7 +1551,7 @@ export class DayTimelineView extends ItemView {
       const item = childrenEl.createDiv("dt-project-child");
       item.toggleClass("is-done", t.done);
       const box = item.createDiv("dt-tray-check");
-      setIcon(box, t.done ? "check-square" : "square");
+      setIcon(box, iconName(t.done ? "check-square" : "square"));
       box.addEventListener("click", (e) => {
         e.stopPropagation();
         if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
@@ -1874,7 +1875,7 @@ export class DayTimelineView extends ItemView {
           dot.style.background = color;
         }
         const box = item.createDiv("dt-tray-check");
-        setIcon(box, t.done ? "check-square" : "square");
+        setIcon(box, iconName(t.done ? "check-square" : "square"));
         box.addEventListener("click", (e) => {
           e.stopPropagation();
           void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });

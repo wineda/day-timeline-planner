@@ -4,6 +4,7 @@ import { projectDisplayName, type ProjectRef } from "./project";
 import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
 import { normalizeTag, ticketUrl, type IssueTracker, type TagColor } from "./settings";
 import { contrastTextColor, formatDuration, minutesToHHMM, parseTimeInput } from "./util";
+import { iconName } from "./icons";
 
 export interface TaskModalOptions {
   mode: "create" | "edit";
@@ -873,7 +874,7 @@ export class TaskModal extends Modal {
       const grip = row.createDiv({ cls: "dt-step-grip", attr: { "aria-label": "ドラッグで並べ替え" } });
       setIcon(grip, "grip-vertical");
       const box = row.createDiv({ cls: "dt-step-check", attr: { role: "checkbox", "aria-checked": String(st.done) } });
-      setIcon(box, st.done ? "check-square" : "square");
+      setIcon(box, iconName(st.done ? "check-square" : "square"));
       box.onclick = () => {
         st.done = !st.done;
         this.renderSteps();
