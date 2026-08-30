@@ -92,6 +92,11 @@ export default class DayTimelinePlugin extends Plugin {
       "タイムスケジュール: プロジェクトのツリーをすべて展開 / 閉じる",
       (v) => v.toggleAllProjects()
     );
+    viewCommand(
+      "timeline-toggle-pane",
+      "タイムスケジュール: タイムライン / パネルを切り替える（狭い画面）",
+      (v) => v.toggleNarrowPane()
+    );
 
     // 旧形式 → タスクブロックへの変換（開いているノート）
     this.addCommand({

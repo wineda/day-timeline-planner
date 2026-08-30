@@ -73,6 +73,13 @@ const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 /** 再スケジュール欄のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
 const RESCHEDULE_LOOKBACK_DAYS = 30;
 
+/** ビューの幅（px）がこれ未満なら「狭い画面」（スマホなど）。
+ * サイドバーとタイムラインを並べると共倒れになるので、片方だけを全面に出して切り替える */
+const NARROW_VIEW_WIDTH = 500;
+
+/** 狭い画面で全面に出す面 */
+type NarrowPane = "timeline" | "panel";
+
 export class DayTimelineView extends ItemView {
   private plugin: DayTimelinePlugin;
   /** 基準日。日表示ではこの日、週表示ではこの日を含む週を表示する */
@@ -113,6 +120,12 @@ export class DayTimelineView extends ItemView {
   private headersEl!: HTMLElement;
   private labelsEl!: HTMLElement;
   private daysEl!: HTMLElement;
+  /** 幅が狭い（スマホなど）とき true。タイムラインとパネルを切り替えて片方だけ表示する */
+  private isNarrow = false;
+  /** 狭い画面で表示中の面 */
+  private narrowPane: NarrowPane = "timeline";
+  private paneEl!: HTMLElement;
+  private paneBtns = new Map<NarrowPane, HTMLElement>();
   /** "日付キー|タスクの key" → タイムライン上の要素（エディタ連動のハイライトに使う） */
   private taskEls = new Map<string, HTMLElement>();
   private activeTaskKey: string | null = null;
@@ -167,6 +180,7 @@ export class DayTimelineView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildSkeleton();
     this.buildGrid();
+    this.updateNarrow();
 
     const onFile = (f: TAbstractFile) => this.onVaultChange(f.path);
     this.registerEvent(this.app.vault.on("modify", onFile));
@@ -212,12 +226,60 @@ export class DayTimelineView extends ItemView {
   }
 
   onResize(): void {
+    this.updateNarrow();
+    // パネルを全面表示中はタイムラインが隠れていて高さを測れない（タイムラインへ戻すときに測り直す）
+    if (this.isNarrow && this.narrowPane === "panel") return;
+    this.remeasureTimeline();
+  }
+
+  /** タイムラインの高さの変化に追従する（ビューのリサイズ・隠れていたタイムラインの再表示時） */
+  private remeasureTimeline(): void {
     // ズーム指定（4h/8h/12h）はビューの高さから縮尺を決めるので、高さが変わったら作り直す
     if (this.mode !== "month" && this.plugin.settings.zoomHours && this.scrollEl) {
       const h = this.computeHourHeight();
       if (Math.abs(h - this.hourHeightPx) > 0.5) this.rebuildTimeline();
     }
     if (this.shouldScroll) this.scrollToInitial();
+  }
+
+  // ---------- 狭い画面（スマホなど）: タイムライン ⇄ パネルの切り替え ----------
+
+  /** ビューの幅から「狭い画面」かを判定し、変わっていたら表示へ反映する */
+  private updateNarrow(): void {
+    const w = this.contentEl.clientWidth;
+    if (!w) return; // 非表示中などで測れないときは現状維持
+    const narrow = w < NARROW_VIEW_WIDTH;
+    if (narrow === this.isNarrow) return;
+    this.isNarrow = narrow;
+    this.applyNarrowClasses();
+    this.renderInbox(); // 畳み・幅指定・リサイズハンドルの扱いが変わるので描き直す
+  }
+
+  /** is-narrow と表示中の面のクラス、切替ボタンの状態を反映する */
+  private applyNarrowClasses(): void {
+    this.contentEl.toggleClass("is-narrow", this.isNarrow);
+    this.contentEl.toggleClass("is-pane-timeline", this.isNarrow && this.narrowPane === "timeline");
+    this.contentEl.toggleClass("is-pane-panel", this.isNarrow && this.narrowPane === "panel");
+    for (const [p, b] of this.paneBtns) b.toggleClass("is-active", p === this.narrowPane);
+  }
+
+  /** 狭い画面で全面に出す面を切り替える */
+  setNarrowPane(pane: NarrowPane): void {
+    if (this.narrowPane === pane) return;
+    this.narrowPane = pane;
+    this.applyNarrowClasses();
+    this.renderInbox();
+    // 隠れている間はタイムラインの高さを測れないので、出したときに測り直す
+    if (pane === "timeline") this.remeasureTimeline();
+  }
+
+  /** タイムライン ⇄ パネルを切り替える（コマンド用）。広い画面では並んで表示中なので案内だけ出す */
+  toggleNarrowPane(): void {
+    if (!this.isNarrow) {
+      new Notice("タイムラインとパネルは並んで表示されています（画面が狭いときに切り替えられます）");
+      return;
+    }
+    this.setNarrowPane(this.narrowPane === "panel" ? "timeline" : "panel");
   }
 
   /** 設定変更時などに、グリッドから作り直す */
@@ -374,6 +436,22 @@ export class DayTimelineView extends ItemView {
       const [y, m, d] = v.split("-").map(Number);
       if (y && m && d) this.setDate(new Date(y, m - 1, d));
     };
+
+    // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替
+    this.paneEl = header.createDiv("dt-mode dt-pane");
+    const panes: [NarrowPane, string, string][] = [
+      ["timeline", "calendar-clock", "タイムラインを表示"],
+      ["panel", "list-tree", "パネル（Inbox・プロジェクト・再スケジュール）を表示"],
+    ];
+    for (const [pane, icon, tip] of panes) {
+      const b = this.paneEl.createEl("button", {
+        cls: "dt-mode-btn dt-pane-btn",
+        attr: { "aria-label": tip },
+      });
+      setIcon(b, icon);
+      b.onclick = () => this.setNarrowPane(pane);
+      this.paneBtns.set(pane, b);
+    }
 
     const modeWrap = header.createDiv("dt-mode");
     const modes: [ViewMode, string][] = [
@@ -640,6 +718,7 @@ export class DayTimelineView extends ItemView {
       this.pendingReload = true;
       return;
     }
+    this.updateNarrow(); // 開いた直後などで onResize より先に来たときのための再判定
     const s = this.plugin.settings;
     const store = this.plugin.store;
     const blockStore = this.plugin.blockStore();
@@ -911,12 +990,22 @@ export class DayTimelineView extends ItemView {
     const showProjects = !!this.plugin.projects && s.showProjects;
     const reschedule = this.rescheduleGroups();
     const showReschedule = reschedule.length > 0;
-    this.inboxEl.toggleClass("is-visible", showInbox || showProjects || showReschedule);
-    if (!showInbox && !showProjects && !showReschedule) return;
-    const collapsed = s.inboxCollapsed;
+    const visible = showInbox || showProjects || showReschedule;
+    this.inboxEl.toggleClass("is-visible", visible);
+    // 狭い画面の切替ボタンは、パネルに出すものがあるときだけ出す
+    this.paneEl.toggleClass("is-available", visible);
+    if (!visible && this.narrowPane === "panel") {
+      // パネルに出すものが無くなったら、真っ白にならないようタイムラインへ戻す
+      this.narrowPane = "timeline";
+      this.applyNarrowClasses();
+    }
+    if (!visible) return;
+    // 狭い画面でパネルを全面表示しているときは、畳まず幅も固定しない
+    const narrowPanel = this.isNarrow && this.narrowPane === "panel";
+    const collapsed = s.inboxCollapsed && !narrowPanel;
     this.inboxEl.toggleClass("is-collapsed", collapsed);
-    this.applySidebarWidth(collapsed ? null : s.sidebarWidth);
-    if (!collapsed) this.attachSidebarResize();
+    this.applySidebarWidth(collapsed || narrowPanel ? null : s.sidebarWidth);
+    if (!collapsed && !narrowPanel) this.attachSidebarResize();
 
     const doToggle = () => {
       s.inboxCollapsed = !s.inboxCollapsed;
@@ -924,18 +1013,20 @@ export class DayTimelineView extends ItemView {
       this.renderInbox();
     };
     const head = this.inboxEl.createDiv("dt-inbox-head");
-    const toggle = this.iconButton(
-      head,
-      collapsed ? "panel-left-open" : "panel-left-close",
-      collapsed ? "パネルを開く" : "パネルを畳む",
-      doToggle
-    );
-    toggle.addClass("dt-inbox-toggle");
+    if (!narrowPanel) {
+      const toggle = this.iconButton(
+        head,
+        collapsed ? "panel-left-open" : "panel-left-close",
+        collapsed ? "パネルを開く" : "パネルを畳む",
+        doToggle
+      );
+      toggle.addClass("dt-inbox-toggle");
+    }
     const label = head.createSpan({
       cls: "dt-inbox-label",
       text: showInbox ? "Inbox" : showProjects ? "プロジェクト" : "再スケジュール",
     });
-    label.onclick = doToggle;
+    if (!narrowPanel) label.onclick = doToggle;
     if (showInbox) {
       head.createSpan({ cls: "dt-inbox-count", text: String(this.inboxTasks.length) });
       const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
@@ -1309,7 +1400,11 @@ export class DayTimelineView extends ItemView {
             if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
             else void this.commitMove(childDate, t, date, draft);
           },
-          () => this.setDate(childDate)
+          () => {
+            this.setDate(childDate);
+            // 狭い画面では移動した先が見えるよう、タイムラインへ切り替える
+            if (this.isNarrow) this.setNarrowPane("timeline");
+          }
         );
         item.addEventListener("contextmenu", (e: MouseEvent) => {
           e.preventDefault();

@@ -804,6 +804,42 @@
   min-width: 0;
 }
 
+/* ---------- 狭い画面（スマホなど）: タイムライン ⇄ パネルの切り替え ---------- */
+/* 幅が足りないとサイドバーとタイムラインが共倒れになるので、
+   ヘッダーの切替ボタン（is-narrow のときだけ表示）で片方だけを全面に出す */
+.dt-pane {
+  display: none;
+}
+.dt-view.is-narrow .dt-pane.is-available {
+  display: inline-flex;
+}
+.dt-pane-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 9px;
+}
+.dt-pane-btn svg {
+  width: 15px;
+  height: 15px;
+}
+/* タイムライン表示中はサイドバーを隠す（畳んだ細い帯も出さない） */
+.dt-view.is-narrow.is-pane-timeline .dt-inbox {
+  display: none;
+}
+/* パネル表示中はタイムラインを隠し、サイドバーを全幅に広げる。
+   タイムラインにしか効かないズーム・予実の切替も（月表示と同様に）隠す */
+.dt-view.is-narrow.is-pane-panel .dt-scroll,
+.dt-view.is-narrow.is-pane-panel .dt-zoom,
+.dt-view.is-narrow.is-pane-panel .dt-pa {
+  display: none;
+}
+.dt-view.is-narrow.is-pane-panel .dt-inbox.is-visible {
+  flex: 1 1 auto;
+  width: auto;
+  border-right: none;
+}
+
 /* ---------- グリッド ---------- */
 .dt-scroll {
   flex: 1 1 auto;
