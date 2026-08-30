@@ -23,7 +23,7 @@ import {
   stepsMatchRule,
   type OccurrenceInfo,
 } from "./recurring";
-import { ConfirmModal } from "./modal";
+import { ConfirmModal, endOfDayFix, setupTimeInput } from "./modal";
 import { iconName } from "./icons";
 import { addDays, dateKey, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
 
@@ -467,11 +467,13 @@ export class RecurringManagerView extends ItemView {
       cls: "dt-time-input",
       attr: { placeholder: rule.start !== null ? minutesToHHMM(rule.start) : "なし" },
     });
+    setupTimeInput(startIn);
     timeRow.createSpan({ text: "〜", cls: "dt-modal-tilde" });
     const endIn = timeRow.createEl("input", {
       cls: "dt-time-input",
       attr: { placeholder: rule.end !== null ? minutesToHHMM(rule.end) : "なし" },
     });
+    setupTimeInput(endIn);
     const curStart = isApplied
       ? info.task?.start ?? null
       : info.override && info.override.start !== undefined
@@ -520,6 +522,7 @@ export class RecurringManagerView extends ItemView {
         new Notice("時刻は 09:00 のように入力してください");
         return;
       }
+      end = endOfDayFix(start, end);
       if (end <= start) {
         new Notice("終了時刻は開始時刻より後にしてください");
         return;
