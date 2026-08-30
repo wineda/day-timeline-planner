@@ -1063,10 +1063,14 @@ export class DayTimelineView extends ItemView {
           if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
           else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
         });
-        item.createSpan({
+        const dateEl = item.createSpan({
           cls: "dt-project-child-date",
           text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "Inbox",
         });
+        // 日時が決まっていないものは破線のバッジで見分ける（日付なし=Inbox はアクセント色）
+        const scheduled = t.start !== null && t.end !== null;
+        if (child.date === null) dateEl.addClass("is-inbox");
+        else if (!scheduled) dateEl.addClass("is-unscheduled");
         item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
         const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
         const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
@@ -1079,8 +1083,10 @@ export class DayTimelineView extends ItemView {
         item.setAttr(
           "aria-label",
           `${t.title || "(無題)"}\n` +
-            (child.date ? `${moment(child.date).format("M月D日 (ddd)")}` : "Inbox") +
-            (t.start !== null && t.end !== null ? ` ${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}` : "") +
+            (child.date
+              ? moment(child.date).format("M月D日 (ddd)") +
+                (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
+              : "Inbox（日付は未定）") +
             "\nクリックでその日へ移動、右クリックでメニュー"
         );
         item.addEventListener("click", () => {

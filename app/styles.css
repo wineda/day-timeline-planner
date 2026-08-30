@@ -580,6 +580,20 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+/* 日時が決まっていない子タスク: 破線のバッジ（月表示の「時刻なしは破線」と同じ約束） */
+.dt-project-child-date.is-inbox,
+.dt-project-child-date.is-unscheduled {
+  border: 1px dashed var(--text-faint);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+/* 日付ごと未定（Inbox）はアクセント色で一段目立たせる */
+.dt-project-child-date.is-inbox {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+}
 .dt-project-child .dt-tray-title {
   flex: 1 1 auto;
   min-width: 0;
