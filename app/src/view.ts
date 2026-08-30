@@ -3,6 +3,7 @@ import {
   MarkdownView,
   Menu,
   Notice,
+  Platform,
   Scope,
   TAbstractFile,
   WorkspaceLeaf,
@@ -86,6 +87,14 @@ const RESCHEDULE_LOOKBACK_DAYS = 30;
  * サイドバーとタイムラインを並べると共倒れになるので、片方だけを全面に出して切り替える */
 const NARROW_VIEW_WIDTH = 500;
 
+/** タッチでこれ以上（px）動いたら「タップ・長押し」ではなくスクロール等とみなす */
+const TOUCH_SLOP = 10;
+/** タッチの長押し（ここからドラッグ）と判定するまでの時間（ms）。
+ * Android が contextmenu を発火する長押し（約 500ms）より先に確定させる */
+const LONG_PRESS_MS = 350;
+/** 横スワイプで前後の日へ移動するのに必要な移動量（px） */
+const SWIPE_MIN_X = 48;
+
 /** 狭い画面で全面に出す面 */
 type NarrowPane = "timeline" | "panel";
 
@@ -137,6 +146,10 @@ export class DayTimelineView extends ItemView {
 
   /** ドラッグ操作中は再描画しない */
   private interacting = false;
+  /** タッチの長押しから始まったドラッグ中（contextmenu を抑止する） */
+  private touchDragging = false;
+  /** タッチで空き時間をタップしたときに出す「＋ 追加」チップ */
+  private touchChipEl: HTMLElement | null = null;
   private pendingReload = false;
   private shouldScroll = true;
   private reloadDebounced: () => void;
@@ -145,7 +158,7 @@ export class DayTimelineView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: DayTimelinePlugin) {
     super(leaf);
     this.plugin = plugin;
-    this.mode = plugin.settings.viewMode;
+    this.mode = this.defaultViewMode();
     this.reloadDebounced = debounce(() => void this.reload(), 250, true);
     this.syncCursorDebounced = debounce(() => void this.syncCursorHighlight(), 150, true);
 
@@ -288,11 +301,16 @@ export class DayTimelineView extends ItemView {
     this.setNarrowPane(this.narrowPane === "panel" ? "timeline" : "panel");
   }
 
+  /** 端末に応じた表示モード。スマホは画面が狭く週（7列）は使いにくいので、別に記憶する（既定は日表示） */
+  private defaultViewMode(): ViewMode {
+    return Platform.isPhone ? this.plugin.settings.viewModeMobile : this.plugin.settings.viewMode;
+  }
+
   /** 設定変更時などに、グリッドから作り直す */
   rebuild(): void {
     if (!this.scrollEl) return;
     const prevMode = this.mode;
-    this.mode = this.plugin.settings.viewMode; // 設定画面で「既定の表示」を変えたときも追従する
+    this.mode = this.defaultViewMode(); // 設定画面で「既定の表示」を変えたときも追従する
     if (this.mode !== prevMode) this.alignThreeDayToToday();
     this.buildGrid();
     this.shouldScroll = true;
@@ -373,7 +391,8 @@ export class DayTimelineView extends ItemView {
   setViewMode(mode: ViewMode): void {
     if (mode === this.mode) return;
     this.mode = mode;
-    this.plugin.settings.viewMode = mode;
+    if (Platform.isPhone) this.plugin.settings.viewModeMobile = mode;
+    else this.plugin.settings.viewMode = mode;
     void this.plugin.persistSettings();
     this.alignThreeDayToToday();
     this.buildGrid();
@@ -551,12 +570,94 @@ export class DayTimelineView extends ItemView {
       menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
     };
 
-    this.iconButton(bar, "plus", "タスクを追加", () => this.openCreateModal(this.date));
+    const addBtn = this.iconButton(bar, "plus", "タスクを追加", () => this.openCreateModal(this.date));
+    addBtn.addClass("dt-toolbar-add");
     this.menuButton(bar, "その他（ノート・タイマー・定期タスク）", (menu) =>
       this.buildMoreMenu(menu)
     );
 
     this.scrollEl = main.createDiv("dt-scroll");
+    this.attachSwipeNavigation();
+
+    // 狭い画面用: 右下の「＋」ボタン（Google カレンダー方式）。ツールバーの＋の代わり
+    const fab = main.createEl("button", { cls: "dt-fab", attr: { "aria-label": "タスクを追加" } });
+    setIcon(fab, iconName("plus"));
+    fab.onclick = () => this.openCreateModal(this.date);
+  }
+
+  /**
+   * タッチの横スワイプで前後の日（3日・週・月）へ移動する（Google カレンダー方式）。
+   * 縦のスクロールはブラウザに任せ（CSS の touch-action: pan-y）、横方向だけをここで拾う。
+   * 以前は横スワイプが「空き時間のドラッグ」と解釈されてタスク作成ダイアログが開いてしまっていた
+   */
+  private attachSwipeNavigation(): void {
+    this.scrollEl.addEventListener(
+      "pointerdown",
+      (e: PointerEvent) => {
+        if (!this.isTouch(e) || !e.isPrimary) return;
+        const sx = e.clientX;
+        const sy = e.clientY;
+        const id = e.pointerId;
+        const cleanup = () => {
+          document.removeEventListener("pointermove", onMove, true);
+          document.removeEventListener("pointerup", onEnd, true);
+          document.removeEventListener("pointercancel", onEnd, true);
+        };
+        const onMove = (ev: PointerEvent) => {
+          if (ev.pointerId !== id) return;
+          // 長押しから始まったドラッグ（タスク移動・範囲作成）中はスワイプしない
+          if (this.interacting) {
+            cleanup();
+            return;
+          }
+          const dx = ev.clientX - sx;
+          const dy = ev.clientY - sy;
+          // 縦方向が優勢ならスクロールに譲る
+          if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > TOUCH_SLOP) {
+            cleanup();
+            return;
+          }
+          if (Math.abs(dx) >= SWIPE_MIN_X && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            cleanup();
+            this.dismissTouchChip();
+            if (dx < 0) this.goToNext();
+            else this.goToPrev();
+          }
+        };
+        const onEnd = (ev: PointerEvent) => {
+          if (ev.pointerId !== id) return;
+          cleanup();
+        };
+        document.addEventListener("pointermove", onMove, true);
+        document.addEventListener("pointerup", onEnd, true);
+        document.addEventListener("pointercancel", onEnd, true);
+      },
+      { capture: true }
+    );
+
+    // タイムライン内の横ジェスチャが Obsidian 本体（モバイルのサイドバー開閉）に
+    // 取られてしまわないよう、横方向優勢の touchmove はここで止める
+    let tsx = 0;
+    let tsy = 0;
+    this.scrollEl.addEventListener(
+      "touchstart",
+      (ev: TouchEvent) => {
+        const t = ev.touches[0];
+        if (!t) return;
+        tsx = t.clientX;
+        tsy = t.clientY;
+      },
+      { passive: true }
+    );
+    this.scrollEl.addEventListener(
+      "touchmove",
+      (ev: TouchEvent) => {
+        const t = ev.touches[0];
+        if (!t) return;
+        if (Math.abs(t.clientX - tsx) > Math.abs(t.clientY - tsy)) ev.stopPropagation();
+      },
+      { passive: true }
+    );
   }
 
   /** ツールバーの「表示」メニュー: ズーム・予定/実績・メンバーの表示切替 */
@@ -795,9 +896,15 @@ export class DayTimelineView extends ItemView {
       const add = this.iconButton(top, "plus", "タスクを追加", () => this.openCreateModal(date));
       add.addClass("dt-month-add");
       const listEl = cell.createDiv("dt-month-list");
-      // 空きをクリック → その日にタスクを追加
+      // 空きをクリック → その日にタスクを追加。
+      // モバイルではタップでその日の日表示を開く（Google カレンダー方式。誤って作成しない）
       cell.addEventListener("click", (e) => {
         if ((e.target as HTMLElement).closest(".dt-month-item, .dt-month-daynum, .dt-month-add")) return;
+        if (Platform.isMobile) {
+          this.date = startOfDay(date);
+          this.setViewMode("day");
+          return;
+        }
         this.openCreateModal(date);
       });
       this.monthCells.set(dateKey(date), { date, el: cell, listEl });
@@ -1514,6 +1621,7 @@ export class DayTimelineView extends ItemView {
     row.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (this.touchDragging) return;
       this.showProjectMenu(sum, e);
     });
 
@@ -1598,6 +1706,7 @@ export class DayTimelineView extends ItemView {
         item.addEventListener("contextmenu", (e: MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
+          if (this.touchDragging) return;
           this.showInboxTaskMenu(t, e);
         });
       } else {
@@ -1620,6 +1729,7 @@ export class DayTimelineView extends ItemView {
         item.addEventListener("contextmenu", (e: MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
+          if (this.touchDragging) return;
           this.showTaskMenu(childDate, t, e);
         });
       }
@@ -1746,8 +1856,21 @@ export class DayTimelineView extends ItemView {
     chip.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest(ignoreSelector)) return;
+      // タッチではタップで開き、長押ししてからドラッグ（パネルのスクロールを妨げない）
+      if (this.isTouch(e)) {
+        this.touchGate(chip, e, {
+          onTap: () => onClick(),
+          onLongPress: () => {
+            chip.addClass("is-lifted");
+            begin(e);
+          },
+        });
+        return;
+      }
       e.preventDefault();
-
+      begin(e);
+    });
+    const begin = (e: PointerEvent) => {
       const s = this.plugin.settings;
       const dayStart = s.startHour * 60;
       const dayEnd = s.endHour * 60;
@@ -1787,6 +1910,7 @@ export class DayTimelineView extends ItemView {
         },
         onEnd: (moved) => {
           chip.removeClass("is-dragging");
+          chip.removeClass("is-lifted");
           ghost?.remove();
           if (!moved) {
             onClick();
@@ -1798,10 +1922,11 @@ export class DayTimelineView extends ItemView {
         },
         onCancel: () => {
           chip.removeClass("is-dragging");
+          chip.removeClass("is-lifted");
           ghost?.remove();
         },
       });
-    });
+    };
   }
 
   /** プロジェクト行: クリックで展開、タイムラインへドラッグで子タスクを作成 */
@@ -2111,10 +2236,23 @@ export class DayTimelineView extends ItemView {
       void this.commitUpdate(col.date, task, { ...this.draftOf(task), actual: ranges });
     };
 
-    // 本体: クリックで編集、ドラッグで区間ごと移動
+    // 本体: クリックで編集、ドラッグで区間ごと移動（タッチでは長押ししてからドラッグ）
     el.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
       e.stopPropagation();
+      if (this.isTouch(e)) {
+        this.touchGate(el, e, {
+          onTap: () => this.openEditModal(col.date, task),
+          onLongPress: () => {
+            el.addClass("is-lifted");
+            beginMove(e, true);
+          },
+        });
+        return;
+      }
+      beginMove(e, false);
+    });
+    const beginMove = (e: PointerEvent, viaLongPress: boolean) => {
       const toNote = e.ctrlKey || e.metaKey;
       const dur = item.end - item.start;
       let newStart = item.start;
@@ -2129,10 +2267,12 @@ export class DayTimelineView extends ItemView {
           el.style.top = this.minutesToPx(newStart) + "px";
           timeEl.setText(`${minutesToHHMM(newStart)} - ${minutesToHHMM(newStart + dur)}`);
         },
-        onEnd: (moved) => {
+        onEnd: (moved, ev) => {
           el.removeClass("is-dragging");
+          el.removeClass("is-lifted");
           if (!moved) {
-            if (toNote) void this.openTaskInNote(col.date, task);
+            if (viaLongPress) this.showTaskMenu(col.date, task, ev);
+            else if (toNote) void this.openTaskInNote(col.date, task);
             else this.openEditModal(col.date, task);
             return;
           }
@@ -2144,12 +2284,25 @@ export class DayTimelineView extends ItemView {
         },
         onCancel: () => this.renderEvents(),
       });
-    });
+    };
 
-    // 下端のハンドル: ドラッグで終了時刻を変更
+    // 下端のハンドル: ドラッグで終了時刻を変更（タッチでは長押ししてからドラッグ）
     handle.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
       e.stopPropagation();
+      if (this.isTouch(e)) {
+        this.touchGate(handle, e, {
+          onTap: () => this.openEditModal(col.date, task),
+          onLongPress: () => {
+            el.addClass("is-lifted");
+            beginResize(e);
+          },
+        });
+        return;
+      }
+      beginResize(e);
+    });
+    const beginResize = (e: PointerEvent) => {
       let newEnd = item.end;
       this.startDrag(handle, e, {
         onMove: (dy) => {
@@ -2164,6 +2317,7 @@ export class DayTimelineView extends ItemView {
         },
         onEnd: (moved) => {
           el.removeClass("is-dragging");
+          el.removeClass("is-lifted");
           if (!moved || newEnd === item.end) {
             this.renderEvents();
             return;
@@ -2172,11 +2326,12 @@ export class DayTimelineView extends ItemView {
         },
         onCancel: () => this.renderEvents(),
       });
-    });
+    };
 
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (this.touchDragging) return; // 長押しドラッグ中の contextmenu（Android）は無視
       this.showTaskMenu(col.date, task, e);
     });
     this.attachHoverPreview(el, col.date, task);
@@ -2537,17 +2692,73 @@ export class DayTimelineView extends ItemView {
 
   // ---------- 操作 ----------
 
+  private isTouch(e: PointerEvent): boolean {
+    return e.pointerType === "touch";
+  }
+
+  /**
+   * タッチの pointerdown を「タップ / 長押し / スクロール・スワイプ」に振り分ける。
+   * - 指がほぼ動かないまま離れた → onTap
+   * - 指が動かないまま LONG_PRESS_MS 経過 → onLongPress（ここからドラッグを始める）
+   * - 先に TOUCH_SLOP を超えて動いた → 何もしない（ブラウザのスクロールや横スワイプに譲る）
+   */
+  private touchGate(
+    target: HTMLElement,
+    e: PointerEvent,
+    h: { onTap?: (ev: PointerEvent) => void; onLongPress?: () => void }
+  ): void {
+    const pointerId = e.pointerId;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onCancel);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      if (Math.abs(ev.clientX - sx) > TOUCH_SLOP || Math.abs(ev.clientY - sy) > TOUCH_SLOP) cleanup();
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      cleanup();
+      h.onTap?.(ev);
+    };
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      cleanup();
+    };
+    const timer = window.setTimeout(() => {
+      cleanup();
+      navigator.vibrate?.(15);
+      h.onLongPress?.();
+    }, LONG_PRESS_MS);
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onCancel);
+  }
+
   /** マウス／タッチのドラッグをまとめて扱う */
   private startDrag(target: HTMLElement, e: PointerEvent, h: DragHandlers): void {
     const startY = e.clientY;
     const pointerId = e.pointerId;
+    const touch = this.isTouch(e);
     let moved = false;
     this.interacting = true;
+    if (touch) this.touchDragging = true;
+
+    // タッチのドラッグ中はブラウザにスクロールを始めさせない（始まると pointercancel で
+    // ドラッグが打ち切られる）。touch イベントは touchstart した要素に届き続けるので
+    // target で受けられる
+    const onTouchMove = (ev: TouchEvent) => ev.preventDefault();
+    if (touch) target.addEventListener("touchmove", onTouchMove, { passive: false });
 
     const detach = () => {
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onUp);
       target.removeEventListener("pointercancel", onCancel);
+      if (touch) target.removeEventListener("touchmove", onTouchMove);
       try {
         target.releasePointerCapture(pointerId);
       } catch (_e) {
@@ -2556,6 +2767,9 @@ export class DayTimelineView extends ItemView {
     };
     const done = () => {
       this.interacting = false;
+      // contextmenu（Android は長押しの約 500ms 後、指を離した後に来ることもある）を
+      // 拾ってメニューが二重に開かないよう、少し遅らせて解除する
+      if (touch) window.setTimeout(() => (this.touchDragging = false), 350);
       if (this.pendingReload) {
         this.pendingReload = false;
         void this.reload();
@@ -2594,8 +2808,52 @@ export class DayTimelineView extends ItemView {
   /** 空き時間のクリック／ドラッグ → タスクを作成 */
   private onCanvasPointerDown(e: PointerEvent, col: DayColumn): void {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest(".dt-event")) return;
+    const targetEl = e.target as HTMLElement;
+    if (targetEl.closest(".dt-event")) return;
 
+    if (this.isTouch(e)) {
+      // チップ自身のタップはチップの click（作成ダイアログを開く）に任せる
+      if (targetEl.closest(".dt-touch-chip")) return;
+      // タッチでは誤操作を避ける: タップ → 「＋ 追加」チップを出して 2 タップ目で作成、
+      // 長押し → その場からドラッグで範囲を決めて作成（Google カレンダー方式）。
+      // スクロール・横スワイプはここでは何もしない（touchGate が振り分ける）
+      this.touchGate(col.canvasEl, e, {
+        onTap: () => this.showTouchCreateChip(col, e.clientY),
+        onLongPress: () => this.beginCanvasCreateDrag(e, col),
+      });
+      return;
+    }
+    this.dismissTouchChip();
+    this.beginCanvasCreateDrag(e, col);
+  }
+
+  /** タッチで空き時間をタップ → その枠に「＋ 時刻」チップを出す。チップをタップで作成 */
+  private showTouchCreateChip(col: DayColumn, clientY: number): void {
+    this.dismissTouchChip();
+    const s = this.plugin.settings;
+    const dayStart = s.startHour * 60;
+    const dayEnd = s.endHour * 60;
+    const start = clamp(this.snapFloor(this.clientYToMinutes(clientY)), dayStart, dayEnd - s.snapMinutes);
+    const end = Math.min(start + s.defaultDurationMinutes, dayEnd);
+    const el = col.eventsEl.createDiv("dt-ghost dt-touch-chip");
+    el.style.top = this.minutesToPx(start) + "px";
+    el.style.height = Math.max(this.minutesToPx(end) - this.minutesToPx(start) - 2, 4) + "px";
+    el.setText(`＋ ${minutesToHHMM(start)} - ${minutesToHHMM(end)}`);
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.dismissTouchChip();
+      this.openCreateModal(col.date, start, end);
+    });
+    this.touchChipEl = el;
+  }
+
+  private dismissTouchChip(): void {
+    this.touchChipEl?.remove();
+    this.touchChipEl = null;
+  }
+
+  /** 空き時間からのドラッグ（マウス、またはタッチの長押し後）でタスクを作成する */
+  private beginCanvasCreateDrag(e: PointerEvent, col: DayColumn): void {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
@@ -2642,10 +2900,24 @@ export class DayTimelineView extends ItemView {
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
 
-    // 本体: クリックで編集（Ctrl/Cmd+クリックでノートへ）、ドラッグで移動（週表示では別の日へも）
+    // 本体: クリックで編集（Ctrl/Cmd+クリックでノートへ）、ドラッグで移動（週表示では別の日へも）。
+    // タッチではタップで編集、長押ししてからドラッグで移動（長押しだけならメニュー）
     el.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
       e.stopPropagation();
+      if (this.isTouch(e)) {
+        this.touchGate(el, e, {
+          onTap: () => this.openEditModal(col.date, task),
+          onLongPress: () => {
+            el.addClass("is-lifted");
+            beginMove(e, true);
+          },
+        });
+        return;
+      }
+      beginMove(e, false);
+    });
+    const beginMove = (e: PointerEvent, viaLongPress: boolean) => {
       const toNote = e.ctrlKey || e.metaKey;
       const dur = task.end - task.start;
       let newStart = task.start;
@@ -2674,10 +2946,14 @@ export class DayTimelineView extends ItemView {
             }
           }
         },
-        onEnd: (moved) => {
+        onEnd: (moved, ev) => {
           el.removeClass("is-dragging");
+          el.removeClass("is-lifted");
           if (!moved) {
-            if (toNote) void this.openTaskInNote(col.date, task);
+            // 長押しだけ（動かさず離した）→ 右クリック相当のメニュー。
+            // モバイルでは完了・削除・持ち越しなどへの入口になる
+            if (viaLongPress) this.showTaskMenu(col.date, task, ev);
+            else if (toNote) void this.openTaskInNote(col.date, task);
             else this.openEditModal(col.date, task);
             return;
           }
@@ -2692,12 +2968,25 @@ export class DayTimelineView extends ItemView {
         },
         onCancel: () => this.renderEvents(),
       });
-    });
+    };
 
-    // 下端のハンドル: ドラッグで終了時刻を変更
+    // 下端のハンドル: ドラッグで終了時刻を変更（タッチでは長押ししてからドラッグ）
     handle.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
       e.stopPropagation();
+      if (this.isTouch(e)) {
+        this.touchGate(handle, e, {
+          onTap: () => this.openEditModal(col.date, task),
+          onLongPress: () => {
+            el.addClass("is-lifted");
+            beginResize(e);
+          },
+        });
+        return;
+      }
+      beginResize(e);
+    });
+    const beginResize = (e: PointerEvent) => {
       let newEnd = task.end;
       this.startDrag(handle, e, {
         onMove: (dy) => {
@@ -2708,6 +2997,7 @@ export class DayTimelineView extends ItemView {
         },
         onEnd: (moved) => {
           el.removeClass("is-dragging");
+          el.removeClass("is-lifted");
           if (moved && newEnd !== task.end) {
             void this.commitUpdate(col.date, task, { ...this.draftOf(task), end: newEnd });
           } else {
@@ -2716,12 +3006,13 @@ export class DayTimelineView extends ItemView {
         },
         onCancel: () => this.renderEvents(),
       });
-    });
+    };
 
     // 右クリックメニュー
     el.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (this.touchDragging) return; // 長押しドラッグ中の contextmenu（Android）は無視
       this.showTaskMenu(col.date, task, e);
     });
   }
@@ -2743,6 +3034,7 @@ export class DayTimelineView extends ItemView {
     chip.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (this.touchDragging) return;
       this.showTaskMenu(date, task, e);
     });
   }
@@ -2761,6 +3053,7 @@ export class DayTimelineView extends ItemView {
     chip.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (this.touchDragging) return;
       this.showInboxTaskMenu(task, e);
     });
   }
