@@ -1062,6 +1062,20 @@ export class DayTimelineView extends ItemView {
         () => this.setAllProjectsExpanded(!allExpanded)
       );
       toggleAll.addClass("dt-inbox-open");
+      const hideDone = this.plugin.settings.projectsHideDone;
+      const hideBtn = this.iconButton(
+        head,
+        hideDone ? "eye-off" : "eye",
+        hideDone
+          ? "完了済みの子タスクを表示する"
+          : "完了済みの子タスクを隠す（持ち越し済みも隠れます）",
+        () => {
+          this.plugin.settings.projectsHideDone = !hideDone;
+          void this.plugin.persistSettings();
+          this.renderInbox();
+        }
+      );
+      hideBtn.addClass("dt-inbox-open");
     }
     const refresh = this.iconButton(head, "file-text", "全プロジェクトノートのタスク一覧を更新", () =>
       void this.plugin.updateAllProjectNotes()
@@ -1149,10 +1163,19 @@ export class DayTimelineView extends ItemView {
 
       if (!expanded) continue;
       const childrenEl = list.createDiv("dt-project-children");
+      // 「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない
+      const shown = this.plugin.settings.projectsHideDone
+        ? sum.children.filter((c) => !c.task.done && !c.task.forwarded)
+        : sum.children;
       if (!sum.children.length) {
         childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
+      } else if (!shown.length) {
+        childrenEl.createSpan({
+          cls: "dt-tray-empty",
+          text: `完了済み ${sum.children.length} 件を非表示`,
+        });
       }
-      for (const child of sum.children) {
+      for (const child of shown) {
         const t = child.task;
         const item = childrenEl.createDiv("dt-project-child");
         item.toggleClass("is-done", t.done);
