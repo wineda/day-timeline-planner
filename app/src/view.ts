@@ -7,6 +7,7 @@ import {
   TAbstractFile,
   WorkspaceLeaf,
   debounce,
+  getIcon,
   moment,
   setIcon,
 } from "obsidian";
@@ -14,7 +15,13 @@ import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
 import { ConfirmModal, PromptModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
 import type { ActualRange } from "./markdown/blocks";
-import { groupProjects, knownGroupNames, projectDisplayName, type ProjectSummary } from "./project";
+import {
+  groupProjects,
+  knownGroupNames,
+  projectDisplayName,
+  renderGroupIcon,
+  type ProjectSummary,
+} from "./project";
 import { newBlockId } from "./markdown/id";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import { colorForTags, ticketUrl, type Member, type PlanActualMode, type ViewMode } from "./settings";
@@ -1102,18 +1109,27 @@ export class DayTimelineView extends ItemView {
       });
       return;
     }
-    const groups = groupProjects(active, this.plugin.settings.projectGroupOrder);
+    const groups = groupProjects(
+      active,
+      this.plugin.settings.projectGroups.map((x) => x.name)
+    );
     // どのプロジェクトにもグループが無ければ、今までどおりのフラットな一覧
     if (!groups.some((g) => g.name !== null)) {
       for (const sum of active) this.renderProjectRow(list, sum);
       return;
     }
+    const groupIcons = this.groupIconMap();
     for (const g of groups) {
       const groupKey = g.name ?? "";
       const collapsed = this.collapsedGroups.has(groupKey);
       const groupHead = list.createDiv("dt-project-group");
       const groupChev = groupHead.createDiv("dt-project-chevron");
       setIcon(groupChev, collapsed ? "chevron-right" : "chevron-down");
+      const icon = g.name !== null ? groupIcons.get(g.name) : undefined;
+      if (icon) {
+        const iconEl = groupHead.createSpan("dt-project-group-icon");
+        renderGroupIcon(iconEl, icon);
+      }
       groupHead.createSpan({ cls: "dt-project-group-name", text: g.name ?? "未分類" });
       groupHead.createSpan({ cls: "dt-project-group-count", text: String(g.items.length) });
       groupHead.setAttr(
@@ -1296,6 +1312,17 @@ export class DayTimelineView extends ItemView {
     }
   }
 
+  /** 設定にあるグループのアイコン（グループ名 → アイコン。未設定・空は含めない） */
+  private groupIconMap(): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const g of this.plugin.settings.projectGroups) {
+      const name = g.name.trim();
+      const icon = g.icon.trim();
+      if (name && icon && !out.has(name)) out.set(name, icon);
+    }
+    return out;
+  }
+
   /** プロジェクト行の右クリックメニュー（グループの付け替え） */
   private showProjectMenu(sum: ProjectSummary, e: MouseEvent): void {
     if (!this.plugin.projects) return;
@@ -1304,12 +1331,18 @@ export class DayTimelineView extends ItemView {
     // 完了済みプロジェクトだけが使っているグループへも移せるよう、候補は全プロジェクトから集める
     const names = knownGroupNames(
       this.projectData.map((s) => s.ref),
-      this.plugin.settings.projectGroupOrder
+      this.plugin.settings.projectGroups.map((x) => x.name)
     );
+    const groupIcons = this.groupIconMap();
     for (const groupName of names) {
       menu.addItem((i) => {
-        i.setTitle(`グループ: ${groupName}`).onClick(() => void this.setProjectGroup(sum, groupName));
+        // アイコンが Lucide 名ならメニューのアイコン欄に、絵文字などはタイトルの頭に出す
+        // （現在のグループは ✓ を優先）
+        const icon = groupIcons.get(groupName);
+        const asText = icon && !getIcon(icon) ? icon + " " : "";
+        i.setTitle(`グループ: ${asText}${groupName}`).onClick(() => void this.setProjectGroup(sum, groupName));
         if (groupName === current) i.setIcon("check");
+        else if (icon && !asText) i.setIcon(icon);
       });
     }
     if (names.length) menu.addSeparator();

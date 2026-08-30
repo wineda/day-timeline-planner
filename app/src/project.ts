@@ -3,7 +3,7 @@
  * 日々のタスクブロックが「- プロジェクト: [[...]]」行でここへリンクし、
  * メモや工程（ステップ）の置き場を1箇所にまとめる。
  */
-import { App, Notice, TFile, TFolder, normalizePath } from "obsidian";
+import { App, Notice, TFile, TFolder, getIcon, normalizePath, setIcon } from "obsidian";
 import type { DayTimelineSettings } from "./settings";
 import type { Task } from "./model";
 import { newBlockId } from "./markdown/id";
@@ -130,6 +130,15 @@ export function knownGroupNames(refs: { group?: string | null }[], order: string
   }
   used.sort((a, b) => a.localeCompare(b, "ja"));
   return [...out, ...used];
+}
+
+/**
+ * グループのアイコンを el に描画する。Lucide のアイコン名（briefcase など）ならそのアイコン、
+ * それ以外（絵文字など）はそのままテキストとして出す
+ */
+export function renderGroupIcon(el: HTMLElement, icon: string): void {
+  if (getIcon(icon)) setIcon(el, icon);
+  else el.setText(icon);
 }
 
 /** 子タスクを日付順（Inbox は末尾）→ 開始時刻順に並べる */
