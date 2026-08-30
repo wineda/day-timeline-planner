@@ -1257,6 +1257,110 @@ export class PromptModal extends Modal {
   }
 }
 
+export interface ProjectCreateOptions {
+  /** グループの選択肢（設定の並び順 + 使用中のもの） */
+  groups: string[];
+  /** 最初から選んでおくグループ（null / 無指定 = なし） */
+  initialGroup?: string | null;
+  /** 使うテンプレートのパス（表示用）。null = 最小の雛形で作る */
+  templatePath?: string | null;
+  /** 空欄のままでは呼ばれない（trim 済みの名前と、選んだグループを渡す） */
+  onSubmit: (name: string, group: string | null) => void | Promise<void>;
+}
+
+/** 新しいプロジェクトを作るダイアログ（パネルの＋ボタン・コマンドから） */
+export class ProjectCreateModal extends Modal {
+  private name = "";
+  private group: string | null;
+
+  constructor(
+    app: App,
+    private opts: ProjectCreateOptions
+  ) {
+    super(app);
+    this.group = opts.initialGroup ?? null;
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal");
+    this.titleEl.setText("新しいプロジェクト");
+
+    const submit = () => {
+      const name = this.name.trim();
+      if (!name) {
+        new Notice("プロジェクト名を入力してください");
+        return;
+      }
+      this.close();
+      void this.opts.onSubmit(name, this.group?.trim() || null);
+    };
+
+    const nameSetting = new Setting(this.contentEl).setName("名前");
+    nameSetting.setDesc(
+      this.opts.templatePath
+        ? `テンプレート「${this.opts.templatePath}」から作成します。`
+        : "最小の雛形で作成します（設定「プロジェクトのテンプレート」でテンプレートを指定できます）。"
+    );
+    const nameInput = nameSetting.controlEl.createEl("input", {
+      type: "text",
+      cls: "dt-prompt-input",
+      attr: { placeholder: "例: 環境構築" },
+    });
+    nameInput.addEventListener("input", () => (this.name = nameInput.value));
+    nameInput.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        submit();
+      }
+    });
+
+    // グループ: 既存の一覧から選ぶか、「＋ 新しいグループ…」でその場で入力する
+    const groupSetting = new Setting(this.contentEl).setName("グループ");
+    groupSetting.settingEl.setAttr("title", "プロジェクトノートの frontmatter（group）に保存されます");
+    const newGroupInput = groupSetting.controlEl.createEl("input", {
+      type: "text",
+      cls: "dt-project-new",
+      attr: { placeholder: "新しいグループ名" },
+    });
+    newGroupInput.addEventListener("input", () => (this.group = newGroupInput.value));
+    newGroupInput.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        submit();
+      }
+    });
+    groupSetting.addDropdown((d) => {
+      d.addOption("", "なし");
+      const groups = [...new Set(this.opts.groups.map((g) => g.trim()).filter(Boolean))];
+      for (const g of groups) d.addOption(g, g);
+      if (this.group && !groups.includes(this.group)) d.addOption(this.group, this.group);
+      d.addOption("__new__", "＋ 新しいグループ…");
+      d.setValue(this.group ?? "");
+      d.onChange((v) => {
+        if (v === "__new__") {
+          this.group = newGroupInput.value;
+          newGroupInput.addClass("is-visible");
+          newGroupInput.focus();
+          return;
+        }
+        newGroupInput.removeClass("is-visible");
+        this.group = v || null;
+      });
+    });
+    groupSetting.controlEl.appendChild(newGroupInput);
+
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+    buttons.addButton((b) => b.setButtonText("作成").setCta().onClick(submit));
+    window.setTimeout(() => nameInput.focus(), 0);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export interface RetrospectiveOptions {
   taskTitle: string;
   durationLabel: string;

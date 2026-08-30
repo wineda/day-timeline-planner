@@ -3,12 +3,18 @@
  * 日々のタスクブロックが「- プロジェクト: [[...]]」行でここへリンクし、
  * メモや工程（ステップ）の置き場を1箇所にまとめる。
  */
-import { App, Notice, TFile, TFolder, getIcon, normalizePath, setIcon } from "obsidian";
+import { App, Notice, TFile, TFolder, getIcon, moment, normalizePath, setIcon } from "obsidian";
 import type { DayTimelineSettings } from "./settings";
 import type { Task } from "./model";
 import { newBlockId } from "./markdown/id";
 import { stripTags } from "./util";
-import { normalizeBlockOptions, parseBlockDocument, type BlockOptions, type TaskBlock } from "./markdown/blocks";
+import {
+  normalizeBlockOptions,
+  parseBlockDocument,
+  type BlockOptions,
+  type TaskBlock,
+  type TicketRef,
+} from "./markdown/blocks";
 import { updateTask } from "./markdown/edit";
 
 export interface ProjectRef {
@@ -20,6 +26,163 @@ export interface ProjectRef {
   done?: boolean;
   /** グループ名（frontmatter の group。無ければ null） */
   group?: string | null;
+}
+
+// ---------- プロジェクト自身の項目（期日・チケット・ドキュメント） ----------
+// 子タスクと同じ「- ラベル: 値」の行で、プロジェクトノート自身にも持たせられる。
+// テンプレートに空の行（「- 期日: 」など）を入れておけば、あとから書き足すだけでよい
+
+/** ドキュメント行の1項目（プロジェクトに結びつけた資料へのリンク） */
+export interface ProjectDoc {
+  /** 開く先（Wikilink のリンク先、または URL） */
+  target: string;
+  /** 表示名（別名があればそれ、無ければファイル名 / URL） */
+  label: string;
+  /** http(s) の外部リンクか（ブラウザで開く） */
+  external: boolean;
+}
+
+/** プロジェクトノート自身が持つ項目 */
+export interface ProjectFields {
+  /** 期日（書かれたままの文字列。無ければ ""） */
+  due: string;
+  /** 期日を日付として読めたもの（読めなければ null） */
+  dueDate: Date | null;
+  /** チケット（「- チケット: redmine#65130」行）。無ければ null */
+  ticket: TicketRef | null;
+  /** ドキュメント（「- ドキュメント: [[設計書]] …」行。複数行・複数リンク可） */
+  docs: ProjectDoc[];
+}
+
+const DUE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?期日(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+const TICKET_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?チケット(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+const DOC_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:ドキュメント|資料)(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 期日の行なら中身を返す（空でも ""）。違えば null */
+export function parseDueLine(line: string): string | null {
+  const m = DUE_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+/** 期日の値として受け付ける書き方 */
+const DUE_FORMATS = [
+  "YYYY-MM-DD",
+  "YYYY-M-D",
+  "YYYY/M/D",
+  "YYYY.M.D",
+  "YYYY年M月D日",
+  "M/D",
+  "M月D日",
+];
+
+/** 期日の値を日付にする（[[2026-09-15]] のようなリンクも可）。読めなければ null */
+export function parseDueDate(v: string): Date | null {
+  let t = v.trim();
+  const link = /^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/.exec(t);
+  if (link) t = (link[1].split("/").pop() ?? link[1]).trim();
+  const m = moment(t, DUE_FORMATS, true);
+  return m.isValid() ? m.startOf("day").toDate() : null;
+}
+
+/** チケットの行なら中身を返す（空でも ""）。違えば null */
+export function parseTicketLine(line: string): string | null {
+  const m = TICKET_LINE_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+/** チケットの値（"redmine#65130" / "#65130" / "65130" / "🎫redmine#65130"）を読む */
+export function parseTicketValue(v: string): TicketRef | null {
+  const t = v.replace(/^🎫/, "").trim();
+  if (!t) return null;
+  const m = /^([\p{L}\p{N}_.-]*)#(\S+)$/u.exec(t);
+  if (m) return { tracker: m[1], id: m[2] };
+  if (/^[\p{L}\p{N}_.-]+$/u.test(t)) return { tracker: "", id: t };
+  return null;
+}
+
+/** ドキュメントの行なら中身を返す（空でも ""）。違えば null */
+export function parseDocLine(line: string): string | null {
+  const m = DOC_LINE_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+/** リンク先文字列からドキュメントの表示名（#見出しを除いたファイル名）を作る */
+function docLabel(target: string): string {
+  const path = target.split("#")[0] || target;
+  const base = path.split("/").pop() ?? path;
+  return base.replace(/\.md$/, "") || target;
+}
+
+/** ドキュメントの値から [[Wikilink]]・[名前](URL)・裸の URL を拾う。どれも無ければ値ごと1件にする */
+export function parseDocValue(v: string): ProjectDoc[] {
+  const out: ProjectDoc[] = [];
+  let rest = v;
+  rest = rest.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_a, target: string, alias?: string) => {
+    const t = target.trim();
+    if (t) out.push({ target: t, label: (alias ?? "").trim() || docLabel(t), external: false });
+    return " ";
+  });
+  rest = rest.replace(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_a, label: string, url: string) => {
+    out.push({ target: url, label: label.trim() || url, external: true });
+    return " ";
+  });
+  rest = rest.replace(/https?:\/\/\S+/g, (url) => {
+    out.push({ target: url, label: url, external: true });
+    return " ";
+  });
+  // リンクを1つも拾えなかったときだけ、値そのものを1件として扱う（パスの / は触らない）
+  if (!out.length) {
+    const leftover = rest.replace(/\s+/g, " ").trim();
+    if (leftover) out.push({ target: leftover, label: docLabel(leftover), external: false });
+  }
+  return out;
+}
+
+const FENCE_RE = /^\s*(?:```|~~~)/;
+
+/**
+ * プロジェクトノートから期日・チケット・ドキュメントを読む。
+ * frontmatter とコードブロックの外なら、ノートのどこに書いてもよい
+ * （期日・チケットは最初の行、ドキュメントは全行分を集める）
+ */
+export function extractProjectFields(content: string): ProjectFields {
+  const lines = content.split(/\r?\n/);
+  let start = 0;
+  if (lines[0]?.trim() === "---") {
+    const end = lines.findIndex((l, i) => i > 0 && (l.trim() === "---" || l.trim() === "..."));
+    if (end > 0) start = end + 1;
+  }
+  let due = "";
+  let dueDate: Date | null = null;
+  let ticket: TicketRef | null = null;
+  const docs: ProjectDoc[] = [];
+  let fence = false;
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i];
+    if (FENCE_RE.test(line)) {
+      fence = !fence;
+      continue;
+    }
+    if (fence) continue;
+    if (!due) {
+      const d = parseDueLine(line);
+      if (d !== null) {
+        due = d;
+        dueDate = d ? parseDueDate(d) : null;
+        continue;
+      }
+    }
+    if (!ticket) {
+      const t = parseTicketLine(line);
+      if (t !== null) {
+        ticket = parseTicketValue(t);
+        continue;
+      }
+    }
+    const dv = parseDocLine(line);
+    if (dv !== null) docs.push(...parseDocValue(dv));
+  }
+  return { due, dueDate, ticket, docs };
 }
 
 /** プロジェクトノートの frontmatter でグループ名を持つキー */
@@ -54,6 +217,8 @@ export interface ProjectSummary {
   doneCount: number;
   /** プロジェクト自身（ノートのメタ行）が完了か。完了済はパネルに出さない */
   done?: boolean;
+  /** プロジェクト自身の期日・チケット・ドキュメント（ノートから読む） */
+  fields?: ProjectFields;
 }
 
 export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSummary {
@@ -252,6 +417,19 @@ export function insertSelfMeta(content: string, name: string, meta: string): str
   return lines.join(eol);
 }
 
+/**
+ * 「テンプレートを作成」で書き出すサンプル。
+ * {{name}} はプロジェクト名に置き換わる。メタ行（完了チェック）は作成時に自動で入る
+ */
+export const PROJECT_TEMPLATE_SAMPLE = `# {{name}}
+- 期日:
+- チケット:
+- ドキュメント:
+
+## メモ
+
+`;
+
 export class ProjectStore {
   constructor(
     private app: App,
@@ -266,13 +444,23 @@ export class ProjectStore {
     return normalizePath((s.folder ? s.folder + "/" : "") + "Projects");
   }
 
-  /** プロジェクトの一覧（フォルダ内の .md ファイル）。名前順 */
+  /** 設定「プロジェクトのテンプレート」のパス（.md 付き）。未設定なら null */
+  templatePath(): string | null {
+    const raw = this.getSettings().projectTemplatePath.trim();
+    if (!raw) return null;
+    let p = normalizePath(raw);
+    if (!p.endsWith(".md")) p += ".md";
+    return p;
+  }
+
+  /** プロジェクトの一覧（フォルダ内の .md ファイル）。名前順。テンプレート自身は除く */
   list(): ProjectRef[] {
     const folder = this.app.vault.getAbstractFileByPath(this.folder());
     if (!(folder instanceof TFolder)) return [];
+    const tpl = this.templatePath();
     const out: ProjectRef[] = [];
     for (const f of folder.children) {
-      if (f instanceof TFile && f.extension === "md") {
+      if (f instanceof TFile && f.extension === "md" && f.path !== tpl) {
         out.push({
           linktext: f.path.replace(/\.md$/, ""),
           name: f.basename,
@@ -299,10 +487,11 @@ export class ProjectStore {
 
   /**
    * 名前からプロジェクトノートを作る（既にあればそのまま使う）。
-   * タスクブロックと同じ文法（見出し + メタ行）で作るので、後から集計にも使える。
-   * 作れなければ null
+   * 設定「プロジェクトのテンプレート」があればその内容から、無ければ最小の雛形で作る。
+   * どちらもタスクブロックと同じ文法（見出し + メタ行）になるので、後から集計にも使える。
+   * group を渡すとそのグループに入れる。作れなければ null
    */
-  async create(name: string): Promise<string | null> {
+  async create(name: string, group?: string | null): Promise<string | null> {
     const safe = name
       .trim()
       .replace(/[\\/:*?"<>|#^[\]]/g, " ")
@@ -313,7 +502,7 @@ export class ProjectStore {
     await this.ensureFolder(dir);
     const path = normalizePath(`${dir}/${safe}.md`);
     if (!this.app.vault.getAbstractFileByPath(path)) {
-      const content = `# ${safe}\n- [ ] ^${newBlockId()}\n\n`;
+      const content = await this.initialContent(safe, group?.trim() || null);
       try {
         await this.app.vault.create(path, content);
       } catch (e) {
@@ -323,7 +512,58 @@ export class ProjectStore {
         }
       }
     }
-    return path.replace(/\.md$/, "");
+    const link = path.replace(/\.md$/, "");
+    if (group?.trim()) await this.setGroup(link, group);
+    return link;
+  }
+
+  /**
+   * 新しいプロジェクトノートの中身。テンプレートのプレースホルダー
+   * （{{name}} / {{title}}・{{date}}・{{time}}・{{group}}）を置き換え、
+   * メタ行（`- [ ] ^id` = プロジェクトの完了チェック）が無ければ見出しの直下に書き足す
+   */
+  private async initialContent(name: string, group: string | null): Promise<string> {
+    let content = "";
+    const tplPath = this.templatePath();
+    if (tplPath) {
+      const tf = this.app.vault.getAbstractFileByPath(tplPath);
+      if (tf instanceof TFile) content = await this.app.vault.read(tf);
+      else new Notice(`プロジェクトのテンプレート「${tplPath}」が見つからないため、既定の雛形で作成します`);
+    }
+    if (!content.trim()) content = `# ${name}\n\n`;
+    content = content
+      .replace(/\{\{\s*(?:name|title)\s*\}\}/gi, name)
+      .replace(/\{\{\s*date\s*(?::\s*([^}]+?)\s*)?\}\}/gi, (_a, fmt: string | undefined) =>
+        moment().format(fmt || "YYYY-MM-DD")
+      )
+      .replace(/\{\{\s*time\s*(?::\s*([^}]+?)\s*)?\}\}/gi, (_a, fmt: string | undefined) =>
+        moment().format(fmt || "HH:mm")
+      )
+      .replace(/\{\{\s*group\s*\}\}/gi, group ?? "");
+    if (!this.findSelf(content)) content = insertSelfMeta(content, name, `- [ ] ^${newBlockId()}`);
+    if (!content.endsWith("\n")) content += "\n";
+    return content;
+  }
+
+  /**
+   * テンプレートファイルが無ければサンプルを作って返す（設定画面のボタンから）。
+   * パスが未設定なら null
+   */
+  async ensureTemplate(): Promise<TFile | null> {
+    const path = this.templatePath();
+    if (!path) return null;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) return existing;
+    const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    await this.ensureFolder(dir);
+    try {
+      return await this.app.vault.create(path, PROJECT_TEMPLATE_SAMPLE);
+    } catch (e) {
+      const raced = this.app.vault.getAbstractFileByPath(path);
+      if (raced instanceof TFile) return raced;
+      console.error(e);
+      return null;
+    }
   }
 
   /** プロジェクトノート自身のタスクブロック（見出し + メタ行）を探す */
@@ -355,6 +595,17 @@ export class ProjectStore {
     if (!(file instanceof TFile)) return null;
     const content = await this.app.vault.cachedRead(file);
     return this.findSelf(content)?.block.done ?? null;
+  }
+
+  /** プロジェクト自身の状態（完了 + 期日・チケット・ドキュメント）を1回の読み込みで取る */
+  async selfState(linktext: string): Promise<{ done: boolean | null; fields: ProjectFields } | null> {
+    const file = this.resolveFile(linktext);
+    if (!(file instanceof TFile)) return null;
+    const content = await this.app.vault.cachedRead(file);
+    return {
+      done: this.findSelf(content)?.block.done ?? null,
+      fields: extractProjectFields(content),
+    };
   }
 
   /** プロジェクト自身のメタ行の完了を切り替える。メタ行が無い手作りのノートには書き足す */

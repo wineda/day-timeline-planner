@@ -9,7 +9,7 @@ import {
 import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, migrateNote } from "./store";
 import { RecurringModal } from "./recurring";
 import { RecurringManagerView, VIEW_TYPE_RECURRING } from "./recurring-view";
-import { TaskModal } from "./modal";
+import { ProjectCreateModal, TaskModal } from "./modal";
 import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
 import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
@@ -18,6 +18,8 @@ import { buildWeeklyReport, type ReportDay } from "./report";
 import {
   ProjectStore,
   buildTaskListSection,
+  knownGroupNames,
+  projectDisplayName,
   summarize,
   upsertTaskListSection,
   type ProjectChild,
@@ -208,6 +210,15 @@ export default class DayTimelinePlugin extends Plugin {
 
     // プロジェクト
     this.addCommand({
+      id: "project-create",
+      name: "新しいプロジェクトを作成",
+      checkCallback: (checking) => {
+        if (!this.projects) return false;
+        if (!checking) this.openNewProjectModal();
+        return true;
+      },
+    });
+    this.addCommand({
       id: "projects-update-notes",
       name: "プロジェクトノートのタスク一覧を更新（すべて）",
       checkCallback: (checking) => {
@@ -311,6 +322,35 @@ export default class DayTimelinePlugin extends Plugin {
           new Notice("Inbox に追加できませんでした: " + String(e));
         }
         for (const v of this.timelineViews()) v.reloadInbox();
+      },
+    }).open();
+  }
+
+  /**
+   * 新しいプロジェクトを作るダイアログ（パネルの＋ボタン・コマンドから）。
+   * テンプレート（設定「プロジェクトのテンプレート」）があればそこから作り、ノートを開く
+   */
+  openNewProjectModal(initialGroup?: string | null): void {
+    const projects = this.projects;
+    if (!projects) {
+      new Notice("プロジェクトはタスクブロック形式のときだけ使えます");
+      return;
+    }
+    const tplPath = projects.templatePath();
+    const hasTemplate = !!tplPath && !!this.app.vault.getAbstractFileByPath(tplPath);
+    new ProjectCreateModal(this.app, {
+      groups: knownGroupNames(projects.list(), this.settings.projectGroups.map((g) => g.name)),
+      initialGroup,
+      templatePath: hasTemplate ? tplPath : null,
+      onSubmit: async (name, group) => {
+        const link = await projects.create(name, group);
+        if (!link) {
+          new Notice("プロジェクトを作成できませんでした");
+          return;
+        }
+        new Notice(`プロジェクト「${projectDisplayName(link)}」を作成しました`);
+        for (const v of this.timelineViews()) void v.reloadInbox();
+        await this.openProject(link);
       },
     }).open();
   }
@@ -551,11 +591,14 @@ export default class DayTimelinePlugin extends Plugin {
       }
     }
     const sums = refs.map((r) => summarize(r, children.get(r.linktext + ".md") ?? []));
-    // プロジェクト自身の完了はノートを読んで正確に判定する（書き込み直後のキャッシュ遅れを避ける）
+    // プロジェクト自身の完了と期日・チケット・ドキュメントはノートを読んで判定する
+    // （書き込み直後のキャッシュ遅れを避ける）
     await Promise.all(
       sums.map(async (s) => {
         try {
-          s.done = (await projects.isDone(s.ref.linktext)) === true;
+          const st = await projects.selfState(s.ref.linktext);
+          s.done = st?.done === true;
+          s.fields = st?.fields;
         } catch (e) {
           console.error(e);
         }
