@@ -1628,6 +1628,25 @@
   flex-wrap: wrap;
   justify-content: flex-start;
 }
+
+/* ---------- スマホ（Obsidian の .is-phone）のダイアログ調整 ----------
+   Obsidian のスマホ用CSSは設定行を縦積みにし、input を幅100%に広げる
+   （.is-phone .setting-item-control input { width: 100% }）。
+   複数の入力を横に並べる行はそのままだとはみ出して編集しづらいので、
+   1行に収まるよう幅の配分を戻す（詳細度でこちらを勝たせる） */
+.is-phone .dt-modal .setting-item-control input.dt-time-input {
+  width: auto;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.is-phone .dt-modal .setting-item-control input.dt-title-input,
+.is-phone .dt-modal .setting-item-control input.dt-date-field,
+.is-phone .dt-modal .setting-item-control input.dt-actual-input,
+.is-phone .dt-modal .setting-item-control input.dt-ticket-input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .dt-tag-chips {
   display: flex;
   flex-wrap: wrap;

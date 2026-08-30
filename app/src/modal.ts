@@ -1,4 +1,4 @@
-import { App, DropdownComponent, Modal, Notice, Setting, moment, setIcon } from "obsidian";
+import { App, DropdownComponent, Modal, Notice, Platform, Setting, moment, setIcon } from "obsidian";
 import type { TaskDraft } from "./model";
 import { projectDisplayName, type ProjectRef } from "./project";
 import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
@@ -230,12 +230,16 @@ export class TaskModal extends Modal {
     }
 
     // ---- 時間・実績 ----
-    // 時刻の候補リスト（入力欄をクリックすると選べる）
-    const listId = "dt-times-" + Math.random().toString(36).slice(2, 8);
-    const datalist = contentEl.createEl("datalist", { attr: { id: listId } });
-    const step = Math.max(this.opts.snapMinutes, 15);
-    for (let m = 0; m <= 1440; m += step) {
-      datalist.createEl("option", { attr: { value: minutesToHHMM(m) } });
+    // 時刻の候補リスト（入力欄をクリックすると選べる）。
+    // モバイルは OS の時刻ピッカー（type=time）を使うので出さない
+    let listId: string | null = null;
+    if (!Platform.isMobile) {
+      listId = "dt-times-" + Math.random().toString(36).slice(2, 8);
+      const datalist = contentEl.createEl("datalist", { attr: { id: listId } });
+      const step = Math.max(this.opts.snapMinutes, 15);
+      for (let m = 0; m <= 1440; m += step) {
+        datalist.createEl("option", { attr: { value: minutesToHHMM(m) } });
+      }
     }
 
     const timeSetting = new Setting(contentEl).setName("時間");
@@ -247,7 +251,8 @@ export class TaskModal extends Modal {
           this.updateHint();
         });
       t.inputEl.addClass("dt-time-input");
-      t.inputEl.setAttr("list", listId);
+      setupTimeInput(t.inputEl);
+      if (listId) t.inputEl.setAttr("list", listId);
       t.inputEl.addEventListener("keydown", onKey);
     });
     timeSetting.controlEl.createSpan({ text: "〜", cls: "dt-modal-tilde" });
@@ -259,7 +264,8 @@ export class TaskModal extends Modal {
           this.updateHint();
         });
       t.inputEl.addClass("dt-time-input");
-      t.inputEl.setAttr("list", listId);
+      setupTimeInput(t.inputEl);
+      if (listId) t.inputEl.setAttr("list", listId);
       t.inputEl.addEventListener("keydown", onKey);
     });
     if (this.opts.allowUnscheduled) {
@@ -993,8 +999,9 @@ export class TaskModal extends Modal {
       return { error: "時刻は 09:00 のように入力してください" };
     }
     const start = parseTimeInput(this.startText);
-    const end = parseTimeInput(this.endText);
+    let end = parseTimeInput(this.endText);
     if (start === null || end === null) return { error: "時刻は 09:00 のように入力してください" };
+    end = endOfDayFix(start, end);
     if (end <= start) return { error: "終了時刻は開始時刻より後にしてください" };
     return { start, end };
   }
@@ -1083,6 +1090,23 @@ export class TaskModal extends Modal {
       owner: this.opts.owners?.length ? this.owner : undefined,
     };
   }
+}
+
+/**
+ * 時刻の入力欄をモバイル向けに調える: OS の時刻ピッカー（type="time"）にする。
+ * スマホのフルキーボードで "09:00" を打つのは大変で、実質編集できなかったため。
+ * デスクトップは自由入力（"0930" "9" なども可）のまま。
+ * ピッカーでは 24:00 を選べないので、終了時刻の解釈側で 0:00 を「翌0時」とみなす
+ * （endOfDayFix）。type=time は値が "HH:MM" 形式でないと表示されないが、
+ * 値はすべて minutesToHHMM で作っているので問題ない
+ */
+export function setupTimeInput(el: HTMLInputElement): void {
+  if (Platform.isMobile) el.type = "time";
+}
+
+/** 終了時刻の 0:00 を「翌0時（24:00）」とみなす（モバイルのピッカーで一日の終わりを選べるように） */
+export function endOfDayFix(start: number, end: number): number {
+  return end === 0 && start > 0 ? 1440 : end;
 }
 
 /** 実績の時間帯を入力欄の文字列に */

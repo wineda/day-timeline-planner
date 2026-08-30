@@ -15,9 +15,11 @@ import type {
   TagColor,
 } from "./settings";
 import {
+  endOfDayFix,
   joinTitleAndTags,
   normalizeTagChoices,
   renderTagChips,
+  setupTimeInput,
   splitKnownTags,
 } from "./modal";
 import { dateKey, formatDuration, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
@@ -678,6 +680,7 @@ export class RuleForm {
           this.updateHint();
         });
       t.inputEl.addClass("dt-time-input");
+      setupTimeInput(t.inputEl);
       t.inputEl.addEventListener("keydown", onKey);
     });
     timeSetting.controlEl.createSpan({ text: "〜", cls: "dt-modal-tilde" });
@@ -689,6 +692,7 @@ export class RuleForm {
           this.updateHint();
         });
       t.inputEl.addClass("dt-time-input");
+      setupTimeInput(t.inputEl);
       t.inputEl.addEventListener("keydown", onKey);
     });
     timeSetting.addExtraButton((b) =>
@@ -741,8 +745,9 @@ export class RuleForm {
   private parse(): { start: number | null; end: number | null } | { error: string } {
     if (this.startText.trim() === "" && this.endText.trim() === "") return { start: null, end: null };
     const start = parseTimeInput(this.startText);
-    const end = parseTimeInput(this.endText);
+    let end = parseTimeInput(this.endText);
     if (start === null || end === null) return { error: "時刻は 09:00 のように入力してください" };
+    end = endOfDayFix(start, end);
     if (end <= start) return { error: "終了時刻は開始時刻より後にしてください" };
     return { start, end };
   }
