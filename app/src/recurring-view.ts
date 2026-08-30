@@ -20,6 +20,7 @@ import {
   reapplyOccurrence,
   setInstance,
   skipOccurrence,
+  stepsMatchRule,
   type OccurrenceInfo,
 } from "./recurring";
 import { ConfirmModal } from "./modal";
@@ -377,7 +378,8 @@ export class RecurringManagerView extends ItemView {
                 refresh();
               });
             const t = info.task;
-            if (t && (t.done || t.details.trim() || t.actual.length || t.steps.length)) {
+            // ステップは、ルールの共通のステップのまま（未チェック）なら「記録」とはみなさない
+            if (t && (t.done || t.details.trim() || t.actual.length || !stepsMatchRule(t.steps, rule))) {
               new ConfirmModal(
                 this.app,
                 `${moment(date).format("M月D日")} の「${t.title || "(無題)"}」には記録があります。ノートから削除して取り消しますか？`,

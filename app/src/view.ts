@@ -2920,6 +2920,8 @@ export class DayTimelineView extends ItemView {
               end: task.end,
               weekday: date.getDay(),
               project: task.project,
+              // タスクのステップを「共通のステップ」の初期値に（毎回未チェックで入る）
+              steps: task.steps.map((st) => st.text.trim()).filter(Boolean),
             },
             tagChoices: this.plugin.settings.tagColors,
             projects: this.plugin.projects?.list(),
