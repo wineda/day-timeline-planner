@@ -1125,7 +1125,9 @@ export class DayTimelineView extends ItemView {
       const groupHead = list.createDiv("dt-project-group");
       const groupChev = groupHead.createDiv("dt-project-chevron");
       setIcon(groupChev, collapsed ? "chevron-right" : "chevron-down");
-      const icon = g.name !== null ? groupIcons.get(g.name) : undefined;
+      // グループごとの指定があればそれ、無ければ既定のアイコン（未分類は常に既定）
+      const custom = g.name !== null ? groupIcons.get(g.name) : undefined;
+      const icon = custom ?? this.plugin.settings.defaultGroupIcon.trim();
       if (icon) {
         const iconEl = groupHead.createSpan("dt-project-group-icon");
         renderGroupIcon(iconEl, icon);
@@ -1155,6 +1157,12 @@ export class DayTimelineView extends ItemView {
     const row = container.createDiv("dt-project-row");
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
+    // グループ見出しと見分けるためのアイコン（設定「プロジェクトのアイコン」。空欄なら出さない）
+    const projectIcon = this.plugin.settings.defaultProjectIcon.trim();
+    if (projectIcon) {
+      const iconEl = row.createSpan("dt-project-icon");
+      renderGroupIcon(iconEl, projectIcon);
+    }
     const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     const total = sum.children.length;
     const stats = row.createSpan({ cls: "dt-project-stats" });
