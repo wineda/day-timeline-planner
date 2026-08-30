@@ -7,26 +7,11 @@
   overflow: hidden;
 }
 
-/* ---------- ヘッダー ---------- */
-.dt-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex: 0 0 auto;
-}
-
-.dt-nav,
-.dt-actions {
+/* ---------- ツールバー（タイムラインの直上の1行） ---------- */
+.dt-nav {
   display: flex;
   align-items: center;
   gap: 2px;
-}
-/* 日付ナビをヘッダーからタイムライン側へ移したぶん、右端の操作ボタンは自力で右へ寄せる */
-.dt-header .dt-actions {
-  margin-left: auto;
 }
 
 .dt-icon-btn {
@@ -108,18 +93,12 @@
   color: var(--text-on-accent);
 }
 
-/* 表示する時間の幅（4h/8h/12h）と予実の切替。月表示では意味が無いので隠す */
-.dt-view.is-month .dt-zoom,
-.dt-view.is-month .dt-pa {
-  display: none;
-}
-.dt-pa.is-hidden {
-  display: none;
-}
-
-/* 表示範囲（3日・週）の予実合計 */
+/* 表示範囲（3日・週）の予実合計（ツールバーの日付ラベルの隣） */
 .dt-range-total {
   display: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   white-space: nowrap;
@@ -129,51 +108,35 @@
   display: inline-block;
 }
 
-/* メンバー（他の人の予定）の表示切替チップ */
-.dt-members {
-  display: none;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-}
-.dt-members.is-visible {
-  display: flex;
-}
-.dt-member-chip {
+/* ズーム・予実・メンバーをまとめた「表示 ▾」メニューのボタン */
+.dt-view-menu-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 2px;
   height: auto;
   min-height: 0;
-  padding: 2px 9px 2px 6px;
-  border-radius: var(--radius-l);
+  padding: 2px 6px 2px 10px;
+  line-height: 1.6;
   font-size: var(--font-ui-smaller);
-  background: transparent;
   border: 1px solid var(--background-modifier-border);
-  box-shadow: none;
+  border-radius: var(--radius-s);
+  background: transparent;
   color: var(--text-muted);
+  box-shadow: none;
   cursor: pointer;
 }
-.dt-member-chip:hover {
+.dt-view-menu-btn:hover {
   background: var(--background-modifier-hover);
+  color: var(--text-normal);
   box-shadow: none;
 }
-.dt-member-chip.is-on {
-  color: var(--text-normal);
-  border-color: var(--dt-member-color, var(--background-modifier-border));
+.dt-menu-caret {
+  display: flex;
+  align-items: center;
 }
-.dt-member-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--dt-member-color, var(--text-faint));
-  opacity: 0.35;
-}
-.dt-member-chip.is-on .dt-member-dot {
-  opacity: 1;
-}
-.dt-member-all {
-  padding: 2px 9px;
+.dt-menu-caret svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* 予実モードの予定バー: 輪郭 + 薄い塗りにして「枠」に見せる（実績が主役） */
@@ -306,9 +269,6 @@
   color: #fff;
   animation: dt-blink 1s steps(2, start) infinite;
 }
-.dt-icon-btn.is-hidden {
-  display: none;
-}
 @keyframes dt-blink {
   to {
     visibility: hidden;
@@ -381,14 +341,19 @@
   flex-direction: column;
 }
 
-/* 日付ナビ（< 今日 > と日付ラベル）: タイムラインの直上に置く */
-.dt-date-bar {
+/* ツールバー（日付ナビ・モード切替・メニュー）: タイムラインの直上に1行 */
+.dt-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--background-modifier-border);
   flex: 0 0 auto;
+}
+/* 左の日付グループと右のコントロール群の間の伸びる余白 */
+.dt-toolbar-spacer {
+  flex: 1 1 0;
 }
 
 /* ---------- Inbox（日付を決めていないタスク）: 左のサイドバー ---------- */
@@ -911,11 +876,9 @@
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
   display: none;
 }
-/* パネル表示中はタイムライン（日付ナビごと）を隠し、サイドバーを全幅に広げる。
-   タイムラインにしか効かないズーム・予実の切替も（月表示と同様に）隠す */
-.dt-view.is-narrow.is-pane-panel .dt-main,
-.dt-view.is-narrow.is-pane-panel .dt-zoom,
-.dt-view.is-narrow.is-pane-panel .dt-pa {
+/* パネル表示中はタイムライン（ツールバーごと）を隠し、サイドバーを全幅に広げる。
+   タイムラインへはパネルのヘッダーの戻るボタンで切り替える */
+.dt-view.is-narrow.is-pane-panel .dt-main {
   display: none;
 }
 .dt-view.is-narrow.is-pane-panel .dt-inbox.is-visible {
