@@ -1153,6 +1153,13 @@ export class DayTimelineView extends ItemView {
     this.setAllProjectsExpanded(!this.areAllProjectsExpanded());
   }
 
+  /** プロジェクト一覧をグループごとのツリー ⇄ 階層なしのフラットな一覧で切り替える（パネルのボタン・コマンドから） */
+  toggleProjectsFlatList(): void {
+    this.plugin.settings.projectsFlatList = !this.plugin.settings.projectsFlatList;
+    void this.plugin.persistSettings();
+    this.renderInbox();
+  }
+
   /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない */
   private renderProjects(): void {
     const active = this.projectData.filter((s) => !s.done);
@@ -1170,6 +1177,19 @@ export class DayTimelineView extends ItemView {
         () => this.setAllProjectsExpanded(!allExpanded)
       );
       toggleAll.addClass("dt-inbox-open");
+      // グループ分けしているときだけ: ツリー ⇄ フラットな一覧の切り替え
+      if (active.some((s) => s.ref.group)) {
+        const flat = this.plugin.settings.projectsFlatList;
+        const flatBtn = this.iconButton(
+          head,
+          flat ? "list-tree" : "list",
+          flat
+            ? "グループごとのツリーで表示"
+            : "グループの見出しを出さずフラットに一覧（並びはグループ順のまま）",
+          () => this.toggleProjectsFlatList()
+        );
+        flatBtn.addClass("dt-inbox-open");
+      }
       const hideDone = this.plugin.settings.projectsHideDone;
       const hideBtn = this.iconButton(
         head,
@@ -1204,9 +1224,14 @@ export class DayTimelineView extends ItemView {
       active,
       this.plugin.settings.projectGroups.map((x) => x.name)
     );
-    // どのプロジェクトにもグループが無ければ、今までどおりのフラットな一覧
-    if (!groups.some((g) => g.name !== null)) {
-      for (const sum of active) this.renderProjectRow(list, sum);
+    const hasGroups = groups.some((g) => g.name !== null);
+    // どのプロジェクトにもグループが無ければ今までどおりのフラットな一覧。
+    // 「フラットな一覧で表示」がオンのときも見出しを出さず、グループ順に並べたまま平らにする
+    // （グループはツールチップで分かる）
+    if (!hasGroups || this.plugin.settings.projectsFlatList) {
+      for (const g of groups) {
+        for (const sum of g.items) this.renderProjectRow(list, sum, hasGroups);
+      }
       return;
     }
     const groupIcons = this.groupIconMap();
@@ -1240,8 +1265,8 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する */
-  private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
+  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する。showGroup でツールチップにグループ名を足す */
+  private renderProjectRow(container: HTMLElement, sum: ProjectSummary, showGroup = false): void {
     const key = sum.ref.linktext;
     const expanded = this.expandedProjects.has(key);
 
@@ -1264,7 +1289,9 @@ export class DayTimelineView extends ItemView {
     );
     row.setAttr(
       "aria-label",
-      `${sum.ref.name}\n${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
+      `${sum.ref.name}\n` +
+        (showGroup ? `グループ: ${sum.ref.group ?? "未分類"}\n` : "") +
+        `${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
         "クリックで展開、ドラッグでタイムラインに子タスクを作成、右クリックでグループを変更"
     );
     const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>

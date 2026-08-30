@@ -205,6 +205,8 @@ export interface DayTimelineSettings {
   showProjects: boolean;
   /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
   projectsHideDone: boolean;
+  /** プロジェクトパネルでグループの見出し（階層）を出さずフラットな一覧にするか。並びはグループ順のまま */
+  projectsFlatList: boolean;
   /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
   projectGroups: ProjectGroupSetting[];
   /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
@@ -266,6 +268,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxCollapsed: false,
   showProjects: true,
   projectsHideDone: false,
+  projectsFlatList: false,
   projectGroups: [],
   defaultGroupIcon: "folder",
   defaultProjectIcon: "milestone",
@@ -878,6 +881,19 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.projectsHideDone).onChange(async (v) => {
           s.projectsHideDone = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトをフラットな一覧で表示")
+      .setDesc(
+        "グループの見出し（階層）を出さず、プロジェクトだけを一覧します。並びはグループ順のまま" +
+          "（ツリーと同じ: 設定の表示順 → 名前順 → 未分類は末尾。各グループの中は名前順）。" +
+          "グループ名は行のツールチップで確認できます。パネルの一覧ボタンでも切り替えられます。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.projectsFlatList).onChange(async (v) => {
+          s.projectsFlatList = v;
           await save();
         })
       );
