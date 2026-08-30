@@ -810,7 +810,6 @@
   width: 100%;
   max-width: none;
   border-radius: var(--radius-s);
-  border-style: dashed;
   background: var(--background-primary);
 }
 .dt-reschedule-item .dt-tray-title {
