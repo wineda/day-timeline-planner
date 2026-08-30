@@ -1067,10 +1067,12 @@ export class DayTimelineView extends ItemView {
     const m = moment(this.date);
     if (this.mode === "day") {
       this.dateLabelEl.setText(m.format("YYYY年M月D日 (ddd)"));
+      this.dateLabelEl.setAttr("aria-label", "日付を選ぶ");
       this.dateLabelEl.toggleClass("is-today", isToday(this.date));
     } else if (this.mode === "month") {
       const now = new Date();
       this.dateLabelEl.setText(m.format("YYYY年M月"));
+      this.dateLabelEl.setAttr("aria-label", "日付を選ぶ");
       this.dateLabelEl.toggleClass(
         "is-today",
         now.getFullYear() === this.date.getFullYear() && now.getMonth() === this.date.getMonth()
@@ -1079,9 +1081,22 @@ export class DayTimelineView extends ItemView {
       const days = this.visibleDays();
       const a = moment(days[0]);
       const b = moment(days[days.length - 1]);
+      // 日ごとの日付は各列のヘッダーに出るので、ここは月だけの簡潔な表示にする
+      //（Google カレンダー方式）。「8月30日 〜 9月5日」のような表示は週によって長さが
+      // 変わり、狭い画面でツールバーの折り返しが変わってヘッダーがずれて見えていた
+      const label =
+        a.year() !== b.year()
+          ? `${a.format("YYYY年M月")}〜${b.format("YYYY年M月")}`
+          : a.month() !== b.month()
+            ? `${a.format("YYYY年M月")}〜${b.format("M月")}`
+            : a.format("YYYY年M月");
+      this.dateLabelEl.setText(label);
       const endFmt =
         a.year() !== b.year() ? "YYYY年M月D日" : a.month() !== b.month() ? "M月D日" : "D日";
-      this.dateLabelEl.setText(`${a.format("YYYY年M月D日")} 〜 ${b.format(endFmt)}`);
+      this.dateLabelEl.setAttr(
+        "aria-label",
+        `${a.format("YYYY年M月D日")} 〜 ${b.format(endFmt)}（日付を選ぶ）`
+      );
       this.dateLabelEl.toggleClass(
         "is-today",
         days.some((d) => isToday(d))
