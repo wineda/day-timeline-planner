@@ -18,6 +18,20 @@ export interface ProjectRef {
   name: string;
   /** ノート自身の完了チェックが付いているか（選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
   done?: boolean;
+  /** グループ名（frontmatter の group。無ければ null） */
+  group?: string | null;
+}
+
+/** プロジェクトノートの frontmatter でグループ名を持つキー */
+const GROUP_KEY = "group";
+
+/** frontmatter のグループ値を正規化。trim して空なら null（配列は先頭、数値は文字列として扱う） */
+function normalizeGroup(v: unknown): string | null {
+  if (Array.isArray(v)) v = v[0];
+  if (typeof v === "number") v = String(v);
+  if (typeof v !== "string") return null;
+  const g = v.trim();
+  return g || null;
 }
 
 /** プロジェクトに結びついた子タスク */
@@ -52,6 +66,70 @@ export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSum
     if (c.task.done) doneCount++;
   }
   return { ref, children, planMin, actMin, doneCount };
+}
+
+/** グループごとにまとめたプロジェクト（パネルのツリー用） */
+export interface ProjectGroup {
+  /** グループ名（null = 未分類） */
+  name: string | null;
+  items: ProjectSummary[];
+}
+
+/**
+ * プロジェクトをグループごとにまとめる。グループの並びは order（設定の表示順）が先、
+ * 載っていないものは名前順、グループなし（未分類）は常に末尾。
+ * 各グループ内は受け取った順（list() の名前順）のまま
+ */
+export function groupProjects(sums: ProjectSummary[], order: string[]): ProjectGroup[] {
+  const buckets = new Map<string | null, ProjectSummary[]>();
+  for (const s of sums) {
+    const g = s.ref.group ?? null;
+    const b = buckets.get(g);
+    if (b) b.push(s);
+    else buckets.set(g, [s]);
+  }
+  const pos = new Map(order.map((n, i) => [n.trim(), i] as const));
+  const names = [...buckets.keys()].filter((n): n is string => n !== null);
+  names.sort((a, b) => {
+    const pa = pos.get(a);
+    const pb = pos.get(b);
+    if (pa !== undefined || pb !== undefined) {
+      if (pa === undefined) return 1;
+      if (pb === undefined) return -1;
+      return pa - pb;
+    }
+    return a.localeCompare(b, "ja");
+  });
+  const out: ProjectGroup[] = names.map((n) => ({ name: n, items: buckets.get(n)! }));
+  const rest = buckets.get(null);
+  if (rest) out.push({ name: null, items: rest });
+  return out;
+}
+
+/**
+ * グループ名の候補（付け替えメニュー用）: 設定の並び順のもの（未使用でも出す）＋ 使用中のもの。
+ * 並びは groupProjects と同じ約束
+ */
+export function knownGroupNames(refs: { group?: string | null }[], order: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of order) {
+    const g = raw.trim();
+    if (g && !seen.has(g)) {
+      seen.add(g);
+      out.push(g);
+    }
+  }
+  const used: string[] = [];
+  for (const r of refs) {
+    const g = r.group ?? null;
+    if (g && !seen.has(g)) {
+      seen.add(g);
+      used.push(g);
+    }
+  }
+  used.sort((a, b) => a.localeCompare(b, "ja"));
+  return [...out, ...used];
 }
 
 /** 子タスクを日付順（Inbox は末尾）→ 開始時刻順に並べる */
@@ -186,7 +264,12 @@ export class ProjectStore {
     const out: ProjectRef[] = [];
     for (const f of folder.children) {
       if (f instanceof TFile && f.extension === "md") {
-        out.push({ linktext: f.path.replace(/\.md$/, ""), name: f.basename, done: this.isDoneCached(f) });
+        out.push({
+          linktext: f.path.replace(/\.md$/, ""),
+          name: f.basename,
+          done: this.isDoneCached(f),
+          group: normalizeGroup(this.app.metadataCache.getFileCache(f)?.frontmatter?.[GROUP_KEY]),
+        });
       }
     }
     return out.sort((a, b) => a.name.localeCompare(b.name, "ja"));
@@ -290,6 +373,23 @@ export class ProjectStore {
       return next;
     });
     return ok;
+  }
+
+  /** プロジェクトのグループを付け替える（frontmatter の group を書き換える。null で外す） */
+  async setGroup(linktext: string, group: string | null): Promise<boolean> {
+    const file = this.resolveFile(linktext);
+    if (!(file instanceof TFile)) return false;
+    const g = group?.trim() || null;
+    try {
+      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        if (g) fm[GROUP_KEY] = g;
+        else delete fm[GROUP_KEY];
+      });
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
   }
 
   /** プロジェクトノートを開く */
