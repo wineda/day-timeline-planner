@@ -1531,6 +1531,35 @@
   }
 }
 
+/* 重なりで分割されてさらに狭くなったレーン（モバイルの週表示で2つ重なった時など）は
+   1行に1文字ずつの縦積みになる。左の縦線と左右の余白が文字の幅を食って
+   右半分が欠けていたので、線と余白を削って文字を中央に揃え、縦書き風に読めるようにする */
+@container (max-width: 40px) {
+  .dt-event,
+  .dt-event.is-member {
+    border-left: none;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+  /* 他の人の予定の色線は、幅を食わない上端の線に置き換えて区別を残す */
+  .dt-event.is-member {
+    border-top: 3px solid var(--dt-member-color, var(--text-faint));
+  }
+  .dt-event .dt-event-title {
+    text-align: center;
+    word-break: break-all;
+    -webkit-line-clamp: 24;
+  }
+  /* 高さが低いブロックも 1 行 1 文字で折り返して欠けないようにする */
+  .dt-event.is-short .dt-event-title {
+    white-space: normal;
+  }
+  .dt-event .dt-event-preview,
+  .dt-event .dt-owner-label {
+    display: none;
+  }
+}
+
 /* ドラッグ選択中の仮ブロック */
 .dt-ghost {
   position: absolute;
