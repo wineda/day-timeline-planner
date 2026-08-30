@@ -63,6 +63,9 @@ interface DayData {
 
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 
+/** 再スケジュール欄のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
+const RESCHEDULE_LOOKBACK_DAYS = 30;
+
 export class DayTimelineView extends ItemView {
   private plugin: DayTimelinePlugin;
   /** 基準日。日表示ではこの日、週表示ではこの日を含む週を表示する */
@@ -91,6 +94,8 @@ export class DayTimelineView extends ItemView {
   private bannerEl!: HTMLElement;
   private inboxEl!: HTMLElement;
   private inboxTasks: Task[] = [];
+  /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用のキャッシュ） */
+  private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
   /** プロジェクトの集計（パネル用のキャッシュ） */
   private projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
@@ -604,6 +609,15 @@ export class DayTimelineView extends ItemView {
         }
       }
     }
+    // 表示範囲の外でも、再スケジュール欄が見ている過去のノートなら読み直す
+    const blockStore = this.plugin.blockStore();
+    if (blockStore && this.plugin.settings.showUnscheduledTray) {
+      const d = blockStore.dateFromPath(path);
+      if (d) {
+        const today = startOfDay(new Date());
+        if (d <= today && d >= addDays(today, -RESCHEDULE_LOOKBACK_DAYS)) this.reloadDebounced();
+      }
+    }
   }
 
   private async reload(): Promise<void> {
@@ -656,6 +670,12 @@ export class DayTimelineView extends ItemView {
       })
     );
     this.data = new Map(loaded);
+    try {
+      this.pastUnscheduled = await this.loadPastUnscheduled();
+    } catch (e) {
+      console.error(e);
+      this.pastUnscheduled = [];
+    }
     this.renderHeader();
     this.renderBanner();
     this.renderInbox();
@@ -1134,40 +1154,76 @@ export class DayTimelineView extends ItemView {
               ? moment(child.date).format("M月D日 (ddd)") +
                 (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
               : "日付は未定") +
-            "\nクリックでその日へ移動、右クリックでメニュー"
+            (child.date
+              ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
+              : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
         );
-        item.addEventListener("click", () => {
-          if (child.date === null) return; // 日付未定のタスクは移動先の日が無い
-          this.setDate(child.date);
-        });
-        item.addEventListener("contextmenu", (e: MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (child.date !== null) this.showTaskMenu(child.date, t, e);
-        });
+        if (child.date === null) {
+          // 日付未定: タイムラインへドラッグで日時を割り当て、クリックで編集できるようにする
+          this.attachChipDrag(
+            item,
+            ".dt-tray-check",
+            () => this.displayTitle(t),
+            (date, start, end) =>
+              void this.commitInboxToDay(t, date, { ...this.draftOf(t), start, end }),
+            () => this.openInboxEditModal(t)
+          );
+          item.addEventListener("contextmenu", (e: MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.showInboxTaskMenu(t, e);
+          });
+        } else {
+          const childDate = child.date;
+          this.attachChipDrag(
+            item,
+            ".dt-tray-check",
+            () => this.displayTitle(t),
+            (date, start, end) => {
+              const draft = { ...this.draftOf(t), start, end };
+              if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
+              else void this.commitMove(childDate, t, date, draft);
+            },
+            () => this.setDate(childDate)
+          );
+          item.addEventListener("contextmenu", (e: MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.showTaskMenu(childDate, t, e);
+          });
+        }
       }
     }
   }
 
-  /** プロジェクト行: クリックで展開、タイムラインへドラッグで子タスクを作成 */
-  private attachProjectDrag(row: HTMLElement, sum: ProjectSummary, onClick: () => void): void {
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-
-    row.addEventListener("pointerdown", (e: PointerEvent) => {
+  /**
+   * サイドバーのチップをタイムラインへドラッグする共通処理。
+   * ドラッグ中はゴーストを出し、グリッドに落とすと onDrop(日, 開始, 終了)、
+   * 動かさずに離すと onClick を呼ぶ
+   */
+  private attachChipDrag(
+    chip: HTMLElement,
+    ignoreSelector: string,
+    ghostLabel: () => string,
+    onDrop: (date: Date, start: number, end: number) => void,
+    onClick: () => void
+  ): void {
+    chip.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest(".dt-icon-btn, .dt-project-chevron")) return;
+      if ((e.target as HTMLElement).closest(ignoreSelector)) return;
       e.preventDefault();
 
+      const s = this.plugin.settings;
+      const dayStart = s.startHour * 60;
+      const dayEnd = s.endHour * 60;
       let ghost: HTMLElement | null = null;
       let dropStart: number | null = null;
       let dropCol: DayColumn | null = null;
       const duration = s.defaultDurationMinutes;
 
-      this.startDrag(row, e, {
+      this.startDrag(chip, e, {
         onMove: (_dy, ev) => {
-          row.addClass("is-dragging");
+          chip.addClass("is-dragging");
           const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
           if (!over) {
             dropStart = null;
@@ -1191,39 +1247,81 @@ export class DayTimelineView extends ItemView {
           ghost.style.height =
             Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
           ghost.setText(
-            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${sum.ref.name} の新しいタスク`
+            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${ghostLabel()}`
           );
         },
         onEnd: (moved) => {
-          row.removeClass("is-dragging");
+          chip.removeClass("is-dragging");
           ghost?.remove();
           if (!moved) {
             onClick();
             return;
           }
           if (dropStart !== null && dropCol) {
-            this.openCreateModal(dropCol.date, dropStart, Math.min(dropStart + duration, dayEnd), undefined, {
-              project: sum.ref.linktext,
-            });
+            onDrop(dropCol.date, dropStart, Math.min(dropStart + duration, dayEnd));
           }
         },
         onCancel: () => {
-          row.removeClass("is-dragging");
+          chip.removeClass("is-dragging");
           ghost?.remove();
         },
       });
     });
   }
 
+  /** プロジェクト行: クリックで展開、タイムラインへドラッグで子タスクを作成 */
+  private attachProjectDrag(row: HTMLElement, sum: ProjectSummary, onClick: () => void): void {
+    this.attachChipDrag(
+      row,
+      ".dt-icon-btn, .dt-project-chevron",
+      () => `${sum.ref.name} の新しいタスク`,
+      (date, start, end) =>
+        this.openCreateModal(date, start, end, undefined, { project: sum.ref.linktext }),
+      onClick
+    );
+  }
+
   /** 未スケジュールのタスクのトレイ */
-  /** 再スケジュール欄に出すタスク: 表示中の日の、時刻を決めていないタスク（日付順）。
+  /** 再スケジュール欄に出すタスク: 表示中の日の時刻を決めていないタスクに加えて、
+   * 表示範囲の外（過去 RESCHEDULE_LOOKBACK_DAYS 日以内）に取り残された時刻なしタスク。
+   * 週をまたいでも取り残しが消えないようにする。いずれも日付順。
    * 月表示では時刻なしのタスクもマスの中に出すので欄は使わない */
   private rescheduleGroups(): { date: Date; tasks: Task[] }[] {
     const s = this.plugin.settings;
     if (!this.isTimeline() || !s.showUnscheduledTray || !this.plugin.store.supportsUnscheduled) return [];
-    return this.columns
+    const visible = this.columns
       .map((c) => ({ date: c.date, tasks: this.dataFor(c.date).tasks.filter((t) => !isScheduled(t)) }))
       .filter((g) => g.tasks.length > 0);
+    // 過去の取り残しを先頭に（古い日付から）。表示中の日は visible 側にだけ出る
+    return [...this.pastUnscheduled, ...visible];
+  }
+
+  /**
+   * 表示範囲の外に取り残された時刻なしタスクを読む（再スケジュール欄用）。
+   * 今日から過去 RESCHEDULE_LOOKBACK_DAYS 日のノートを見る。表示中の日は通常の
+   * 読み込みが拾うので除外。完了・持ち越し済み [>] は「片付いた」ものなので出さない
+   */
+  private async loadPastUnscheduled(): Promise<{ date: Date; tasks: Task[] }[]> {
+    const s = this.plugin.settings;
+    const store = this.plugin.blockStore();
+    if (!store || !this.isTimeline() || !s.showUnscheduledTray) return [];
+    const visible = new Set(this.visibleDays().map(dateKey));
+    const today = startOfDay(new Date());
+    const out: { date: Date; tasks: Task[] }[] = [];
+    for (let i = RESCHEDULE_LOOKBACK_DAYS; i >= 0; i--) {
+      const date = addDays(today, -i);
+      if (visible.has(dateKey(date))) continue;
+      if (!store.getFile(date)) continue; // ノートの無い日は読まない
+      try {
+        const tasks = (await store.load(date)).tasks.filter(
+          (t) => !isScheduled(t) && !t.done && !t.forwarded
+        );
+        if (tasks.length) out.push({ date, tasks });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return out;
   }
 
   /** 再スケジュール欄（サイドバーのプロジェクトの下）: 時刻を決めていないタスクを縦に一覧。
@@ -1242,6 +1340,7 @@ export class DayTimelineView extends ItemView {
     addBtn.addClass("dt-reschedule-add");
 
     const list = wrap.createDiv("dt-reschedule-list");
+    const today = startOfDay(new Date());
     for (const g of groups) {
       for (const t of g.tasks) {
         const item = list.createDiv("dt-tray-chip dt-reschedule-item");
@@ -1257,10 +1356,12 @@ export class DayTimelineView extends ItemView {
           e.stopPropagation();
           void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
         });
-        item.createSpan({
+        const dateEl = item.createSpan({
           cls: "dt-project-child-date is-unscheduled",
           text: `${g.date.getMonth() + 1}/${g.date.getDate()}`,
         });
+        // 過去の取り残しは赤系で目立たせる
+        if (g.date < today) dateEl.addClass("is-overdue");
         const owner = this.ownerName(t);
         if (owner) item.createSpan({ cls: "dt-owner-label", text: owner });
         item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
@@ -2103,72 +2204,17 @@ export class DayTimelineView extends ItemView {
 
   /** トレイのチップ: クリックで編集、タイムラインへドラッグで時刻を割り当て */
   private attachTrayInteractions(chip: HTMLElement, date: Date, task: Task): void {
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-
-    chip.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest(".dt-tray-check")) return;
-      e.preventDefault();
-
-      let ghost: HTMLElement | null = null;
-      let dropStart: number | null = null;
-      let dropCol: DayColumn | null = null;
-      const duration = s.defaultDurationMinutes;
-
-      this.startDrag(chip, e, {
-        onMove: (_dy, ev) => {
-          chip.addClass("is-dragging");
-          const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
-          if (!over) {
-            dropStart = null;
-            dropCol = null;
-            ghost?.remove();
-            ghost = null;
-            return;
-          }
-          if (over !== dropCol) {
-            ghost?.remove();
-            ghost = null;
-            dropCol = over;
-          }
-          dropStart = clamp(
-            this.snapFloor(this.clientYToMinutes(ev.clientY)),
-            dayStart,
-            Math.max(dayStart, dayEnd - duration)
-          );
-          if (!ghost) ghost = over.eventsEl.createDiv("dt-ghost");
-          ghost.style.top = this.minutesToPx(dropStart) + "px";
-          ghost.style.height =
-            Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
-          ghost.setText(
-            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${this.displayTitle(task)}`
-          );
-        },
-        onEnd: (moved) => {
-          chip.removeClass("is-dragging");
-          ghost?.remove();
-          if (!moved) {
-            this.openEditModal(date, task);
-            return;
-          }
-          if (dropStart !== null && dropCol) {
-            const draft = {
-              ...this.draftOf(task),
-              start: dropStart,
-              end: Math.min(dropStart + duration, dayEnd),
-            };
-            if (isSameDay(dropCol.date, date)) void this.commitUpdate(date, task, draft);
-            else void this.commitMove(date, task, dropCol.date, draft);
-          }
-        },
-        onCancel: () => {
-          chip.removeClass("is-dragging");
-          ghost?.remove();
-        },
-      });
-    });
+    this.attachChipDrag(
+      chip,
+      ".dt-tray-check",
+      () => this.displayTitle(task),
+      (dropDate, start, end) => {
+        const draft = { ...this.draftOf(task), start, end };
+        if (isSameDay(dropDate, date)) void this.commitUpdate(date, task, draft);
+        else void this.commitMove(date, task, dropDate, draft);
+      },
+      () => this.openEditModal(date, task)
+    );
 
     chip.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
@@ -2179,105 +2225,54 @@ export class DayTimelineView extends ItemView {
 
   /** Inbox のチップ: クリックで編集、タイムラインへドラッグでその日に移して時刻を割り当て */
   private attachInboxInteractions(chip: HTMLElement, task: Task): void {
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-
-    chip.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest(".dt-tray-check")) return;
-      e.preventDefault();
-
-      let ghost: HTMLElement | null = null;
-      let dropStart: number | null = null;
-      let dropCol: DayColumn | null = null;
-      const duration = s.defaultDurationMinutes;
-
-      this.startDrag(chip, e, {
-        onMove: (_dy, ev) => {
-          chip.addClass("is-dragging");
-          const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
-          if (!over) {
-            dropStart = null;
-            dropCol = null;
-            ghost?.remove();
-            ghost = null;
-            return;
-          }
-          if (over !== dropCol) {
-            ghost?.remove();
-            ghost = null;
-            dropCol = over;
-          }
-          dropStart = clamp(
-            this.snapFloor(this.clientYToMinutes(ev.clientY)),
-            dayStart,
-            Math.max(dayStart, dayEnd - duration)
-          );
-          if (!ghost) ghost = over.eventsEl.createDiv("dt-ghost");
-          ghost.style.top = this.minutesToPx(dropStart) + "px";
-          ghost.style.height =
-            Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
-          ghost.setText(
-            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${this.displayTitle(task)}`
-          );
-        },
-        onEnd: (moved) => {
-          chip.removeClass("is-dragging");
-          ghost?.remove();
-          if (!moved) {
-            this.openInboxEditModal(task);
-            return;
-          }
-          if (dropStart !== null && dropCol) {
-            void this.commitInboxToDay(task, dropCol.date, {
-              ...this.draftOf(task),
-              start: dropStart,
-              end: Math.min(dropStart + duration, dayEnd),
-            });
-          }
-        },
-        onCancel: () => {
-          chip.removeClass("is-dragging");
-          ghost?.remove();
-        },
-      });
-    });
+    this.attachChipDrag(
+      chip,
+      ".dt-tray-check",
+      () => this.displayTitle(task),
+      (date, start, end) =>
+        void this.commitInboxToDay(task, date, { ...this.draftOf(task), start, end }),
+      () => this.openInboxEditModal(task)
+    );
 
     chip.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const menu = new Menu();
-      menu.addItem((i) => i.setTitle("編集").setIcon("pencil").onClick(() => this.openInboxEditModal(task)));
-      menu.addItem((i) =>
-        i
-          .setTitle(task.done ? "未完了に戻す" : "完了にする")
-          .setIcon("check")
-          .onClick(() => void this.commitInboxUpdate(task, { ...this.draftOf(task), done: !task.done }))
-      );
-      menu.addItem((i) =>
-        i
-          .setTitle("今日へ送る（未スケジュール）")
-          .setIcon("calendar")
-          .onClick(() => void this.commitInboxToDay(task, startOfDay(new Date())))
-      );
-      if (this.mode === "day" && !isToday(this.date)) {
-        menu.addItem((i) =>
-          i
-            .setTitle(`${moment(this.date).format("M月D日")} へ送る（未スケジュール）`)
-            .setIcon("calendar")
-            .onClick(() => void this.commitInboxToDay(task, this.date))
-        );
-      }
-      menu.addItem((i) =>
-        i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openInboxTaskInNote(task))
-      );
-      menu.addSeparator();
-      menu.addItem((i) =>
-        i.setTitle("削除").setIcon("trash").onClick(() => void this.commitInboxDelete(task))
-      );
-      menu.showAtMouseEvent(e);
+      this.showInboxTaskMenu(task, e);
     });
+  }
+
+  /** 日付未定（Inbox のノートにある）タスクの右クリックメニュー（Inbox・プロジェクトパネル共通） */
+  private showInboxTaskMenu(task: Task, e: MouseEvent): void {
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle("編集").setIcon("pencil").onClick(() => this.openInboxEditModal(task)));
+    menu.addItem((i) =>
+      i
+        .setTitle(task.done ? "未完了に戻す" : "完了にする")
+        .setIcon("check")
+        .onClick(() => void this.commitInboxUpdate(task, { ...this.draftOf(task), done: !task.done }))
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle("今日へ送る（未スケジュール）")
+        .setIcon("calendar")
+        .onClick(() => void this.commitInboxToDay(task, startOfDay(new Date())))
+    );
+    if (this.mode === "day" && !isToday(this.date)) {
+      menu.addItem((i) =>
+        i
+          .setTitle(`${moment(this.date).format("M月D日")} へ送る（未スケジュール）`)
+          .setIcon("calendar")
+          .onClick(() => void this.commitInboxToDay(task, this.date))
+      );
+    }
+    menu.addItem((i) =>
+      i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openInboxTaskInNote(task))
+    );
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i.setTitle("削除").setIcon("trash").onClick(() => void this.commitInboxDelete(task))
+    );
+    menu.showAtMouseEvent(e);
   }
 
   /** タスクの右クリックメニュー（タイムライン・トレイ共通） */
@@ -2448,7 +2443,7 @@ export class DayTimelineView extends ItemView {
       initial: { ...preset, title: preset?.title ?? "", start, end, done: false },
       snapMinutes: s.snapMinutes,
       allowUnscheduled: this.plugin.store.supportsUnscheduled,
-      dateLabel: this.mode !== "day" ? moment(date).format("M月D日 (ddd)") : undefined,
+      dateField: { value: dateKey(date) },
       tagChoices: s.tagColors,
       reminderDefault: this.plugin.blockStore() ? s.reminderDefaultMinutes : undefined,
       showDoneCondition: !!this.plugin.blockStore(),
@@ -2456,7 +2451,7 @@ export class DayTimelineView extends ItemView {
       owners: this.ownerChoices(),
       initialOwner: null,
       ...this.projectOptions(),
-      onSubmit: (data) => this.commitCreate(date, data),
+      onSubmit: (data, dateSel) => this.commitCreate(dateSel ?? date, data),
       onClose,
     }).open();
   }
@@ -2481,15 +2476,21 @@ export class DayTimelineView extends ItemView {
       snapMinutes: s.snapMinutes,
       allowUnscheduled: true,
       dateLabel: "日付未定",
+      dateField: {
+        value: null,
+        allowEmpty: true,
+        hint: "空のままなら日付を決めずに登録します",
+      },
       unscheduledHint: `時刻なし — 日付を決めずに登録します（プロジェクトパネルに「未定」として並びます。時刻を入れると ${dayLabel} に登録）`,
       tagChoices: s.tagColors,
       showDoneCondition: true,
       trackers: s.trackers,
       ...this.projectOptions(),
-      onSubmit: async (data) => {
-        // 時刻が入っていたら、これまでどおり表示中の日へ
-        if (data.start !== null && data.end !== null) {
-          await this.commitCreate(this.date, data);
+      onSubmit: async (data, dateSel) => {
+        // 日付を選んだらその日へ。選ばずに時刻だけ入れたら、これまでどおり表示中の日へ
+        const to = dateSel ?? (data.start !== null && data.end !== null ? this.date : null);
+        if (to) {
+          await this.commitCreate(to, data);
           return;
         }
         try {
@@ -2509,12 +2510,18 @@ export class DayTimelineView extends ItemView {
     let current = task;
     const wasDone = task.done;
     const serially = serialQueue();
+    // 日付を空にして「日付未定（Inbox）」へ戻せるのは、自分のタスクで Inbox があるときだけ
+    const allowClearDate = !!this.plugin.inbox && !task.owner;
     new TaskModal(this.app, {
       mode: "edit",
       initial: this.draftOf(task),
       snapMinutes: this.plugin.settings.snapMinutes,
       allowUnscheduled: this.plugin.store.supportsUnscheduled,
-      dateLabel: this.mode !== "day" ? moment(date).format("M月D日 (ddd)") : undefined,
+      dateField: {
+        value: dateKey(date),
+        allowEmpty: allowClearDate,
+        hint: allowClearDate ? "空にすると日付未定（Inbox）へ移します" : undefined,
+      },
       tagChoices: this.plugin.settings.tagColors,
       reminderDefault: this.plugin.blockStore() ? this.plugin.settings.reminderDefaultMinutes : undefined,
       showDoneCondition: !!this.plugin.blockStore(),
@@ -2524,15 +2531,40 @@ export class DayTimelineView extends ItemView {
       initialOwner: task.owner ?? null,
       ...this.projectOptions(),
       onAutoSave: async (data) => {
-        // 持ち主の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
+        // 持ち主・日付の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
         const next = await serially(() => this.commitAutoSave(date, current, data));
         if (next) current = next;
         return next !== null;
       },
-      onSubmit: (data) => serially(() => this.commitUpdate(date, current, data, wasDone)),
+      onSubmit: (data, dateSel) =>
+        serially(() => this.commitEditSubmit(date, current, data, dateSel, wasDone)),
       onDelete: () => serially(() => this.commitDelete(date, current)),
       onOpenNote: () => serially(() => this.openTaskInNote(date, current)),
     }).open();
+  }
+
+  /**
+   * 編集ダイアログを閉じたときの反映。日付欄が変わっていれば別の日のノートへ移す
+   * （空にしたときは Inbox の「日付未定」へ）
+   */
+  private async commitEditSubmit(
+    date: Date,
+    task: Task,
+    data: TaskDraft,
+    dateSel: Date | null | undefined,
+    wasDone: boolean
+  ): Promise<void> {
+    // 日付が変わっていない（または欄が無い）: これまでどおり
+    if (dateSel === undefined || (dateSel !== null && isSameDay(dateSel, date))) {
+      return this.commitUpdate(date, task, data, wasDone);
+    }
+    // 持ち主の変更と同時はノートをまたぐ移動が重なるため、持ち主の変更を優先する
+    if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
+      new Notice("持ち主と日付は同時に変えられないため、日付は変更していません");
+      return this.commitUpdate(date, task, data, wasDone);
+    }
+    if (dateSel === null) return this.commitDayToInbox(date, task, data);
+    return this.commitMove(date, task, dateSel, data);
   }
 
   /** 編集ダイアログの「誰の予定か」の選択肢（メンバーが居ないときは undefined = 欄を出さない） */
@@ -2915,20 +2947,27 @@ export class DayTimelineView extends ItemView {
       snapMinutes: this.plugin.settings.snapMinutes,
       allowUnscheduled: true,
       dateLabel: "Inbox",
+      dateField: {
+        value: null,
+        allowEmpty: true,
+        hint: "日付未定。日付を入れると、その日のノートへ移します",
+      },
       tagChoices: this.plugin.settings.tagColors,
       showDoneCondition: true,
       showActual: true,
       trackers: this.plugin.settings.trackers,
       ...this.projectOptions(),
       onAutoSave: async (data) => {
-        // 自動保存では Inbox に留める。「時刻を入れたら今日へ移す」のは閉じるときに行う
+        // 自動保存では Inbox に留める。「日付・時刻を入れたら移す」のは閉じるときに行う
         const next = await serially(() => this.commitInboxAutoSave(current, data));
         if (next) current = next;
         return next !== null;
       },
-      onSubmit: (data) =>
+      onSubmit: (data, dateSel) =>
         serially(() => {
-          // Inbox で時刻を入れたら「今日」に移す
+          // 日付を選んだらその日へ（時刻なしなら未スケジュールのまま）
+          if (dateSel) return this.commitInboxToDay(current, dateSel, data);
+          // 日付を選ばずに時刻を入れたら「今日」に移す（従来どおり）
           if (data.start !== null && data.end !== null) {
             return this.commitInboxToDay(current, startOfDay(new Date()), data);
           }
@@ -3029,8 +3068,8 @@ export class DayTimelineView extends ItemView {
     await this.reload();
   }
 
-  /** その日のタスクを Inbox へ戻す（時刻も外す） */
-  private async commitDayToInbox(from: Date, task: Task): Promise<void> {
+  /** その日のタスクを Inbox へ戻す（時刻も外す）。draft があれば移動後にその内容で更新 */
+  private async commitDayToInbox(from: Date, task: Task, draft?: TaskDraft): Promise<void> {
     const inbox = this.plugin.inbox;
     const day = this.plugin.blockStore();
     if (!inbox || !day) return;
@@ -3040,10 +3079,14 @@ export class DayTimelineView extends ItemView {
         new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
       } else {
         await inbox.putBlock(INBOX_DATE, block, null);
-        if (task.start !== null) {
-          await inbox.update(INBOX_DATE, task, { ...this.draftOf(task), start: null, end: null });
+        if (draft || task.start !== null) {
+          await inbox.update(INBOX_DATE, task, {
+            ...(draft ?? this.draftOf(task)),
+            start: null,
+            end: null,
+          });
         }
-        new Notice("Inbox へ戻しました");
+        new Notice("Inbox へ戻しました（日付未定）");
       }
     } catch (e) {
       console.error(e);
