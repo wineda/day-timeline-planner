@@ -1729,13 +1729,21 @@
 }
 /* スマホでは Obsidian がダイアログ内のボタンを幅100%に広げるため、
    タグが1行1個の縦積みになって選択エリアが縦に長すぎた。
-   チップは文字幅のまま横に並べて折り返す（タップの的として高さは少し確保する） */
+   チップは文字幅のまま横に並べて折り返す（タップの的として高さは少し確保する）。
+   幅の指定は Obsidian 側が !important 相当の強さで勝つため、こちらも !important で上書きする */
 .is-phone .dt-tag-chips {
   width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .is-phone .dt-tag-chips button.dt-tag-chip {
-  width: auto;
-  flex: 0 1 auto;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 100%;
+  flex: 0 1 auto !important;
+  display: inline-flex;
+  align-items: center;
   min-height: 0;
   padding: 5px 12px 5px 14px;
 }
