@@ -20,6 +20,7 @@ import {
   knownGroupNames,
   projectDisplayName,
   renderGroupIcon,
+  type ProjectDoc,
   type ProjectSummary,
 } from "./project";
 import { newBlockId } from "./markdown/id";
@@ -1168,6 +1169,13 @@ export class DayTimelineView extends ItemView {
     const head = wrap.createDiv("dt-projects-head");
     head.createSpan({ cls: "dt-inbox-label", text: "プロジェクト" });
     head.createSpan({ cls: "dt-inbox-count", text: String(active.length) });
+    const addProject = this.iconButton(
+      head,
+      "plus",
+      "新しいプロジェクトを作成（設定「プロジェクトのテンプレート」があればそこから）",
+      () => this.plugin.openNewProjectModal()
+    );
+    addProject.addClass("dt-inbox-open");
     if (active.length) {
       const allExpanded = this.areAllProjectsExpanded();
       const toggleAll = this.iconButton(
@@ -1216,7 +1224,7 @@ export class DayTimelineView extends ItemView {
         cls: "dt-tray-empty",
         text: hiddenDone
           ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
-          : "タスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
+          : "上の＋ボタン、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
       });
       return;
     }
@@ -1281,6 +1289,32 @@ export class DayTimelineView extends ItemView {
     }
     const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     const total = sum.children.length;
+    // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
+    const fields = sum.fields;
+    if (fields?.due) {
+      const dueLabel = fields.dueDate
+        ? moment(fields.dueDate).format(
+            moment(fields.dueDate).year() === moment().year() ? "M/D" : "YYYY/M/D"
+          )
+        : fields.due;
+      const dueEl = row.createSpan({ cls: "dt-project-due", text: `期日 ${dueLabel}` });
+      if (fields.dueDate && fields.dueDate.getTime() < startOfDay(new Date()).getTime())
+        dueEl.addClass("is-overdue");
+    }
+    if (fields?.ticket) {
+      const t = fields.ticket;
+      const badge = row.createSpan({ cls: "dt-project-ticket", text: `#${t.id}` });
+      const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
+      badge.setAttr("aria-label", `${t.tracker || "チケット"} #${t.id}` + (url ? `\n${url}` : ""));
+      if (url) {
+        badge.addClass("is-linked");
+        badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+        badge.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          window.open(url);
+        });
+      }
+    }
     const stats = row.createSpan({ cls: "dt-project-stats" });
     stats.setText(
       total
@@ -1291,8 +1325,11 @@ export class DayTimelineView extends ItemView {
       "aria-label",
       `${sum.ref.name}\n` +
         (showGroup ? `グループ: ${sum.ref.group ?? "未分類"}\n` : "") +
+        (fields?.due ? `期日: ${fields.due}\n` : "") +
+        (fields?.ticket ? `チケット: ${fields.ticket.tracker || ""}#${fields.ticket.id}\n` : "") +
+        (fields?.docs.length ? `ドキュメント: ${fields.docs.map((d) => d.label).join("・")}\n` : "") +
         `${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
-        "クリックで展開、ドラッグでタイムラインに子タスクを作成、右クリックでグループを変更"
+        "クリックで展開、ドラッグでタイムラインに子タスクを作成、右クリックでメニュー"
     );
     const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
       void this.plugin.openProject(key)
@@ -1350,6 +1387,21 @@ export class DayTimelineView extends ItemView {
 
     if (!expanded) return;
     const childrenEl = container.createDiv("dt-project-children");
+    // プロジェクトのドキュメント（ノートの「- ドキュメント: [[...]]」行）を子タスクの上に並べる
+    if (fields?.docs.length) {
+      const docsEl = childrenEl.createDiv("dt-project-docs");
+      for (const doc of fields.docs) {
+        const chip = docsEl.createDiv("dt-project-doc");
+        const iconEl = chip.createSpan("dt-project-doc-icon");
+        setIcon(iconEl, doc.external ? "external-link" : "file-text");
+        chip.createSpan({ cls: "dt-project-doc-label", text: doc.label });
+        chip.setAttr("aria-label", `ドキュメント: ${doc.target}\nクリックで開く`);
+        chip.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.openProjectDoc(sum, doc);
+        });
+      }
+    }
     // 「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない
     const shown = this.plugin.settings.projectsHideDone
       ? sum.children.filter((c) => !c.task.done && !c.task.forwarded)
@@ -1453,10 +1505,45 @@ export class DayTimelineView extends ItemView {
     return out;
   }
 
-  /** プロジェクト行の右クリックメニュー（グループの付け替え） */
+  /** プロジェクトのドキュメントを開く（Wikilink はノート・外部 URL はブラウザ） */
+  private openProjectDoc(sum: ProjectSummary, doc: ProjectDoc): void {
+    if (doc.external) {
+      window.open(doc.target);
+      return;
+    }
+    void this.app.workspace.openLinkText(doc.target, sum.ref.linktext + ".md", false).catch((e) => {
+      console.error(e);
+      new Notice("ドキュメントを開けませんでした: " + String(e));
+    });
+  }
+
+  /** プロジェクト行の右クリックメニュー（チケット・ドキュメント・グループの付け替え） */
   private showProjectMenu(sum: ProjectSummary, e: MouseEvent): void {
     if (!this.plugin.projects) return;
     const menu = new Menu();
+    // プロジェクト自身のチケット・ドキュメント
+    const fields = sum.fields;
+    let hasExtras = false;
+    if (fields?.ticket) {
+      const t = fields.ticket;
+      const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
+      if (url) {
+        menu.addItem((i) =>
+          i.setTitle(`チケット #${t.id} を開く`).setIcon("ticket").onClick(() => window.open(url))
+        );
+        hasExtras = true;
+      }
+    }
+    for (const doc of fields?.docs ?? []) {
+      menu.addItem((i) =>
+        i
+          .setTitle(`ドキュメント「${doc.label}」を開く`)
+          .setIcon(doc.external ? "external-link" : "file-text")
+          .onClick(() => this.openProjectDoc(sum, doc))
+      );
+      hasExtras = true;
+    }
+    if (hasExtras) menu.addSeparator();
     const current = sum.ref.group ?? null;
     // 完了済みプロジェクトだけが使っているグループへも移せるよう、候補は全プロジェクトから集める
     const names = knownGroupNames(

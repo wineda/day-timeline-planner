@@ -637,6 +637,68 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行） */
+.dt-project-due,
+.dt-project-ticket {
+  flex: 0 0 auto;
+  font-size: 0.72em;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+/* 期日を過ぎたプロジェクト */
+.dt-project-due.is-overdue {
+  color: var(--color-red, #c04545);
+  border-color: color-mix(in srgb, var(--color-red, #c04545) 60%, transparent);
+}
+.dt-project-ticket.is-linked {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dt-project-ticket.is-linked:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+/* プロジェクトのドキュメント（展開したとき子タスクの上に並ぶチップ） */
+.dt-project-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 0 4px;
+}
+.dt-project-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dt-project-doc:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.dt-project-doc-icon {
+  display: flex;
+}
+.dt-project-doc-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.dt-project-doc-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dt-project-row .dt-icon-btn {
   padding: 1px;
 }
