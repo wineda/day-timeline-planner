@@ -1270,6 +1270,9 @@
   position: absolute;
   box-sizing: border-box;
   overflow: hidden;
+  /* ブロックの実幅（列幅 ÷ 重なりレーン数）でタイトル以外を隠す判定をするための基準
+     （下の @container。幅は明示指定なので inline-size containment の影響はない） */
+  container-type: inline-size;
   border-radius: var(--radius-s);
   background: var(--dt-event-bg, var(--interactive-accent));
   color: var(--dt-event-fg, var(--text-on-accent));
@@ -1503,6 +1506,26 @@
 
 .dt-event-resize {
   height: 4px;
+}
+
+/* 幅の狭いブロック（スマホの週表示・重なりで分割されたレーンなど）は、
+   タスク名を最優先にして時刻・バッジ類を出さない（TickTick 方式）。
+   時刻 "10:00 - 11:30" が収まらない幅では出しても読めないので丸ごと隠し、
+   空いた行をタイトルに使う。ここのセレクタは上の .is-tiny 等の個別指定より
+   後勝ち・同等以上の詳細度になるようにしてある */
+@container (max-width: 84px) {
+  .dt-event .dt-event-time,
+  .dt-event .dt-event-ticket,
+  .dt-event .dt-event-project,
+  .dt-event .dt-event-carry,
+  .dt-event.is-short .dt-event-time,
+  .dt-event.is-tiny .dt-event-ticket {
+    display: none;
+  }
+  /* 時刻を出さないぶん、タイトルの行数制限を緩めて縦に長く見せる */
+  .dt-event .dt-event-title {
+    -webkit-line-clamp: 8;
+  }
 }
 
 /* ドラッグ選択中の仮ブロック */
