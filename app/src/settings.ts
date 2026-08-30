@@ -207,6 +207,10 @@ export interface DayTimelineSettings {
   projectsHideDone: boolean;
   /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
   projectGroups: ProjectGroupSetting[];
+  /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
+  defaultGroupIcon: string;
+  /** ツリーの各プロジェクト行に出すアイコン（Lucide 名か絵文字。"" = なし）。グループ見出しとの見分け用 */
+  defaultProjectIcon: string;
   /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
 
@@ -263,6 +267,8 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showProjects: true,
   projectsHideDone: false,
   projectGroups: [],
+  defaultGroupIcon: "folder",
+  defaultProjectIcon: "target",
   sidebarWidth: 220,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
@@ -313,6 +319,9 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
       .map((name) => ({ name, icon: "" }));
   }
   delete (s as unknown as Record<string, unknown>).projectGroupOrder;
+  // "" は「アイコンなし」の指定なので、文字列でないときだけ既定に戻す
+  if (typeof s.defaultGroupIcon !== "string") s.defaultGroupIcon = DEFAULT_SETTINGS.defaultGroupIcon;
+  if (typeof s.defaultProjectIcon !== "string") s.defaultProjectIcon = DEFAULT_SETTINGS.defaultProjectIcon;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -867,13 +876,56 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           await save();
         })
       );
+    // ツリーに出す既定のアイコン（グループ見出し / プロジェクト行）。プレビュー付きの入力欄
+    const defaultIconSetting = (
+      name: string,
+      desc: string,
+      placeholder: string,
+      get: () => string,
+      set: (v: string) => void
+    ) => {
+      const st = new Setting(containerEl).setName(name).setDesc(desc);
+      const preview = st.nameEl.createSpan({ cls: "dt-group-icon-preview" });
+      st.nameEl.prepend(preview);
+      const updatePreview = () => {
+        preview.empty();
+        if (get().trim()) renderGroupIcon(preview, get().trim());
+      };
+      updatePreview();
+      st.addText((t) => {
+        t.setPlaceholder(placeholder)
+          .setValue(get())
+          .onChange(async (v) => {
+            set(v.trim());
+            updatePreview();
+            await save();
+          });
+        t.inputEl.addClass("dt-group-icon-input");
+      });
+    };
+    defaultIconSetting(
+      "グループの既定のアイコン",
+      "パネルのツリーのグループ見出しに出すアイコン。Lucide のアイコン名（例: folder）か絵文字。" +
+        "空欄にするとアイコンなし。下の一覧でグループごとに指定するとそちらが優先されます。",
+      "folder",
+      () => s.defaultGroupIcon,
+      (v) => (s.defaultGroupIcon = v)
+    );
+    defaultIconSetting(
+      "プロジェクトのアイコン",
+      "ツリーの各プロジェクト行の頭に出すアイコン。グループ見出しと見た目で区別しやすくなります。" +
+        "Lucide のアイコン名（例: target）か絵文字。空欄にするとアイコンなし。",
+      "target",
+      () => s.defaultProjectIcon,
+      (v) => (s.defaultProjectIcon = v)
+    );
     new Setting(containerEl)
       .setName("プロジェクトのグループ")
       .setDesc(
         "プロジェクトはグループ分けでき、パネルのツリーがグループごとに区切られます" +
           "（割り当てはパネルのプロジェクト行の右クリック、またはプロジェクトノートの frontmatter「group: 名前」）。" +
-          "ここではグループの表示順とアイコンを管理します。アイコンは Lucide のアイコン名" +
-          "（例: briefcase・home・book）か絵文字（例: 💼）。載っていないグループは名前順で後ろに、" +
+          "ここではグループの表示順を管理します。アイコン欄は、そのグループだけ既定のアイコンと" +
+          "変えたいときに使います（Lucide のアイコン名か絵文字）。載っていないグループは名前順で後ろに、" +
           "グループなしのプロジェクトは「未分類」として末尾に並びます。"
       )
       .addButton((b) =>
