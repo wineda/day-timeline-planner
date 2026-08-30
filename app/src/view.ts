@@ -1394,12 +1394,6 @@ export class DayTimelineView extends ItemView {
     const row = container.createDiv("dt-project-row");
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    // グループ見出しと見分けるためのアイコン（設定「プロジェクトのアイコン」。空欄なら出さない）
-    const projectIcon = this.plugin.settings.defaultProjectIcon.trim();
-    if (projectIcon) {
-      const iconEl = row.createSpan("dt-project-icon");
-      renderGroupIcon(iconEl, projectIcon);
-    }
     const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
