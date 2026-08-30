@@ -98,19 +98,13 @@ export class DayTimelineView extends ItemView {
 
   private dateLabelEl!: HTMLElement;
   private dateInputEl!: HTMLInputElement;
-  private noteBtnEl!: HTMLElement;
   private timerEl!: HTMLElement;
-  private timerBtnEl!: HTMLElement;
   private trackingEl!: HTMLElement;
   private modeBtns = new Map<ViewMode, HTMLElement>();
-  private zoomBtns = new Map<number, HTMLElement>();
-  private paBtns = new Map<PlanActualMode, HTMLElement>();
-  private paEl!: HTMLElement;
   /** 表示範囲（3日・週）の予実合計 */
   private rangeTotalEl!: HTMLElement;
   /** 実際に使う 1時間あたりの高さ（px）。ズーム指定があるとビューの高さから決まる */
   private hourHeightPx = 60;
-  private membersEl!: HTMLElement;
   /** 月表示のマス（日付キー → 要素） */
   private monthCells = new Map<string, { date: Date; el: HTMLElement; listEl: HTMLElement }>();
   private bannerEl!: HTMLElement;
@@ -423,10 +417,18 @@ export class DayTimelineView extends ItemView {
     root.empty();
     root.addClass("dt-view");
 
-    const header = root.createDiv("dt-header");
+    this.bannerEl = root.createDiv("dt-banner");
+    // 左に Inbox のサイドバー、右にタイムライン
+    const body = root.createDiv("dt-body");
+    this.inboxEl = body.createDiv("dt-inbox");
+    const main = body.createDiv("dt-main");
+
+    // ツールバーはタイムラインの直上に1行だけ。よく使うもの（日付移動・モード切替・追加）を
+    // 常時表示し、ズーム・予実・メンバーは「表示」メニュー、それ以外は ⋮ メニューにまとめる
+    const bar = main.createDiv("dt-toolbar");
 
     // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替
-    this.paneEl = header.createDiv("dt-mode dt-pane");
+    this.paneEl = bar.createDiv("dt-mode dt-pane");
     const panes: [NarrowPane, string, string][] = [
       ["timeline", "calendar-clock", "タイムラインを表示"],
       ["panel", "list-tree", "パネル（Inbox・プロジェクト・再スケジュール）を表示"],
@@ -441,97 +443,13 @@ export class DayTimelineView extends ItemView {
       this.paneBtns.set(pane, b);
     }
 
-    const modeWrap = header.createDiv("dt-mode");
-    const modes: [ViewMode, string][] = [
-      ["day", "日"],
-      ["3day", "3日"],
-      ["week", "週"],
-      ["month", "月"],
-    ];
-    for (const [mode, label] of modes) {
-      const b = modeWrap.createEl("button", { text: label, cls: "dt-mode-btn" });
-      b.onclick = () => this.setViewMode(mode);
-      this.modeBtns.set(mode, b);
-    }
-
-    // 一度に表示する時間の幅（30分単位で作業する日は 4h に寄せる、など）
-    const zoomWrap = header.createDiv("dt-mode dt-zoom");
-    const zooms: [number, string, string][] = [
-      [4, "4h", "4時間分を表示（細かい作業向け）"],
-      [8, "8h", "8時間分を表示"],
-      [12, "12h", "12時間分を表示"],
-      [0, "標準", "設定の「1時間あたりの高さ」で表示"],
-    ];
-    for (const [hours, label, tip] of zooms) {
-      const b = zoomWrap.createEl("button", { text: label, cls: "dt-mode-btn", attr: { "aria-label": tip } });
-      b.onclick = () => this.setZoom(hours);
-      this.zoomBtns.set(hours, b);
-    }
-
-    // 予定 / 予実 / 実績 の切替（ブロック形式のみ）
-    this.paEl = header.createDiv("dt-mode dt-pa");
-    const paModes: [PlanActualMode, string, string][] = [
-      ["plan", "予定", "予定だけを表示"],
-      ["both", "予実", "左に予定、右に実績を並べる"],
-      ["actual", "実績", "実績だけを表示"],
-    ];
-    for (const [m, label, tip] of paModes) {
-      const b = this.paEl.createEl("button", { text: label, cls: "dt-mode-btn", attr: { "aria-label": tip } });
-      b.onclick = () => this.setPaMode(m);
-      this.paBtns.set(m, b);
-    }
-
-    // 表示範囲（3日・週）の予実合計
-    this.rangeTotalEl = header.createDiv("dt-range-total");
-
-    // メンバー（他の人の予定）の表示切替チップ
-    this.membersEl = header.createDiv("dt-members");
-
-    const actions = header.createDiv("dt-actions");
-    // 実績を計測中のタスク（クリックで終了して実績に記録）
-    this.trackingEl = actions.createEl("button", { cls: "dt-tracking-chip", attr: { "aria-label": "実績の計測" } });
-    this.trackingEl.onclick = () => void this.plugin.stopTaskTracking(true);
-    this.trackingEl.addEventListener("contextmenu", (e: MouseEvent) => {
-      e.preventDefault();
-      const menu = new Menu();
-      menu.addItem((i) =>
-        i.setTitle("計測を終了して実績に記録").setIcon("square").onClick(() => void this.plugin.stopTaskTracking(true))
-      );
-      menu.addItem((i) =>
-        i.setTitle("記録せずにやめる").setIcon("x").onClick(() => void this.plugin.stopTaskTracking(false))
-      );
-      menu.showAtMouseEvent(e);
-    });
-    this.renderTracking();
-    this.timerEl = actions.createEl("button", { cls: "dt-timer-chip", attr: { "aria-label": "タイマー" } });
-    this.timerEl.onclick = () => this.plugin.openTimerModal();
-    this.timerBtnEl = this.iconButton(actions, "timer", "タイマー", () => this.plugin.openTimerModal());
-    this.renderTimer();
-    this.register(this.plugin.timer.onChange(() => this.renderTimer()));
-    this.iconButton(actions, "repeat", "定期タスクを管理", () =>
-      void this.plugin.activateRecurringView()
-    );
-    this.iconButton(actions, "plus", "タスクを追加", () => this.openCreateModal(this.date));
-    this.noteBtnEl = this.iconButton(actions, "file-text", "ノートを開く", () =>
-      void this.openNote(this.date)
-    );
-
-    this.bannerEl = root.createDiv("dt-banner");
-    // 左に Inbox のサイドバー、右にタイムライン
-    const body = root.createDiv("dt-body");
-    this.inboxEl = body.createDiv("dt-inbox");
-    const main = body.createDiv("dt-main");
-
-    // 日付の操作（< 今日 > と日付ラベル）は、サイドバーの上ではなく
-    // 操作対象のタイムラインの直上に置く（マウスの移動距離を短くする）
-    const dateBar = main.createDiv("dt-date-bar");
-    const nav = dateBar.createDiv("dt-nav");
+    const nav = bar.createDiv("dt-nav");
     this.iconButton(nav, "chevron-left", "前へ", () => this.goToPrev());
     const todayBtn = nav.createEl("button", { text: "今日", cls: "dt-today-btn" });
     todayBtn.onclick = () => this.goToToday();
     this.iconButton(nav, "chevron-right", "次へ", () => this.goToNext());
 
-    const dateWrap = dateBar.createDiv("dt-date");
+    const dateWrap = bar.createDiv("dt-date");
     this.dateLabelEl = dateWrap.createEl("button", {
       cls: "dt-date-label",
       attr: { "aria-label": "日付を選ぶ" },
@@ -545,7 +463,152 @@ export class DayTimelineView extends ItemView {
       if (y && m && d) this.setDate(new Date(y, m - 1, d));
     };
 
+    // 表示範囲（3日・週）の予実合計。表示中の範囲の情報なので日付ラベルの隣に置く
+    this.rangeTotalEl = bar.createDiv("dt-range-total");
+
+    bar.createDiv("dt-toolbar-spacer");
+
+    // 実績を計測中のタスク（クリックで終了して実績に記録）
+    this.trackingEl = bar.createEl("button", { cls: "dt-tracking-chip", attr: { "aria-label": "実績の計測" } });
+    this.trackingEl.onclick = () => void this.plugin.stopTaskTracking(true);
+    this.trackingEl.addEventListener("contextmenu", (e: MouseEvent) => {
+      e.preventDefault();
+      const menu = new Menu();
+      menu.addItem((i) =>
+        i.setTitle("計測を終了して実績に記録").setIcon("square").onClick(() => void this.plugin.stopTaskTracking(true))
+      );
+      menu.addItem((i) =>
+        i.setTitle("記録せずにやめる").setIcon("x").onClick(() => void this.plugin.stopTaskTracking(false))
+      );
+      menu.showAtMouseEvent(e);
+    });
+    this.renderTracking();
+    // タイマーは動作中だけチップを出す（開始は ⋮ メニューの「タイマー…」から）
+    this.timerEl = bar.createEl("button", { cls: "dt-timer-chip", attr: { "aria-label": "タイマー" } });
+    this.timerEl.onclick = () => this.plugin.openTimerModal();
+    this.renderTimer();
+    this.register(this.plugin.timer.onChange(() => this.renderTimer()));
+
+    const modeWrap = bar.createDiv("dt-mode");
+    const modes: [ViewMode, string][] = [
+      ["day", "日"],
+      ["3day", "3日"],
+      ["week", "週"],
+      ["month", "月"],
+    ];
+    for (const [mode, label] of modes) {
+      const b = modeWrap.createEl("button", { text: label, cls: "dt-mode-btn" });
+      b.onclick = () => this.setViewMode(mode);
+      this.modeBtns.set(mode, b);
+    }
+
+    // ズーム・予実・メンバーの表示切替をまとめた「表示」メニュー
+    const viewBtn = bar.createEl("button", {
+      cls: "dt-view-menu-btn",
+      attr: { "aria-label": "表示オプション（ズーム・予定と実績・メンバー）" },
+    });
+    viewBtn.createSpan({ text: "表示" });
+    const caret = viewBtn.createSpan("dt-menu-caret");
+    setIcon(caret, "chevron-down");
+    viewBtn.onclick = () => {
+      const menu = new Menu();
+      this.buildViewMenu(menu);
+      const r = viewBtn.getBoundingClientRect();
+      menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
+    };
+
+    this.iconButton(bar, "plus", "タスクを追加", () => this.openCreateModal(this.date));
+    this.menuButton(bar, "その他（ノート・タイマー・定期タスク）", (menu) =>
+      this.buildMoreMenu(menu)
+    );
+
     this.scrollEl = main.createDiv("dt-scroll");
+  }
+
+  /** ツールバーの「表示」メニュー: ズーム・予定/実績・メンバーの表示切替 */
+  private buildViewMenu(menu: Menu): void {
+    const s = this.plugin.settings;
+    let empty = true;
+    if (this.isTimeline()) {
+      empty = false;
+      // 一度に表示する時間の幅（30分単位で作業する日は 4時間 に寄せる、など）
+      menu.addItem((i) => i.setTitle("一度に表示する時間").setDisabled(true));
+      const zooms: [number, string][] = [
+        [4, "4時間（細かい作業向け）"],
+        [8, "8時間"],
+        [12, "12時間"],
+        [0, "標準（設定の「1時間あたりの高さ」）"],
+      ];
+      for (const [hours, label] of zooms) {
+        menu.addItem((i) =>
+          i.setTitle(label).setChecked(s.zoomHours === hours).onClick(() => this.setZoom(hours))
+        );
+      }
+      // 予定 / 予実 / 実績 の切替（ブロック形式のみ）
+      if (this.plugin.blockStore()) {
+        menu.addSeparator();
+        menu.addItem((i) => i.setTitle("予定と実績").setDisabled(true));
+        const paModes: [PlanActualMode, string][] = [
+          ["plan", "予定だけを表示"],
+          ["both", "予実（左に予定、右に実績）"],
+          ["actual", "実績だけを表示"],
+        ];
+        for (const [m, label] of paModes) {
+          menu.addItem((i) =>
+            i.setTitle(label).setChecked(s.paMode === m).onClick(() => this.setPaMode(m))
+          );
+        }
+      }
+    }
+    // メンバー（他の人の予定）の表示切替
+    if (this.plugin.blockStore() && s.members.length > 0) {
+      if (!empty) menu.addSeparator();
+      empty = false;
+      menu.addItem((i) => i.setTitle("メンバーの予定").setDisabled(true));
+      for (const m of s.members) {
+        menu.addItem((i) =>
+          i
+            .setTitle(m.name || "(名前未設定)")
+            .setChecked(m.visible)
+            .onClick(() => {
+              m.visible = !m.visible;
+              void this.plugin.persistSettings();
+              void this.reload();
+            })
+        );
+      }
+      if (s.members.length > 1) {
+        const all = s.members.every((m) => m.visible);
+        menu.addItem((i) =>
+          i.setTitle(all ? "自分だけにする" : "全員を表示").onClick(() => {
+            for (const m of s.members) m.visible = !all;
+            void this.plugin.persistSettings();
+            void this.reload();
+          })
+        );
+      }
+    }
+    if (empty) {
+      menu.addItem((i) => i.setTitle("月表示では表示オプションはありません").setDisabled(true));
+    }
+  }
+
+  /** ツールバーの ⋮ メニュー: ノート・タイマー・定期タスク */
+  private buildMoreMenu(menu: Menu): void {
+    const m = moment(this.date);
+    const exists = this.dataFor(this.date).exists;
+    menu.addItem((i) =>
+      i
+        .setTitle(`${exists ? "ノートを開く" : "ノートを作成して開く"}（${m.format("M月D日")}）`)
+        .setIcon("file-text")
+        .onClick(() => void this.openNote(this.date))
+    );
+    menu.addItem((i) =>
+      i.setTitle("タイマー…").setIcon("timer").onClick(() => this.plugin.openTimerModal())
+    );
+    menu.addItem((i) =>
+      i.setTitle("定期タスクを管理").setIcon("repeat").onClick(() => void this.plugin.activateRecurringView())
+    );
   }
 
   /** アイコンボタン（クリック / Enter / Space で動作） */
@@ -882,64 +945,10 @@ export class DayTimelineView extends ItemView {
     }
     this.dateInputEl.value = m.format("YYYY-MM-DD");
     for (const [mode, b] of this.modeBtns) b.toggleClass("is-active", mode === this.mode);
-    const s = this.plugin.settings;
-    for (const [z, b] of this.zoomBtns) b.toggleClass("is-active", z === s.zoomHours);
-    for (const [pm, b] of this.paBtns) b.toggleClass("is-active", pm === s.paMode);
-    this.paEl.toggleClass("is-hidden", !this.plugin.blockStore());
-    this.renderMemberChips();
-
     this.renderTracking();
-    const path = this.plugin.store.pathFor(this.date);
-    const exists = this.dataFor(this.date).exists;
-    this.noteBtnEl.setAttr(
-      "aria-label",
-      (exists ? "ノートを開く" : "ノートを作成して開く") +
-        `（${m.format("M月D日")}）\n${path}`
-    );
   }
 
-  /** ヘッダーのメンバー表示切替チップ */
-  private renderMemberChips(): void {
-    if (!this.membersEl) return;
-    const s = this.plugin.settings;
-    this.membersEl.empty();
-    const show = !!this.plugin.blockStore() && s.members.length > 0;
-    this.membersEl.toggleClass("is-visible", show);
-    if (!show) return;
-    for (const m of s.members) {
-      const chip = this.membersEl.createEl("button", {
-        cls: "dt-member-chip",
-        attr: {
-          "aria-label": `${m.name || "(名前未設定)"} の予定を${m.visible ? "隠す" : "表示する"}`,
-          "aria-pressed": String(m.visible),
-        },
-      });
-      chip.toggleClass("is-on", m.visible);
-      chip.style.setProperty("--dt-member-color", m.color);
-      chip.createSpan("dt-member-dot");
-      chip.createSpan({ cls: "dt-member-name", text: m.name || "?" });
-      chip.onclick = () => {
-        m.visible = !m.visible;
-        void this.plugin.persistSettings();
-        void this.reload();
-      };
-    }
-    if (s.members.length > 1) {
-      const all = s.members.every((m) => m.visible);
-      const btn = this.membersEl.createEl("button", {
-        cls: "dt-member-chip dt-member-all",
-        text: all ? "自分だけ" : "全員",
-        attr: { "aria-label": all ? "メンバーの予定をすべて隠す" : "メンバーの予定をすべて表示" },
-      });
-      btn.onclick = () => {
-        for (const m of s.members) m.visible = !all;
-        void this.plugin.persistSettings();
-        void this.reload();
-      };
-    }
-  }
-
-  /** ヘッダーの「実績を計測中」チップ（main の startTaskTracking からも呼ばれる） */
+  /** ツールバーの「実績を計測中」チップ（main の startTaskTracking からも呼ばれる） */
   renderTracking(): void {
     if (!this.trackingEl) return;
     const tr = this.plugin.settings.tracking;
@@ -954,7 +963,7 @@ export class DayTimelineView extends ItemView {
     );
   }
 
-  /** ヘッダーのタイマー表示 */
+  /** ツールバーのタイマー表示（動作中だけ。開始は ⋮ メニューから） */
   private renderTimer(): void {
     if (!this.timerEl) return;
     const timer = this.plugin.timer;
@@ -963,17 +972,14 @@ export class DayTimelineView extends ItemView {
       this.timerEl.setText(`⏱ ${formatSeconds(timer.remainingSeconds())}${st.label ? ` ${st.label}` : ""}`);
       this.timerEl.toggleClass("is-visible", true);
       this.timerEl.toggleClass("is-finished", false);
-      this.timerBtnEl.toggleClass("is-hidden", true);
     } else if (st.finished) {
       this.timerEl.setText(`⏱ 終了${st.label ? ` ${st.label}` : ""}`);
       this.timerEl.toggleClass("is-visible", true);
       this.timerEl.toggleClass("is-finished", true);
-      this.timerBtnEl.toggleClass("is-hidden", true);
       this.timerEl.onclick = () => timer.dismiss();
       return;
     } else {
       this.timerEl.toggleClass("is-visible", false);
-      this.timerBtnEl.toggleClass("is-hidden", false);
     }
     this.timerEl.onclick = () => this.plugin.openTimerModal();
   }
@@ -1078,7 +1084,14 @@ export class DayTimelineView extends ItemView {
       this.renderInbox();
     };
     const head = this.inboxEl.createDiv("dt-inbox-head");
-    if (!narrowPanel) {
+    if (narrowPanel) {
+      // パネルを全面表示中はツールバー（タイムライン⇄パネルの切替ごと）が隠れているので、
+      // タイムラインへ戻るボタンをここに出す
+      const back = this.iconButton(head, "calendar-clock", "タイムラインを表示", () =>
+        this.setNarrowPane("timeline")
+      );
+      back.addClass("dt-inbox-toggle");
+    } else {
       const toggle = this.iconButton(
         head,
         collapsed ? "panel-left-open" : "panel-left-close",
@@ -1336,10 +1349,9 @@ export class DayTimelineView extends ItemView {
     const hasGroups = groups.some((g) => g.name !== null);
     // どのプロジェクトにもグループが無ければ今までどおりのフラットな一覧。
     // 「フラットな一覧で表示」がオンのときも見出しを出さず、グループ順に並べたまま平らにする
-    // （グループはツールチップで分かる）
     if (!hasGroups || this.plugin.settings.projectsFlatList) {
       for (const g of groups) {
-        for (const sum of g.items) this.renderProjectRow(list, sum, hasGroups);
+        for (const sum of g.items) this.renderProjectRow(list, sum);
       }
       return;
     }
@@ -1374,8 +1386,8 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する。showGroup でツールチップにグループ名を足す */
-  private renderProjectRow(container: HTMLElement, sum: ProjectSummary, showGroup = false): void {
+  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する */
+  private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
     const key = sum.ref.linktext;
     const expanded = this.expandedProjects.has(key);
 
@@ -1422,16 +1434,7 @@ export class DayTimelineView extends ItemView {
         ? `${sum.doneCount}/${total}・予${hmm(sum.planMin)}・実${hmm(sum.actMin)}`
         : "タスクなし"
     );
-    row.setAttr(
-      "aria-label",
-      `${sum.ref.name}\n` +
-        (showGroup ? `グループ: ${sum.ref.group ?? "未分類"}\n` : "") +
-        (fields?.due ? `期日: ${fields.due}\n` : "") +
-        (fields?.ticket ? `チケット: ${fields.ticket.tracker || ""}#${fields.ticket.id}\n` : "") +
-        (fields?.docs.length ? `ドキュメント: ${fields.docs.map((d) => d.label).join("・")}\n` : "") +
-        `${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
-        "クリックで展開、ドラッグでタイムラインに子タスクを作成、右クリックでメニュー"
-    );
+    // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
     const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
       void this.plugin.openProject(key)
     );
