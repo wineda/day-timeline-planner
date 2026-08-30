@@ -87,6 +87,11 @@ export default class DayTimelinePlugin extends Plugin {
     viewCommand("timeline-toggle-mode", "タイムスケジュール: 日表示 / 週表示を切り替える", (v) =>
       v.toggleViewMode()
     );
+    viewCommand(
+      "timeline-projects-toggle-expand",
+      "タイムスケジュール: プロジェクトのツリーをすべて展開 / 閉じる",
+      (v) => v.toggleAllProjects()
+    );
 
     // 旧形式 → タスクブロックへの変換（開いているノート）
     this.addCommand({
