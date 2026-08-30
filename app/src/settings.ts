@@ -124,7 +124,7 @@ export const DEFAULT_FOLDER = "Timeline";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
@@ -268,7 +268,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   projectsHideDone: false,
   projectGroups: [],
   defaultGroupIcon: "folder",
-  defaultProjectIcon: "tag",
+  defaultProjectIcon: "milestone",
   sidebarWidth: 220,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
@@ -282,7 +282,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  * 保存されている設定を現在の版に合わせる。
  * v1（版なし）: 表示時間帯の既定が 0:00〜24:00、フォルダの既定が保管庫直下だった。
  * v2: recurringInstances が「ルールID → ブロックID の文字列」だった。
- * v3: プロジェクト行の既定アイコン（defaultProjectIcon）が target だった。
+ * v3: プロジェクト行の既定アイコン（defaultProjectIcon）が target、v4: 同じく tag だった。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -323,8 +323,10 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   // "" は「アイコンなし」の指定なので、文字列でないときだけ既定に戻す
   if (typeof s.defaultGroupIcon !== "string") s.defaultGroupIcon = DEFAULT_SETTINGS.defaultGroupIcon;
   if (typeof s.defaultProjectIcon !== "string") s.defaultProjectIcon = DEFAULT_SETTINGS.defaultProjectIcon;
-  // 旧既定の target は新既定の tag へ（自分で選んだ別のアイコン・空欄はそのまま）
-  if (version < 4 && s.defaultProjectIcon === "target") s.defaultProjectIcon = "tag";
+  // 旧既定（v3: target / v4: tag）は現行既定の milestone へ（自分で選んだ別のアイコン・空欄はそのまま）
+  if (version < 5 && (s.defaultProjectIcon === "target" || s.defaultProjectIcon === "tag")) {
+    s.defaultProjectIcon = "milestone";
+  }
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -917,8 +919,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     defaultIconSetting(
       "プロジェクトのアイコン",
       "ツリーの各プロジェクト行の頭に出すアイコン。グループ見出しと見た目で区別しやすくなります。" +
-        "Lucide のアイコン名（例: tag）か絵文字。空欄にするとアイコンなし。",
-      "tag",
+        "Lucide のアイコン名（例: milestone）か絵文字。空欄にするとアイコンなし。",
+      "milestone",
       () => s.defaultProjectIcon,
       (v) => (s.defaultProjectIcon = v)
     );
