@@ -2622,6 +2622,22 @@ body.is-mobile .dt-project-group-count {
   font-size: 0.8em;
 }
 
+/* 週表示・月表示は 7 列で 1 マスが狭いので、上の基準サイズ引き上げの対象から
+   外して一段小さくし、読める文字数を優先する */
+body.is-mobile .dt-view.is-week .dt-event {
+  font-size: 11px;
+}
+body.is-mobile .dt-view.is-month .dt-month-item {
+  font-size: 10px;
+}
+/* 月表示の 1 マスはタスク名だけにする（時刻・チケット・名前ラベルは隠す。
+   他の人の予定は左端の色線で見分けられる） */
+body.is-mobile .dt-view.is-month .dt-month-item-time,
+body.is-mobile .dt-view.is-month .dt-month-item-ticket,
+body.is-mobile .dt-view.is-month .dt-month-item .dt-owner-label {
+  display: none;
+}
+
 /* 右下の「＋」（狭い画面だけ表示）。色は Obsidian モバイルの button 既定スタイル
    （.dt-fab より詳細度が高い）に上書きされて背景色でグレーになっていたので、
    詳細度を上げたセレクタで確実にアクセント色にする */
