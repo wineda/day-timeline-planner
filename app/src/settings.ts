@@ -8,6 +8,8 @@ export type ViewLocation = "tab" | "right" | "left";
 export type StorageFormat = "block" | "list";
 export type InsertPosition = "time" | "end";
 export type ViewMode = "day" | "3day" | "week" | "month";
+/** 左サイドバーのタブ */
+export type SidebarTab = "inbox" | "projects" | "reschedule";
 
 /** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
 export type PlanActualMode = "plan" | "both" | "actual";
@@ -217,6 +219,8 @@ export interface DayTimelineSettings {
   defaultProjectIcon: string;
   /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
+  /** 左サイドバーで表示中のタブ（Inbox / プロジェクト / 再スケジュール）。記憶される */
+  sidebarTab: SidebarTab;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
@@ -276,6 +280,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   defaultGroupIcon: "folder",
   defaultProjectIcon: "milestone",
   sidebarWidth: 220,
+  sidebarTab: "inbox",
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -334,6 +339,7 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
     s.defaultProjectIcon = "milestone";
   }
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
+  if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
