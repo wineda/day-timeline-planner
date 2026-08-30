@@ -1002,8 +1002,11 @@ export class DayTimelineView extends ItemView {
         void this.plugin.openProject(key)
       );
       openBtn.addClass("dt-project-open");
-      const addBtn = this.iconButton(row, "plus", "このプロジェクトのタスクを追加", () =>
-        this.openCreateModal(this.date, undefined, undefined, undefined, { project: key })
+      const addBtn = this.iconButton(
+        row,
+        "plus",
+        "このプロジェクトのタスクを追加（時刻を入れなければ日付を決めず Inbox へ）",
+        () => this.openProjectCreateModal(key)
       );
       addBtn.addClass("dt-project-add");
       const doneBtn = this.iconButton(row, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
@@ -2387,6 +2390,48 @@ export class DayTimelineView extends ItemView {
       ...this.projectOptions(),
       onSubmit: (data) => this.commitCreate(date, data),
       onClose,
+    }).open();
+  }
+
+  /**
+   * プロジェクトパネルの「＋」からのタスク追加。日付はまだ決めない前提で、
+   * 時刻を空のまま保存すると Inbox へ、時刻を入れると表示中の日へ登録する
+   */
+  private openProjectCreateModal(project: string): void {
+    const inbox = this.plugin.inbox;
+    if (!inbox) {
+      // Inbox の無い形式ではプロジェクトパネル自体が出ないはずだが、念のため従来どおり
+      this.openCreateModal(this.date, undefined, undefined, undefined, { project });
+      return;
+    }
+    const s = this.plugin.settings;
+    const dayLabel = moment(this.date).format("M月D日");
+    new TaskModal(this.app, {
+      mode: "create",
+      initial: { title: "", start: null, end: null, done: false, project },
+      snapMinutes: s.snapMinutes,
+      allowUnscheduled: true,
+      dateLabel: "Inbox",
+      unscheduledHint: `時刻なし — 日付を決めずに Inbox へ登録します（時刻を入れると ${dayLabel} に登録）`,
+      tagChoices: s.tagColors,
+      showDoneCondition: true,
+      trackers: s.trackers,
+      ...this.projectOptions(),
+      onSubmit: async (data) => {
+        // 時刻が入っていたら、これまでどおり表示中の日へ
+        if (data.start !== null && data.end !== null) {
+          await this.commitCreate(this.date, data);
+          return;
+        }
+        try {
+          await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
+          new Notice("Inbox に追加しました（日付は未定のまま）");
+        } catch (e) {
+          console.error(e);
+          new Notice("Inbox に追加できませんでした: " + String(e));
+        }
+        await this.reload();
+      },
     }).open();
   }
 

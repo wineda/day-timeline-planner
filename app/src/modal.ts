@@ -13,6 +13,8 @@ export interface TaskModalOptions {
   allowUnscheduled: boolean;
   /** 対象の日付の表示（週表示のときにどの日か分かるように） */
   dateLabel?: string;
+  /** 時刻が空のときに時間欄の下へ出すヒント（既定は「時刻なし（未スケジュール）」） */
+  unscheduledHint?: string;
   /** 設定画面で登録したタグ（ボタンで選べるようにする） */
   tagChoices?: TagColor[];
   /** リマインドの選択欄を出すか（既定の「N分前」を表示に使う）。undefined なら出さない */
@@ -939,7 +941,7 @@ export class TaskModal extends Modal {
       this.hintEl.setText(r.error);
       this.hintEl.addClass("is-error");
     } else if (r.start === null) {
-      this.hintEl.setText("時刻なし（未スケジュール）");
+      this.hintEl.setText(this.opts.unscheduledHint ?? "時刻なし（未スケジュール）");
       this.hintEl.removeClass("is-error");
     } else {
       this.hintEl.setText(`所要時間: ${formatDuration((r.end as number) - r.start)}`);
