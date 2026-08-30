@@ -92,6 +92,11 @@ export default class DayTimelinePlugin extends Plugin {
       "タイムスケジュール: プロジェクトのツリーをすべて展開 / 閉じる",
       (v) => v.toggleAllProjects()
     );
+    viewCommand(
+      "timeline-projects-toggle-flat",
+      "タイムスケジュール: プロジェクト一覧のフラット表示（グループの見出しなし）を切り替える",
+      (v) => v.toggleProjectsFlatList()
+    );
 
     // 旧形式 → タスクブロックへの変換（開いているノート）
     this.addCommand({
