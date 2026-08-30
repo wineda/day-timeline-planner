@@ -126,7 +126,7 @@ export const DEFAULT_FOLDER = "Timeline";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 5;
+export const SETTINGS_VERSION = 6;
 
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
@@ -215,8 +215,6 @@ export interface DayTimelineSettings {
   projectGroups: ProjectGroupSetting[];
   /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
   defaultGroupIcon: string;
-  /** ツリーの各プロジェクト行に出すアイコン（Lucide 名か絵文字。"" = なし）。グループ見出しとの見分け用 */
-  defaultProjectIcon: string;
   /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
   /** 左サイドバーで表示中のタブ（Inbox / プロジェクト / 再スケジュール）。記憶される */
@@ -278,7 +276,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   projectsFlatList: false,
   projectGroups: [],
   defaultGroupIcon: "folder",
-  defaultProjectIcon: "milestone",
   sidebarWidth: 220,
   sidebarTab: "inbox",
   reminderEnabled: true,
@@ -293,7 +290,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  * 保存されている設定を現在の版に合わせる。
  * v1（版なし）: 表示時間帯の既定が 0:00〜24:00、フォルダの既定が保管庫直下だった。
  * v2: recurringInstances が「ルールID → ブロックID の文字列」だった。
- * v3: プロジェクト行の既定アイコン（defaultProjectIcon）が target、v4: 同じく tag だった。
+ * v3〜v5: プロジェクト行にアイコン（defaultProjectIcon）を出していた。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -333,11 +330,8 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   delete (s as unknown as Record<string, unknown>).projectGroupOrder;
   // "" は「アイコンなし」の指定なので、文字列でないときだけ既定に戻す
   if (typeof s.defaultGroupIcon !== "string") s.defaultGroupIcon = DEFAULT_SETTINGS.defaultGroupIcon;
-  if (typeof s.defaultProjectIcon !== "string") s.defaultProjectIcon = DEFAULT_SETTINGS.defaultProjectIcon;
-  // 旧既定（v3: target / v4: tag）は現行既定の milestone へ（自分で選んだ別のアイコン・空欄はそのまま）
-  if (version < 5 && (s.defaultProjectIcon === "target" || s.defaultProjectIcon === "tag")) {
-    s.defaultProjectIcon = "milestone";
-  }
+  // v2.43.0 でプロジェクト行のアイコンは廃止（行が見にくくなるため）。保存済みの値は落とす
+  delete (s as unknown as Record<string, unknown>).defaultProjectIcon;
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
   if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
   if (!Array.isArray(s.trackers)) s.trackers = [];
@@ -942,49 +936,32 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           await save();
         })
       );
-    // ツリーに出す既定のアイコン（グループ見出し / プロジェクト行）。プレビュー付きの入力欄
-    const defaultIconSetting = (
-      name: string,
-      desc: string,
-      placeholder: string,
-      get: () => string,
-      set: (v: string) => void
-    ) => {
-      const st = new Setting(containerEl).setName(name).setDesc(desc);
+    // ツリーのグループ見出しに出す既定のアイコン。プレビュー付きの入力欄
+    {
+      const st = new Setting(containerEl)
+        .setName("グループの既定のアイコン")
+        .setDesc(
+          "パネルのツリーのグループ見出しに出すアイコン。Lucide のアイコン名（例: folder）か絵文字。" +
+            "空欄にするとアイコンなし。下の一覧でグループごとに指定するとそちらが優先されます。"
+        );
       const preview = st.nameEl.createSpan({ cls: "dt-group-icon-preview" });
       st.nameEl.prepend(preview);
       const updatePreview = () => {
         preview.empty();
-        if (get().trim()) renderGroupIcon(preview, get().trim());
+        if (s.defaultGroupIcon.trim()) renderGroupIcon(preview, s.defaultGroupIcon.trim());
       };
       updatePreview();
       st.addText((t) => {
-        t.setPlaceholder(placeholder)
-          .setValue(get())
+        t.setPlaceholder("folder")
+          .setValue(s.defaultGroupIcon)
           .onChange(async (v) => {
-            set(v.trim());
+            s.defaultGroupIcon = v.trim();
             updatePreview();
             await save();
           });
         t.inputEl.addClass("dt-group-icon-input");
       });
-    };
-    defaultIconSetting(
-      "グループの既定のアイコン",
-      "パネルのツリーのグループ見出しに出すアイコン。Lucide のアイコン名（例: folder）か絵文字。" +
-        "空欄にするとアイコンなし。下の一覧でグループごとに指定するとそちらが優先されます。",
-      "folder",
-      () => s.defaultGroupIcon,
-      (v) => (s.defaultGroupIcon = v)
-    );
-    defaultIconSetting(
-      "プロジェクトのアイコン",
-      "ツリーの各プロジェクト行の頭に出すアイコン。グループ見出しと見た目で区別しやすくなります。" +
-        "Lucide のアイコン名（例: milestone）か絵文字。空欄にするとアイコンなし。",
-      "milestone",
-      () => s.defaultProjectIcon,
-      (v) => (s.defaultProjectIcon = v)
-    );
+    }
     new Setting(containerEl)
       .setName("プロジェクトのグループ")
       .setDesc(
