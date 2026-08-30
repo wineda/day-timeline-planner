@@ -754,29 +754,33 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* 日時が決まっていない子タスク: 破線のバッジ（月表示の「時刻なしは破線」と同じ約束） */
+/* 日時が決まっていない子タスク: 色で塗りつぶしたバッジ。
+   破線の枠 + 色文字はライトテーマだと細く薄くて読みづらかったので、
+   地を塗って白文字を乗せる（枠は大きさを変えないために透明で残す） */
 .dt-project-child-date.is-undated,
 .dt-project-child-date.is-unscheduled {
-  border: 1px dashed var(--text-faint);
+  border: 1px solid transparent;
   border-radius: var(--radius-s);
   padding: 0 4px;
   font-size: 0.9em;
   line-height: 1.5;
+  color: #fff;
 }
 /* 日付ごと未定はアクセント色で一段目立たせる */
 .dt-project-child-date.is-undated {
-  color: var(--interactive-accent);
-  border-color: color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent, #fff);
 }
-/* 時刻未定（持ち越し・再スケジュール待ち）は遅れが分かるようオレンジで目立たせる */
+/* 時刻未定（持ち越し・再スケジュール待ち）は遅れが分かるようオレンジで目立たせる。
+   テーマの色をそのまま敷くと白文字とのコントラストが足りないので少しだけ沈める */
 .dt-project-child-date.is-unscheduled {
-  color: var(--color-orange, #cf7d1e);
-  border-color: color-mix(in srgb, var(--color-orange, #cf7d1e) 60%, transparent);
+  background: color-mix(in srgb, var(--color-orange, #cf7d1e) 85%, black);
 }
-/* 過去の日に取り残されたタスク（再スケジュール欄）: 赤系でさらに目立たせる */
+/* 過去の日に取り残されたタスク（再スケジュール欄）: 赤系でさらに目立たせる
+   （is-unscheduled と一緒に付くので、後ろに置いて塗りを上書きする） */
 .dt-project-child-date.is-overdue {
-  color: var(--color-red, #c04545);
-  border-color: color-mix(in srgb, var(--color-red, #c04545) 60%, transparent);
+  background: color-mix(in srgb, var(--color-red, #c04545) 90%, black);
+  color: #fff;
 }
 .dt-project-child .dt-tray-title {
   flex: 1 1 auto;
