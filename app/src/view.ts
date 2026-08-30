@@ -608,9 +608,19 @@ export class DayTimelineView extends ItemView {
         console.error(e);
       }
     }
+    // プロジェクトの集計（パネル用）。Inbox の表示判定にも使うので先に読む
+    if (this.plugin.projects && s.showProjects) {
+      try {
+        this.projectData = await this.plugin.projectSummaries();
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      this.projectData = [];
+    }
     const inbox = this.plugin.inbox;
     this.inboxTasks =
-      inbox && s.showInbox ? DayTimelineView.inboxVisible((await inbox.load(INBOX_DATE)).tasks) : [];
+      inbox && s.showInbox ? this.inboxVisible((await inbox.load(INBOX_DATE)).tasks) : [];
     const memberStores = this.visibleMembers().map((m) => this.plugin.memberStores.get(m.id)!);
     const loaded = await Promise.all(
       days.map(async (d): Promise<[string, DayData]> => {
@@ -631,16 +641,6 @@ export class DayTimelineView extends ItemView {
       })
     );
     this.data = new Map(loaded);
-    // プロジェクトの集計（パネル用）
-    if (this.plugin.projects && s.showProjects) {
-      try {
-        this.projectData = await this.plugin.projectSummaries();
-      } catch (e) {
-        console.error(e);
-      }
-    } else {
-      this.projectData = [];
-    }
     this.renderHeader();
     this.renderBanner();
     this.renderInbox();
@@ -825,10 +825,22 @@ export class DayTimelineView extends ItemView {
     };
   }
 
-  /** Inbox パネルに出すタスク: プロジェクトに属さず、未完了のものだけ
-   *（プロジェクト付きはプロジェクトパネルに出る。完了・プロジェクト付きもノートには残る） */
-  private static inboxVisible(tasks: Task[]): Task[] {
-    return tasks.filter((t) => !t.done && !t.project);
+  /** Inbox パネルに出すタスク: 未完了のもののうち、プロジェクト付きでないもの
+   *（プロジェクト付きはプロジェクトパネル側に出る。完了してもノートには残る）。
+   * ただし、そのプロジェクトがパネルに出ていない（完了済み・ノートが見つからない・
+   * パネル非表示）タスクは、どこにも表示されず行方不明になるので Inbox 側に出す */
+  private inboxVisible(tasks: Task[]): Task[] {
+    return tasks.filter((t) => !t.done && (!t.project || !this.projectPanelShows(t.project)));
+  }
+
+  /** そのプロジェクトリンクが、プロジェクトパネルに進行中の行として出ているか */
+  private projectPanelShows(linktext: string): boolean {
+    if (!this.plugin.projects || !this.plugin.settings.showProjects) return false;
+    const src = this.plugin.inbox?.pathFor(INBOX_DATE) ?? "";
+    // プロジェクトの集計（projectSummaries）と同じ方法でリンク先を解決して照合する
+    const dest = this.app.metadataCache.getFirstLinkpathDest(linktext, src);
+    const key = dest?.path ?? linktext + ".md";
+    return this.projectData.some((s) => !s.done && s.ref.linktext + ".md" === key);
   }
 
   /** Inbox だけ読み直す（コマンドから追加したときなど） */
@@ -836,7 +848,7 @@ export class DayTimelineView extends ItemView {
     const inbox = this.plugin.inbox;
     if (!inbox || !this.inboxEl) return;
     this.inboxTasks = this.plugin.settings.showInbox
-      ? DayTimelineView.inboxVisible((await inbox.load(INBOX_DATE)).tasks)
+      ? this.inboxVisible((await inbox.load(INBOX_DATE)).tasks)
       : [];
     this.renderInbox();
   }
@@ -908,6 +920,21 @@ export class DayTimelineView extends ItemView {
           void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
         });
         chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        if (t.project) {
+          // プロジェクトがパネルに出ていない（完了済み・見つからない）ため Inbox に出ているタスク
+          const link = t.project;
+          const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
+          badge.setAttr(
+            "aria-label",
+            `プロジェクト: ${projectDisplayName(link)}\n` +
+              "このプロジェクトはパネルに出ていない（完了済み・ノートが見つからない）ため、タスクを Inbox に表示しています。クリックでノートを開く"
+          );
+          badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+          badge.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            void this.plugin.openProject(link);
+          });
+        }
         chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
         this.attachInboxInteractions(chip, t);
       }
