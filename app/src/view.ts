@@ -825,10 +825,10 @@ export class DayTimelineView extends ItemView {
     };
   }
 
-  /** Inbox パネルに出すタスク: 未完了のものだけ（完了してもノートには残る）。
-   * プロジェクト付きは「▸ プロジェクト名」バッジ付きで並び、プロジェクトパネル側にも出る */
+  /** Inbox パネルに出すタスク: プロジェクトに属さず、未完了のものだけ
+   *（プロジェクト付きはプロジェクトパネルに出る。完了・プロジェクト付きもノートには残る） */
   private static inboxVisible(tasks: Task[]): Task[] {
-    return tasks.filter((t) => !t.done);
+    return tasks.filter((t) => !t.done && !t.project);
   }
 
   /** Inbox だけ読み直す（コマンドから追加したときなど） */
@@ -908,27 +908,7 @@ export class DayTimelineView extends ItemView {
           void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
         });
         chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-        if (t.project) {
-          const link = t.project;
-          const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
-          badge.setAttr("aria-label", `プロジェクト: ${projectDisplayName(link)}\nクリックでノートを開く`);
-          badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-          badge.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            void this.plugin.openProject(link);
-          });
-        }
-        chip.setAttr(
-          "aria-label",
-          [
-            t.title,
-            t.project ? `プロジェクト: ${projectDisplayName(t.project)}` : "",
-            t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
-            t.preview,
-          ]
-            .filter(Boolean)
-            .join("\n")
-        );
+        chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
         this.attachInboxInteractions(chip, t);
       }
     }
@@ -1025,7 +1005,7 @@ export class DayTimelineView extends ItemView {
       const addBtn = this.iconButton(
         row,
         "plus",
-        "このプロジェクトのタスクを追加（時刻を入れなければ日付を決めず Inbox へ）",
+        "このプロジェクトのタスクを追加（時刻を入れなければ日付未定で登録）",
         () => this.openProjectCreateModal(key)
       );
       addBtn.addClass("dt-project-add");
@@ -1085,11 +1065,11 @@ export class DayTimelineView extends ItemView {
         });
         const dateEl = item.createSpan({
           cls: "dt-project-child-date",
-          text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "Inbox",
+          text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "未定",
         });
-        // 日時が決まっていないものは破線のバッジで見分ける（日付なし=Inbox はアクセント色）
+        // 日時が決まっていないものは破線のバッジで見分ける（日付ごと未定はアクセント色）
         const scheduled = t.start !== null && t.end !== null;
-        if (child.date === null) dateEl.addClass("is-inbox");
+        if (child.date === null) dateEl.addClass("is-undated");
         else if (!scheduled) dateEl.addClass("is-unscheduled");
         item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
         const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
@@ -1106,11 +1086,11 @@ export class DayTimelineView extends ItemView {
             (child.date
               ? moment(child.date).format("M月D日 (ddd)") +
                 (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
-              : "Inbox（日付は未定）") +
+              : "日付は未定") +
             "\nクリックでその日へ移動、右クリックでメニュー"
         );
         item.addEventListener("click", () => {
-          if (child.date === null) return; // Inbox のタスクは上の Inbox 一覧に居る
+          if (child.date === null) return; // 日付未定のタスクは移動先の日が無い
           this.setDate(child.date);
         });
         item.addEventListener("contextmenu", (e: MouseEvent) => {
@@ -2421,7 +2401,8 @@ export class DayTimelineView extends ItemView {
 
   /**
    * プロジェクトパネルの「＋」からのタスク追加。日付はまだ決めない前提で、
-   * 時刻を空のまま保存すると Inbox へ、時刻を入れると表示中の日へ登録する
+   * 時刻を空のまま保存すると日付未定（実体は Inbox のノート。パネルには「未定」と表示）、
+   * 時刻を入れると表示中の日へ登録する
    */
   private openProjectCreateModal(project: string): void {
     const inbox = this.plugin.inbox;
@@ -2437,8 +2418,8 @@ export class DayTimelineView extends ItemView {
       initial: { title: "", start: null, end: null, done: false, project },
       snapMinutes: s.snapMinutes,
       allowUnscheduled: true,
-      dateLabel: "Inbox",
-      unscheduledHint: `時刻なし — 日付を決めずに Inbox へ登録します（時刻を入れると ${dayLabel} に登録）`,
+      dateLabel: "日付未定",
+      unscheduledHint: `時刻なし — 日付を決めずに登録します（プロジェクトパネルに「未定」として並びます。時刻を入れると ${dayLabel} に登録）`,
       tagChoices: s.tagColors,
       showDoneCondition: true,
       trackers: s.trackers,
@@ -2451,10 +2432,10 @@ export class DayTimelineView extends ItemView {
         }
         try {
           await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
-          new Notice("Inbox に追加しました（日付は未定のまま）");
+          new Notice("日付未定で登録しました（プロジェクトパネルに表示されます）");
         } catch (e) {
           console.error(e);
-          new Notice("Inbox に追加できませんでした: " + String(e));
+          new Notice("登録できませんでした: " + String(e));
         }
         await this.reload();
       },
