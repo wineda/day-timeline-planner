@@ -1112,7 +1112,7 @@ export class DayTimelineView extends ItemView {
           dot.style.background = color;
         }
         const box = chip.createDiv("dt-tray-check");
-        setIcon(box, t.done ? "check-circle-2" : "circle");
+        setIcon(box, t.done ? "check-square" : "square");
         box.addEventListener("click", (e) => {
           e.stopPropagation();
           void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
@@ -1472,7 +1472,7 @@ export class DayTimelineView extends ItemView {
       const item = childrenEl.createDiv("dt-project-child");
       item.toggleClass("is-done", t.done);
       const box = item.createDiv("dt-tray-check");
-      setIcon(box, t.done ? "check-circle-2" : "circle");
+      setIcon(box, t.done ? "check-square" : "square");
       box.addEventListener("click", (e) => {
         e.stopPropagation();
         if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
@@ -1807,7 +1807,7 @@ export class DayTimelineView extends ItemView {
           dot.style.background = color;
         }
         const box = item.createDiv("dt-tray-check");
-        setIcon(box, t.done ? "check-circle-2" : "circle");
+        setIcon(box, t.done ? "check-square" : "square");
         box.addEventListener("click", (e) => {
           e.stopPropagation();
           void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
