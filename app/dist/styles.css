@@ -477,9 +477,61 @@
   margin-left: 0;
 }
 
-/* 1行1タスクで縦に並べる。プロジェクトの一覧が直下に来るよう、中身ぶんの高さだけ使う */
+/* パネルのタブ（Inbox ⇄ プロジェクト ⇄ 再スケジュール。2つ以上あるときだけ出る） */
+.dt-panel-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 3px 4px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+.dt-panel-tab {
+  position: relative;
+  /* 名前の長さに合わせて配分し、余りを分け合う（均等割だと長い名前だけ省略されてしまう） */
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  padding: 1px 2px;
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dt-panel-tab:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.dt-panel-tab.is-active {
+  color: var(--text-normal);
+  font-weight: 600;
+  background: var(--background-primary);
+  box-shadow: inset 0 -2px 0 var(--interactive-accent);
+}
+/* 過去に取り残された時刻なしタスクがあるとき（再スケジュールのタブ）の赤い点 */
+.dt-panel-tab.has-overdue {
+  padding-right: 9px; /* 点が名前に重ならないぶんの余白 */
+}
+.dt-panel-tab.has-overdue::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-red, #c04545);
+}
+
+/* 1行1タスクで縦に並べる。タブで1つだけ表示するので、パネルの高さいっぱいを使う */
 .dt-inbox-list {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 60px;
   overflow-y: auto;
   display: flex;
@@ -530,24 +582,17 @@
   background: var(--background-modifier-border);
 }
 
-/* ---------- プロジェクトのパネル（Inbox の下） ---------- */
+/* ---------- プロジェクトのタブの中身 ---------- */
 .dt-projects {
-  border-top: 1px solid var(--background-modifier-border);
   min-height: 60px;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-}
-.dt-projects-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px 2px;
 }
 .dt-projects-list {
   overflow-y: auto;
   min-height: 0;
-  padding: 2px 6px 8px;
+  padding: 6px 6px 8px;
 }
 /* グループの見出し行（frontmatter の group で分けたプロジェクトの区切り） */
 .dt-project-group {
@@ -795,10 +840,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- 再スケジュール（時刻を決めていないタスク。プロジェクトの下） ---------- */
+/* ---------- 再スケジュールのタブの中身（時刻を決めていないタスク） ---------- */
 .dt-reschedule {
-  border-top: 1px solid var(--background-modifier-border);
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 48px;
   overflow-y: auto;
 }
@@ -807,7 +851,7 @@
   flex-direction: column;
   align-items: stretch;
   gap: 3px;
-  padding: 0 6px 6px;
+  padding: 6px;
 }
 .dt-reschedule-item {
   display: flex;
