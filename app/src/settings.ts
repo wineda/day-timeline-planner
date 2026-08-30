@@ -600,8 +600,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
 
     if (s.storageFormat === "block") {
       new Setting(containerEl)
-        .setName("未スケジュールのトレイを表示")
-        .setDesc("時刻が決まっていないタスクをタイムラインの上に一覧します。ドラッグで時刻を割り当てられます。")
+        .setName("再スケジュール欄を表示")
+        .setDesc("時刻を決めていないタスクを、左サイドバー（プロジェクトの下）の「再スケジュール」欄に日付付きで一覧します。タイムラインへドラッグで時刻を割り当てられます。")
         .addToggle((t) =>
           t.setValue(s.showUnscheduledTray).onChange(async (v) => {
             s.showUnscheduledTray = v;

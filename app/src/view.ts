@@ -95,7 +95,6 @@ export class DayTimelineView extends ItemView {
   private projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
   private expandedProjects = new Set<string>();
-  private trayEl!: HTMLElement;
   private scrollEl!: HTMLElement;
   private headersEl!: HTMLElement;
   private labelsEl!: HTMLElement;
@@ -421,7 +420,6 @@ export class DayTimelineView extends ItemView {
     );
 
     this.bannerEl = root.createDiv("dt-banner");
-    this.trayEl = root.createDiv("dt-tray");
     // 左に Inbox のサイドバー、右にタイムライン
     const body = root.createDiv("dt-body");
     this.inboxEl = body.createDiv("dt-inbox");
@@ -608,9 +606,19 @@ export class DayTimelineView extends ItemView {
         console.error(e);
       }
     }
+    // プロジェクトの集計（パネル用）。Inbox の表示判定にも使うので先に読む
+    if (this.plugin.projects && s.showProjects) {
+      try {
+        this.projectData = await this.plugin.projectSummaries();
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      this.projectData = [];
+    }
     const inbox = this.plugin.inbox;
     this.inboxTasks =
-      inbox && s.showInbox ? DayTimelineView.inboxVisible((await inbox.load(INBOX_DATE)).tasks) : [];
+      inbox && s.showInbox ? this.inboxVisible((await inbox.load(INBOX_DATE)).tasks) : [];
     const memberStores = this.visibleMembers().map((m) => this.plugin.memberStores.get(m.id)!);
     const loaded = await Promise.all(
       days.map(async (d): Promise<[string, DayData]> => {
@@ -631,20 +639,9 @@ export class DayTimelineView extends ItemView {
       })
     );
     this.data = new Map(loaded);
-    // プロジェクトの集計（パネル用）
-    if (this.plugin.projects && s.showProjects) {
-      try {
-        this.projectData = await this.plugin.projectSummaries();
-      } catch (e) {
-        console.error(e);
-      }
-    } else {
-      this.projectData = [];
-    }
     this.renderHeader();
     this.renderBanner();
     this.renderInbox();
-    this.renderTray();
     this.renderEvents();
     if (this.shouldScroll) this.scrollToInitial();
   }
@@ -825,10 +822,22 @@ export class DayTimelineView extends ItemView {
     };
   }
 
-  /** Inbox パネルに出すタスク: プロジェクトに属さず、未完了のものだけ
-   *（プロジェクト付きはプロジェクトパネルに出る。完了・プロジェクト付きもノートには残る） */
-  private static inboxVisible(tasks: Task[]): Task[] {
-    return tasks.filter((t) => !t.done && !t.project);
+  /** Inbox パネルに出すタスク: 未完了のもののうち、プロジェクト付きでないもの
+   *（プロジェクト付きはプロジェクトパネル側に出る。完了してもノートには残る）。
+   * ただし、そのプロジェクトがパネルに出ていない（完了済み・ノートが見つからない・
+   * パネル非表示）タスクは、どこにも表示されず行方不明になるので Inbox 側に出す */
+  private inboxVisible(tasks: Task[]): Task[] {
+    return tasks.filter((t) => !t.done && (!t.project || !this.projectPanelShows(t.project)));
+  }
+
+  /** そのプロジェクトリンクが、プロジェクトパネルに進行中の行として出ているか */
+  private projectPanelShows(linktext: string): boolean {
+    if (!this.plugin.projects || !this.plugin.settings.showProjects) return false;
+    const src = this.plugin.inbox?.pathFor(INBOX_DATE) ?? "";
+    // プロジェクトの集計（projectSummaries）と同じ方法でリンク先を解決して照合する
+    const dest = this.app.metadataCache.getFirstLinkpathDest(linktext, src);
+    const key = dest?.path ?? linktext + ".md";
+    return this.projectData.some((s) => !s.done && s.ref.linktext + ".md" === key);
   }
 
   /** Inbox だけ読み直す（コマンドから追加したときなど） */
@@ -836,7 +845,7 @@ export class DayTimelineView extends ItemView {
     const inbox = this.plugin.inbox;
     if (!inbox || !this.inboxEl) return;
     this.inboxTasks = this.plugin.settings.showInbox
-      ? DayTimelineView.inboxVisible((await inbox.load(INBOX_DATE)).tasks)
+      ? this.inboxVisible((await inbox.load(INBOX_DATE)).tasks)
       : [];
     this.renderInbox();
   }
@@ -848,8 +857,10 @@ export class DayTimelineView extends ItemView {
     this.inboxEl.empty();
     const showInbox = !!inbox && s.showInbox;
     const showProjects = !!this.plugin.projects && s.showProjects;
-    this.inboxEl.toggleClass("is-visible", showInbox || showProjects);
-    if (!showInbox && !showProjects) return;
+    const reschedule = this.rescheduleGroups();
+    const showReschedule = reschedule.length > 0;
+    this.inboxEl.toggleClass("is-visible", showInbox || showProjects || showReschedule);
+    if (!showInbox && !showProjects && !showReschedule) return;
     const collapsed = s.inboxCollapsed;
     this.inboxEl.toggleClass("is-collapsed", collapsed);
     this.applySidebarWidth(collapsed ? null : s.sidebarWidth);
@@ -868,7 +879,10 @@ export class DayTimelineView extends ItemView {
       doToggle
     );
     toggle.addClass("dt-inbox-toggle");
-    const label = head.createSpan({ cls: "dt-inbox-label", text: showInbox ? "Inbox" : "プロジェクト" });
+    const label = head.createSpan({
+      cls: "dt-inbox-label",
+      text: showInbox ? "Inbox" : showProjects ? "プロジェクト" : "再スケジュール",
+    });
     label.onclick = doToggle;
     if (showInbox) {
       head.createSpan({ cls: "dt-inbox-count", text: String(this.inboxTasks.length) });
@@ -908,11 +922,27 @@ export class DayTimelineView extends ItemView {
           void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
         });
         chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        if (t.project) {
+          // プロジェクトがパネルに出ていない（完了済み・見つからない）ため Inbox に出ているタスク
+          const link = t.project;
+          const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
+          badge.setAttr(
+            "aria-label",
+            `プロジェクト: ${projectDisplayName(link)}\n` +
+              "このプロジェクトはパネルに出ていない（完了済み・ノートが見つからない）ため、タスクを Inbox に表示しています。クリックでノートを開く"
+          );
+          badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+          badge.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            void this.plugin.openProject(link);
+          });
+        }
         chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
         this.attachInboxInteractions(chip, t);
       }
     }
     if (showProjects) this.renderProjects();
+    if (showReschedule) this.renderReschedule(reschedule);
   }
 
   /** サイドバーの幅を反映する（null なら CSS の既定 = 畳んだ状態に任せる） */
@@ -1169,52 +1199,67 @@ export class DayTimelineView extends ItemView {
   }
 
   /** 未スケジュールのタスクのトレイ */
-  private renderTray(): void {
+  /** 再スケジュール欄に出すタスク: 表示中の日の、時刻を決めていないタスク（日付順）。
+   * 月表示では時刻なしのタスクもマスの中に出すので欄は使わない */
+  private rescheduleGroups(): { date: Date; tasks: Task[] }[] {
     const s = this.plugin.settings;
-    this.trayEl.empty();
-    const groups = this.columns
+    if (!this.isTimeline() || !s.showUnscheduledTray || !this.plugin.store.supportsUnscheduled) return [];
+    return this.columns
       .map((c) => ({ date: c.date, tasks: this.dataFor(c.date).tasks.filter((t) => !isScheduled(t)) }))
       .filter((g) => g.tasks.length > 0);
-    // 月表示では時刻なしのタスクもマスの中に出すのでトレイは使わない
-    const show =
-      this.isTimeline() && s.showUnscheduledTray && this.plugin.store.supportsUnscheduled && groups.length > 0;
-    this.trayEl.toggleClass("is-visible", show);
-    if (!show) return;
+  }
 
-    const label = this.trayEl.createDiv("dt-tray-label");
-    label.setText("未スケジュール");
-    const addBtn = this.iconButton(this.trayEl, "plus", "未スケジュールのタスクを追加", () =>
+  /** 再スケジュール欄（サイドバーのプロジェクトの下）: 時刻を決めていないタスクを縦に一覧。
+   * 旧・タイムライン上部の「未スケジュール」トレイの置き換え */
+  private renderReschedule(groups: { date: Date; tasks: Task[] }[]): void {
+    const wrap = this.inboxEl.createDiv("dt-reschedule");
+    const head = wrap.createDiv("dt-projects-head");
+    head.createSpan({ cls: "dt-inbox-label", text: "再スケジュール" });
+    head.createSpan({
+      cls: "dt-inbox-count",
+      text: String(groups.reduce((n, g) => n + g.tasks.length, 0)),
+    });
+    const addBtn = this.iconButton(head, "plus", "時刻を決めていないタスクを追加", () =>
       this.openCreateModal(this.date, null, null)
     );
-    addBtn.addClass("dt-tray-add");
+    addBtn.addClass("dt-reschedule-add");
 
-    const list = this.trayEl.createDiv("dt-tray-list");
+    const list = wrap.createDiv("dt-reschedule-list");
     for (const g of groups) {
-      if (this.columns.length > 1) {
-        list.createSpan({
-          cls: "dt-tray-day",
-          text: `${g.date.getMonth() + 1}/${g.date.getDate()}(${WEEKDAY_JA[g.date.getDay()]})`,
-        });
-      }
       for (const t of g.tasks) {
-        const chip = list.createDiv("dt-tray-chip");
-        chip.toggleClass("is-done", t.done);
+        const item = list.createDiv("dt-tray-chip dt-reschedule-item");
+        item.toggleClass("is-done", t.done);
         const color = this.taskColor(t);
         if (color) {
-          const dot = chip.createSpan("dt-tray-color");
+          const dot = item.createSpan("dt-tray-color");
           dot.style.background = color;
         }
-        const owner = this.ownerName(t);
-        if (owner) chip.createSpan({ cls: "dt-owner-label", text: owner });
-        const box = chip.createDiv("dt-tray-check");
+        const box = item.createDiv("dt-tray-check");
         setIcon(box, t.done ? "check-circle-2" : "circle");
         box.addEventListener("click", (e) => {
           e.stopPropagation();
           void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
         });
-        chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-        chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
-        this.attachTrayInteractions(chip, g.date, t);
+        item.createSpan({
+          cls: "dt-project-child-date is-unscheduled",
+          text: `${g.date.getMonth() + 1}/${g.date.getDate()}`,
+        });
+        const owner = this.ownerName(t);
+        if (owner) item.createSpan({ cls: "dt-owner-label", text: owner });
+        item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        item.setAttr(
+          "aria-label",
+          [
+            t.title || "(無題)",
+            `${moment(g.date).format("M月D日 (ddd)")}（時刻は未定）`,
+            t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
+            t.preview,
+            "タイムラインへドラッグで時刻を割り当て。クリックで編集、右クリックでメニュー",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+        this.attachTrayInteractions(item, g.date, t);
       }
     }
   }
