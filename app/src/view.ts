@@ -156,7 +156,10 @@ export class DayTimelineView extends ItemView {
 
     const onFile = (f: TAbstractFile) => this.onVaultChange(f.path);
     this.registerEvent(this.app.vault.on("modify", onFile));
-    this.registerEvent(this.app.vault.on("create", onFile));
+    // 保管庫の読み込み中は既存の全ファイルにも create が発火するので、復元後に登録する
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvent(this.app.vault.on("create", onFile));
+    });
     this.registerEvent(this.app.vault.on("delete", onFile));
     this.registerEvent(
       this.app.vault.on("rename", (f, oldPath) => {
@@ -173,6 +176,20 @@ export class DayTimelineView extends ItemView {
     // エディタのカーソル位置に合わせて、対応するタスクをハイライト
     this.registerDomEvent(document, "selectionchange", () => this.syncCursorDebounced());
 
+    // Obsidian の起動時（レイアウト復元中）に開かれたときは、保管庫の索引や
+    // リンク索引（resolvedLinks）がまだできておらず、そのまま読むと再スケジュール欄や
+    // プロジェクト配下のタスクが空のまま描画されてしまう。初回の読み込みは復元後に行い、
+    // リンク索引の初回構築が終わったタイミングでももう一度読み直す
+    if (!this.app.workspace.layoutReady) {
+      this.renderHeader();
+      const ref = this.app.metadataCache.on("resolved", () => {
+        this.app.metadataCache.offref(ref);
+        this.reloadDebounced();
+      });
+      this.registerEvent(ref);
+      this.app.workspace.onLayoutReady(() => void this.reload());
+      return;
+    }
     await this.reload();
   }
 
