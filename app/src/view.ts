@@ -1298,10 +1298,9 @@ export class DayTimelineView extends ItemView {
     const hasGroups = groups.some((g) => g.name !== null);
     // どのプロジェクトにもグループが無ければ今までどおりのフラットな一覧。
     // 「フラットな一覧で表示」がオンのときも見出しを出さず、グループ順に並べたまま平らにする
-    // （グループはツールチップで分かる）
     if (!hasGroups || this.plugin.settings.projectsFlatList) {
       for (const g of groups) {
-        for (const sum of g.items) this.renderProjectRow(list, sum, hasGroups);
+        for (const sum of g.items) this.renderProjectRow(list, sum);
       }
       return;
     }
@@ -1336,8 +1335,8 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する。showGroup でツールチップにグループ名を足す */
-  private renderProjectRow(container: HTMLElement, sum: ProjectSummary, showGroup = false): void {
+  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する */
+  private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
     const key = sum.ref.linktext;
     const expanded = this.expandedProjects.has(key);
 
@@ -1384,16 +1383,7 @@ export class DayTimelineView extends ItemView {
         ? `${sum.doneCount}/${total}・予${hmm(sum.planMin)}・実${hmm(sum.actMin)}`
         : "タスクなし"
     );
-    row.setAttr(
-      "aria-label",
-      `${sum.ref.name}\n` +
-        (showGroup ? `グループ: ${sum.ref.group ?? "未分類"}\n` : "") +
-        (fields?.due ? `期日: ${fields.due}\n` : "") +
-        (fields?.ticket ? `チケット: ${fields.ticket.tracker || ""}#${fields.ticket.id}\n` : "") +
-        (fields?.docs.length ? `ドキュメント: ${fields.docs.map((d) => d.label).join("・")}\n` : "") +
-        `${sum.doneCount}/${total} 完了・予定 ${hmm(sum.planMin)}・実績 ${hmm(sum.actMin)}\n` +
-        "クリックで展開、ドラッグでタイムラインに子タスクを作成、右クリックでメニュー"
-    );
+    // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
     const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
       void this.plugin.openProject(key)
     );
