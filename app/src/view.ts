@@ -92,6 +92,8 @@ export class DayTimelineView extends ItemView {
   private plugin: DayTimelinePlugin;
   /** 基準日。日表示ではこの日、週表示ではこの日を含む週を表示する */
   private date: Date = startOfDay(new Date());
+  /** 日付が変わったのを見つけるための「今日」。30 秒ごとの更新で見比べる */
+  private todayKey: string = dateKey(startOfDay(new Date()));
   private mode: ViewMode;
   private columns: DayColumn[] = [];
   private data = new Map<string, DayData>();
@@ -199,6 +201,7 @@ export class DayTimelineView extends ItemView {
     );
     this.registerInterval(
       window.setInterval(() => {
+        this.handleDayChange();
         this.updateNowLine();
         this.renderTracking();
       }, 30_000)
@@ -287,7 +290,9 @@ export class DayTimelineView extends ItemView {
   /** 設定変更時などに、グリッドから作り直す */
   rebuild(): void {
     if (!this.scrollEl) return;
+    const prevMode = this.mode;
     this.mode = this.plugin.settings.viewMode; // 設定画面で「既定の表示」を変えたときも追従する
+    if (this.mode !== prevMode) this.alignThreeDayToToday();
     this.buildGrid();
     this.shouldScroll = true;
     void this.reload();
@@ -337,11 +342,39 @@ export class DayTimelineView extends ItemView {
     this.setDate(d);
   }
 
+  /**
+   * 3日表示で、今日が真ん中・右端に来ているか。
+   * 今日が範囲に入らない（別の日を見に行っている）ときは false。
+   */
+  private threeDayNeedsToday(): boolean {
+    if (this.mode !== "3day") return false;
+    return [0, 1, 2].map((i) => addDays(this.date, i)).findIndex((d) => isToday(d)) > 0;
+  }
+
+  /** 3日表示の基準日（＝一番左の日）を今日にそろえる。呼び出し側でグリッドを作り直す */
+  private alignThreeDayToToday(): void {
+    if (this.threeDayNeedsToday()) this.date = startOfDay(new Date());
+  }
+
+  /** 日をまたいだとき: 3日表示は今日が左端に来るよう寄せ直し、そうでなければ「今日」の色を付け替える */
+  private handleDayChange(): void {
+    const key = dateKey(startOfDay(new Date()));
+    if (key === this.todayKey) return;
+    this.todayKey = key;
+    if (this.threeDayNeedsToday()) {
+      this.setDate(startOfDay(new Date()));
+      return;
+    }
+    this.renderDayHeaders();
+    this.renderHeader();
+  }
+
   setViewMode(mode: ViewMode): void {
     if (mode === this.mode) return;
     this.mode = mode;
     this.plugin.settings.viewMode = mode;
     void this.plugin.persistSettings();
+    this.alignThreeDayToToday();
     this.buildGrid();
     this.shouldScroll = true;
     void this.reload();
