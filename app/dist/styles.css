@@ -622,6 +622,11 @@
   color: var(--color-orange, #cf7d1e);
   border-color: color-mix(in srgb, var(--color-orange, #cf7d1e) 60%, transparent);
 }
+/* 過去の日に取り残されたタスク（再スケジュール欄）: 赤系でさらに目立たせる */
+.dt-project-child-date.is-overdue {
+  color: var(--color-red, #c04545);
+  border-color: color-mix(in srgb, var(--color-red, #c04545) 60%, transparent);
+}
 .dt-project-child .dt-tray-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -1364,6 +1369,10 @@
 .dt-modal .dt-time-input {
   width: 92px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.dt-modal .dt-date-field {
+  width: 150px;
   font-variant-numeric: tabular-nums;
 }
 .dt-modal .dt-actual-input {

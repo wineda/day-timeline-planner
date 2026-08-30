@@ -1,4 +1,4 @@
-import { App, DropdownComponent, Modal, Notice, Setting, setIcon } from "obsidian";
+import { App, DropdownComponent, Modal, Notice, Setting, moment, setIcon } from "obsidian";
 import type { TaskDraft } from "./model";
 import { projectDisplayName, type ProjectRef } from "./project";
 import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
@@ -13,6 +13,17 @@ export interface TaskModalOptions {
   allowUnscheduled: boolean;
   /** 対象の日付の表示（週表示のときにどの日か分かるように） */
   dateLabel?: string;
+  /**
+   * 日付の入力欄。渡すと日付を編集できる（value は "YYYY-MM-DD"、null = 日付未定）。
+   * 選んだ日付は onSubmit の第2引数で返す（undefined = 欄なし / null = 日付未定）
+   */
+  dateField?: {
+    value: string | null;
+    /** 空にして「日付未定」にできるか */
+    allowEmpty?: boolean;
+    /** 空のときに欄の下へ出すヒント */
+    hint?: string;
+  };
   /** 時刻が空のときに時間欄の下へ出すヒント（既定は「時刻なし（未スケジュール）」） */
   unscheduledHint?: string;
   /** 設定画面で登録したタグ（ボタンで選べるようにする） */
@@ -34,7 +45,8 @@ export interface TaskModalOptions {
   /** 「誰の予定か」の選択肢（無ければ欄を出さない） */
   owners?: { id: string | null; name: string; color: string }[];
   initialOwner?: string | null;
-  onSubmit: (data: TaskDraft) => void | Promise<void>;
+  /** date: dateField を渡したときの選択日（null = 日付未定 / undefined = 欄なし） */
+  onSubmit: (data: TaskDraft, date?: Date | null) => void | Promise<void>;
   /**
    * 変更を自動保存する（編集時のみ）。渡すと保存ボタンの代わりに「閉じる」を出し、
    * 項目が変わるたびに（少し待ってから）呼ばれる。戻り値は保存できたかどうか。
@@ -67,6 +79,9 @@ export class TaskModal extends Modal {
   private stepsBarEl!: HTMLElement;
   private startText: string;
   private endText: string;
+  /** 日付欄の入力（"YYYY-MM-DD"。空 = 日付未定）。dateField を渡したときだけ使う */
+  private dateText: string;
+  private initialDateText: string;
   private hintEl!: HTMLElement;
   /** 実績の入力内容（"10:05 - 11:20 / 13:00 - 13:30" のような文字列） */
   private actualText: string;
@@ -107,6 +122,7 @@ export class TaskModal extends Modal {
     this.selectedTags = selected;
     this.startText = opts.initial.start === null ? "" : minutesToHHMM(opts.initial.start);
     this.endText = opts.initial.end === null ? "" : minutesToHHMM(opts.initial.end);
+    this.dateText = this.initialDateText = opts.dateField?.value ?? "";
     this.actualText = formatActualRanges(opts.initial.actual ?? []);
   }
 
@@ -163,6 +179,53 @@ export class TaskModal extends Modal {
         tg.setValue(this.done).onChange((v) => (this.done = v));
         doneWrap.appendChild(tg.toggleEl);
       });
+    }
+
+    // ---- 日付（dateField を渡したときだけ。変えると別の日のノートへ移る）----
+    if (this.opts.dateField) {
+      const df = this.opts.dateField;
+      const dateSetting = new Setting(contentEl).setName("日付");
+      tip(
+        dateSetting.settingEl,
+        df.allowEmpty
+          ? "タスクの日付。変えるとその日のノートへ移り、空にすると「日付未定」になります。"
+          : "タスクの日付。変えると、その日のノートへ移ります。"
+      );
+      const dateInput = dateSetting.controlEl.createEl("input", {
+        type: "date",
+        cls: "dt-date-field",
+      });
+      dateInput.value = this.dateText;
+      const updateDateHint = () => {
+        const d = this.parseDateText();
+        if (d) {
+          dateSetting.descEl.setText(moment(d).format("M月D日 (ddd)"));
+        } else {
+          dateSetting.descEl.setText(
+            df.allowEmpty ? df.hint ?? "日付未定" : "日付を入力してください"
+          );
+        }
+      };
+      const onDateInput = () => {
+        this.dateText = dateInput.value;
+        updateDateHint();
+      };
+      dateInput.addEventListener("input", onDateInput);
+      dateInput.addEventListener("change", onDateInput);
+      dateInput.addEventListener("keydown", onKey);
+      if (df.allowEmpty) {
+        dateSetting.addExtraButton((b) =>
+          b
+            .setIcon("calendar-x")
+            .setTooltip("日付を外して「日付未定」にする")
+            .onClick(() => {
+              this.dateText = "";
+              dateInput.value = "";
+              updateDateHint();
+            })
+        );
+      }
+      updateDateHint();
     }
 
     // ---- 時間・実績 ----
@@ -620,6 +683,11 @@ export class TaskModal extends Modal {
     // ステップの追加欄に書きかけの文字が残っていれば拾う
     const pending = this.stepAddInput?.value.trim();
     if (pending) this.steps.push({ text: pending, done: false, children: [] });
+    if (this.opts.dateField && !this.opts.dateField.allowEmpty && this.parseDateText() === null) {
+      // 日付が空のまま閉じられた: 日付以外だけ保存する
+      this.dateText = this.initialDateText;
+      new Notice("日付が空のため、日付は変更していません");
+    }
     if (this.opts.showActual && this.parseActual() === null) {
       // 実績が入力途中のまま閉じられた: 実績以外だけ保存する
       const prev = this.savedJson ? (JSON.parse(this.savedJson) as TaskDraft) : this.opts.initial;
@@ -637,8 +705,8 @@ export class TaskModal extends Modal {
       times = r;
     }
     const data = this.buildDraft(times);
-    if (JSON.stringify(data) === this.initialJson) return;
-    void this.opts.onSubmit(data);
+    if (JSON.stringify(data) === this.initialJson && this.dateText === this.initialDateText) return;
+    void this.opts.onSubmit(data, this.dateSelection());
   }
 
   private setAutosaveStatus(text: string, isError = false): void {
@@ -935,6 +1003,21 @@ export class TaskModal extends Modal {
     return parseActualRanges(this.actualText);
   }
 
+  /** 日付欄の入力（"YYYY-MM-DD"）を日付に。空・読めなければ null */
+  private parseDateText(): Date | null {
+    const t = this.dateText.trim();
+    if (!t) return null;
+    const [y, m, d] = t.split("-").map(Number);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d);
+  }
+
+  /** onSubmit に渡す選択日（undefined = 日付欄なし / null = 日付未定） */
+  private dateSelection(): Date | null | undefined {
+    if (!this.opts.dateField) return undefined;
+    return this.parseDateText();
+  }
+
   private updateHint(): void {
     const r = this.parse();
     if ("error" in r) {
@@ -959,6 +1042,10 @@ export class TaskModal extends Modal {
       new Notice("実績は 10:05 - 11:20 のように入力してください");
       return;
     }
+    if (this.opts.dateField && !this.opts.dateField.allowEmpty && this.parseDateText() === null) {
+      new Notice("日付を入力してください");
+      return;
+    }
     if (this.autosaveOn) {
       // 変更があれば onClose 側（saveOnClose）が保存する
       this.close();
@@ -966,7 +1053,7 @@ export class TaskModal extends Modal {
     }
     const data = this.buildDraft(r);
     this.close();
-    await this.opts.onSubmit(data);
+    await this.opts.onSubmit(data, this.dateSelection());
   }
 
   /** いまの入力内容を TaskDraft にまとめる */
