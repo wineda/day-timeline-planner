@@ -339,6 +339,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative; /* 右下の「＋」（.dt-fab）の基準 */
 }
 
 /* ツールバー（日付ナビ・モード切替・メニュー）: タイムラインの直上に1行 */
@@ -2450,4 +2451,111 @@
   .dt-retro-field {
     transition: none;
   }
+}
+
+/* ---------- モバイル・タッチ操作 ---------- */
+
+/* 縦のスクロールはブラウザに任せ、横方向は「スワイプで日付移動」と長押しドラッグに使う。
+ * これが無いと横スワイプがドラッグ選択と解釈され、タスク作成ダイアログが誤って開く */
+.dt-scroll {
+  touch-action: pan-y;
+}
+
+/* 長押しで iOS の文字選択・コールアウトが出ないように */
+.dt-canvas,
+.dt-event,
+.dt-month-cell {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 長押しで「持ち上げた」タスク（ここからドラッグで移動・長さ変更） */
+.dt-event.is-lifted {
+  transform: scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  filter: brightness(1.07);
+  z-index: 20;
+}
+
+/* タッチで空き時間をタップしたときの「＋ 時刻」チップ。もう一度タップで作成ダイアログ */
+.dt-touch-chip {
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  min-height: 26px;
+  background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.38);
+  border-style: solid;
+  z-index: 6;
+}
+
+/* リサイズハンドル（下端）を指で掴める大きさにし、つまみを見せる */
+body.is-mobile .dt-event-resize {
+  height: 18px;
+}
+body.is-mobile .dt-event.is-short .dt-event-resize,
+body.is-mobile .dt-event.is-tiny .dt-event-resize {
+  height: 10px;
+}
+body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+/* 狭い画面: ツールバーを整理する（範囲の予実合計は出さず、＋は右下の FAB に置き換え） */
+.dt-view.is-narrow .dt-range-total {
+  display: none;
+}
+.dt-view.is-narrow .dt-toolbar-add {
+  display: none;
+}
+.dt-view.is-narrow .dt-toolbar {
+  gap: 2px 4px;
+  padding: 4px 6px;
+}
+
+/* モバイルはタップの的を大きく */
+body.is-mobile .dt-toolbar .dt-mode-btn,
+body.is-mobile .dt-toolbar .dt-today-btn,
+body.is-mobile .dt-toolbar .dt-icon-btn,
+body.is-mobile .dt-toolbar .dt-view-menu-btn,
+body.is-mobile .dt-toolbar .dt-date-label {
+  min-height: 34px;
+}
+
+/* 右下の「＋」（狭い画面だけ表示） */
+.dt-fab {
+  display: none;
+  position: absolute;
+  right: 16px;
+  bottom: 20px;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 30;
+}
+.dt-view.is-narrow .dt-fab {
+  display: flex;
+}
+.dt-fab:hover {
+  background: var(--interactive-accent-hover);
+}
+.dt-fab svg {
+  width: 26px;
+  height: 26px;
 }

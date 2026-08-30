@@ -187,6 +187,8 @@ export interface DayTimelineSettings {
   viewLocation: ViewLocation;
   /** 日表示 / 週表示 */
   viewMode: ViewMode;
+  /** スマホ（Platform.isPhone）での表示モード。画面が狭く週（7列）は使いにくいので別に記憶する */
+  viewModeMobile: ViewMode;
   /** 週の始まり（0 = 日曜 … 6 = 土曜） */
   weekStart: number;
   /** タグごとの色 */
@@ -264,6 +266,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showUnscheduledTray: true,
   viewLocation: "tab",
   viewMode: "week",
+  viewModeMobile: "day",
   weekStart: 0,
   tagColors: [],
   recurring: [],
@@ -547,7 +550,10 @@ export class DayTimelineSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("既定の表示")
-      .setDesc("タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 月」でいつでも切り替えられます。")
+      .setDesc(
+        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 月」でいつでも切り替えられます。" +
+          "スマホでは画面が狭いため表示を別に記憶します（既定は日表示。ツールバーで切り替えるとそれを覚えます）。"
+      )
       .addDropdown((d) =>
         d
           .addOption("week", "週（7日）")
