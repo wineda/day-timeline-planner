@@ -24,6 +24,10 @@
   align-items: center;
   gap: 2px;
 }
+/* 日付ナビをヘッダーからタイムライン側へ移したぶん、右端の操作ボタンは自力で右へ寄せる */
+.dt-header .dt-actions {
+  margin-left: auto;
+}
 
 .dt-icon-btn {
   padding: 4px;
@@ -42,10 +46,9 @@
 }
 
 .dt-date {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
-  justify-content: center;
   position: relative;
 }
 
@@ -367,6 +370,25 @@
   min-height: 0;
   display: flex;
   align-items: stretch;
+}
+
+/* タイムライン側（日付ナビ + スクロール領域）の入れ物 */
+.dt-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 日付ナビ（< 今日 > と日付ラベル）: タイムラインの直上に置く */
+.dt-date-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
 }
 
 /* ---------- Inbox（日付を決めていないタスク）: 左のサイドバー ---------- */
@@ -889,9 +911,9 @@
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
   display: none;
 }
-/* パネル表示中はタイムラインを隠し、サイドバーを全幅に広げる。
+/* パネル表示中はタイムライン（日付ナビごと）を隠し、サイドバーを全幅に広げる。
    タイムラインにしか効かないズーム・予実の切替も（月表示と同様に）隠す */
-.dt-view.is-narrow.is-pane-panel .dt-scroll,
+.dt-view.is-narrow.is-pane-panel .dt-main,
 .dt-view.is-narrow.is-pane-panel .dt-zoom,
 .dt-view.is-narrow.is-pane-panel .dt-pa {
   display: none;
