@@ -1002,8 +1002,11 @@ export class DayTimelineView extends ItemView {
         void this.plugin.openProject(key)
       );
       openBtn.addClass("dt-project-open");
-      const addBtn = this.iconButton(row, "plus", "このプロジェクトのタスクを追加", () =>
-        this.openCreateModal(this.date, undefined, undefined, undefined, { project: key })
+      const addBtn = this.iconButton(
+        row,
+        "plus",
+        "このプロジェクトのタスクを追加（時刻を入れなければ日付を決めず Inbox へ）",
+        () => this.openProjectCreateModal(key)
       );
       addBtn.addClass("dt-project-add");
       const doneBtn = this.iconButton(row, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
@@ -1060,10 +1063,14 @@ export class DayTimelineView extends ItemView {
           if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
           else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
         });
-        item.createSpan({
+        const dateEl = item.createSpan({
           cls: "dt-project-child-date",
           text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "Inbox",
         });
+        // 日時が決まっていないものは破線のバッジで見分ける（日付なし=Inbox はアクセント色）
+        const scheduled = t.start !== null && t.end !== null;
+        if (child.date === null) dateEl.addClass("is-inbox");
+        else if (!scheduled) dateEl.addClass("is-unscheduled");
         item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
         const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
         const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
@@ -1076,8 +1083,10 @@ export class DayTimelineView extends ItemView {
         item.setAttr(
           "aria-label",
           `${t.title || "(無題)"}\n` +
-            (child.date ? `${moment(child.date).format("M月D日 (ddd)")}` : "Inbox") +
-            (t.start !== null && t.end !== null ? ` ${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}` : "") +
+            (child.date
+              ? moment(child.date).format("M月D日 (ddd)") +
+                (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
+              : "Inbox（日付は未定）") +
             "\nクリックでその日へ移動、右クリックでメニュー"
         );
         item.addEventListener("click", () => {
@@ -2387,6 +2396,48 @@ export class DayTimelineView extends ItemView {
       ...this.projectOptions(),
       onSubmit: (data) => this.commitCreate(date, data),
       onClose,
+    }).open();
+  }
+
+  /**
+   * プロジェクトパネルの「＋」からのタスク追加。日付はまだ決めない前提で、
+   * 時刻を空のまま保存すると Inbox へ、時刻を入れると表示中の日へ登録する
+   */
+  private openProjectCreateModal(project: string): void {
+    const inbox = this.plugin.inbox;
+    if (!inbox) {
+      // Inbox の無い形式ではプロジェクトパネル自体が出ないはずだが、念のため従来どおり
+      this.openCreateModal(this.date, undefined, undefined, undefined, { project });
+      return;
+    }
+    const s = this.plugin.settings;
+    const dayLabel = moment(this.date).format("M月D日");
+    new TaskModal(this.app, {
+      mode: "create",
+      initial: { title: "", start: null, end: null, done: false, project },
+      snapMinutes: s.snapMinutes,
+      allowUnscheduled: true,
+      dateLabel: "Inbox",
+      unscheduledHint: `時刻なし — 日付を決めずに Inbox へ登録します（時刻を入れると ${dayLabel} に登録）`,
+      tagChoices: s.tagColors,
+      showDoneCondition: true,
+      trackers: s.trackers,
+      ...this.projectOptions(),
+      onSubmit: async (data) => {
+        // 時刻が入っていたら、これまでどおり表示中の日へ
+        if (data.start !== null && data.end !== null) {
+          await this.commitCreate(this.date, data);
+          return;
+        }
+        try {
+          await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
+          new Notice("Inbox に追加しました（日付は未定のまま）");
+        } catch (e) {
+          console.error(e);
+          new Notice("Inbox に追加できませんでした: " + String(e));
+        }
+        await this.reload();
+      },
     }).open();
   }
 
