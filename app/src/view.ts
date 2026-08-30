@@ -558,6 +558,40 @@ export class DayTimelineView extends ItemView {
     return btn;
   }
 
+  /**
+   * ケバブメニューのボタン（⋮）。アイコンをいくつも並べる代わりに、
+   * まとめて1つのメニューから選べるようにする。
+   * クリックはその場所に、キーボード（Enter / Space）ではボタンの真下にメニューを出す
+   */
+  private menuButton(
+    parent: HTMLElement,
+    label: string,
+    build: (menu: Menu) => void
+  ): HTMLElement {
+    const btn = parent.createDiv({
+      cls: "clickable-icon dt-icon-btn dt-kebab-btn",
+      attr: { "aria-label": label, role: "button", tabindex: "0" },
+    });
+    setIcon(btn, "more-vertical");
+    const open = (e: MouseEvent | null) => {
+      const menu = new Menu();
+      build(menu);
+      if (e) menu.showAtMouseEvent(e);
+      else {
+        const r = btn.getBoundingClientRect();
+        menu.showAtPosition({ x: r.left, y: r.bottom });
+      }
+    };
+    btn.addEventListener("click", (e: MouseEvent) => open(e));
+    btn.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open(null);
+      }
+    });
+    return btn;
+  }
+
   /** 表示中の日付に合わせて、時間軸と日ごとの列（月表示ならカレンダーのマス）を作る */
   private buildGrid(): void {
     const s = this.plugin.settings;
@@ -1161,6 +1195,60 @@ export class DayTimelineView extends ItemView {
     this.renderInbox();
   }
 
+  /** プロジェクトのパネルのヘッダー（⋮）から開くメニュー。active は進行中のプロジェクト */
+  private buildProjectsMenu(menu: Menu, active: ProjectSummary[]): void {
+    menu.addItem((i) =>
+      i
+        .setTitle("新しいプロジェクトを作成…")
+        .setIcon("plus")
+        .onClick(() => this.plugin.openNewProjectModal())
+    );
+    if (active.length) {
+      menu.addSeparator();
+      const allExpanded = this.areAllProjectsExpanded();
+      menu.addItem((i) =>
+        i
+          .setTitle(allExpanded ? "すべてのプロジェクトを閉じる" : "すべてのプロジェクトを展開")
+          .setIcon(allExpanded ? "chevrons-down-up" : "chevrons-up-down")
+          .onClick(() => this.setAllProjectsExpanded(!allExpanded))
+      );
+      // グループ分けしているときだけ: ツリー ⇄ フラットな一覧の切り替え
+      if (active.some((s) => s.ref.group)) {
+        const flat = this.plugin.settings.projectsFlatList;
+        menu.addItem((i) =>
+          i
+            .setTitle(
+              flat
+                ? "グループごとのツリーで表示"
+                : "グループの見出しを出さずフラットに一覧"
+            )
+            .setIcon(flat ? "list-tree" : "list")
+            .onClick(() => this.toggleProjectsFlatList())
+        );
+      }
+      const hideDone = this.plugin.settings.projectsHideDone;
+      menu.addItem((i) =>
+        i
+          .setTitle(
+            hideDone ? "完了済みの子タスクを表示する" : "完了済みの子タスクを隠す（持ち越し済みも）"
+          )
+          .setIcon(hideDone ? "eye-off" : "eye")
+          .onClick(() => {
+            this.plugin.settings.projectsHideDone = !hideDone;
+            void this.plugin.persistSettings();
+            this.renderInbox();
+          })
+      );
+    }
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i
+        .setTitle("全プロジェクトノートのタスク一覧を更新")
+        .setIcon("file-text")
+        .onClick(() => void this.plugin.updateAllProjectNotes())
+    );
+  }
+
   /** プロジェクトのセクション（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない */
   private renderProjects(): void {
     const active = this.projectData.filter((s) => !s.done);
@@ -1169,54 +1257,11 @@ export class DayTimelineView extends ItemView {
     const head = wrap.createDiv("dt-projects-head");
     head.createSpan({ cls: "dt-inbox-label", text: "プロジェクト" });
     head.createSpan({ cls: "dt-inbox-count", text: String(active.length) });
-    const addProject = this.iconButton(
-      head,
-      "plus",
-      "新しいプロジェクトを作成（設定「プロジェクトのテンプレート」があればそこから）",
-      () => this.plugin.openNewProjectModal()
+    // 機能のアイコンを等間隔に並べると見分けにくいので、⋮（ケバブ）1つにまとめる
+    const kebab = this.menuButton(head, "プロジェクトのメニュー", (menu) =>
+      this.buildProjectsMenu(menu, active)
     );
-    addProject.addClass("dt-inbox-open");
-    if (active.length) {
-      const allExpanded = this.areAllProjectsExpanded();
-      const toggleAll = this.iconButton(
-        head,
-        allExpanded ? "chevrons-down-up" : "chevrons-up-down",
-        allExpanded ? "すべてのプロジェクトを閉じる" : "すべてのプロジェクトを展開",
-        () => this.setAllProjectsExpanded(!allExpanded)
-      );
-      toggleAll.addClass("dt-inbox-open");
-      // グループ分けしているときだけ: ツリー ⇄ フラットな一覧の切り替え
-      if (active.some((s) => s.ref.group)) {
-        const flat = this.plugin.settings.projectsFlatList;
-        const flatBtn = this.iconButton(
-          head,
-          flat ? "list-tree" : "list",
-          flat
-            ? "グループごとのツリーで表示"
-            : "グループの見出しを出さずフラットに一覧（並びはグループ順のまま）",
-          () => this.toggleProjectsFlatList()
-        );
-        flatBtn.addClass("dt-inbox-open");
-      }
-      const hideDone = this.plugin.settings.projectsHideDone;
-      const hideBtn = this.iconButton(
-        head,
-        hideDone ? "eye-off" : "eye",
-        hideDone
-          ? "完了済みの子タスクを表示する"
-          : "完了済みの子タスクを隠す（持ち越し済みも隠れます）",
-        () => {
-          this.plugin.settings.projectsHideDone = !hideDone;
-          void this.plugin.persistSettings();
-          this.renderInbox();
-        }
-      );
-      hideBtn.addClass("dt-inbox-open");
-    }
-    const refresh = this.iconButton(head, "file-text", "全プロジェクトノートのタスク一覧を更新", () =>
-      void this.plugin.updateAllProjectNotes()
-    );
-    refresh.addClass("dt-inbox-open");
+    kebab.addClass("dt-inbox-open");
 
     const list = wrap.createDiv("dt-projects-list");
     if (!active.length) {
@@ -1224,7 +1269,7 @@ export class DayTimelineView extends ItemView {
         cls: "dt-tray-empty",
         text: hiddenDone
           ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
-          : "上の＋ボタン、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
+          : "上の ⋮ メニューの「新しいプロジェクトを作成」、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
       });
       return;
     }
