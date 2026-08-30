@@ -825,10 +825,10 @@ export class DayTimelineView extends ItemView {
     };
   }
 
-  /** Inbox パネルに出すタスク: プロジェクトに属さず、未完了のものだけ
-   *（プロジェクト付きはプロジェクトパネルに出る。完了・プロジェクト付きもノートには残る） */
+  /** Inbox パネルに出すタスク: 未完了のものだけ（完了してもノートには残る）。
+   * プロジェクト付きは「▸ プロジェクト名」バッジ付きで並び、プロジェクトパネル側にも出る */
   private static inboxVisible(tasks: Task[]): Task[] {
-    return tasks.filter((t) => !t.done && !t.project);
+    return tasks.filter((t) => !t.done);
   }
 
   /** Inbox だけ読み直す（コマンドから追加したときなど） */
@@ -908,7 +908,27 @@ export class DayTimelineView extends ItemView {
           void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
         });
         chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-        chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
+        if (t.project) {
+          const link = t.project;
+          const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
+          badge.setAttr("aria-label", `プロジェクト: ${projectDisplayName(link)}\nクリックでノートを開く`);
+          badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+          badge.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            void this.plugin.openProject(link);
+          });
+        }
+        chip.setAttr(
+          "aria-label",
+          [
+            t.title,
+            t.project ? `プロジェクト: ${projectDisplayName(t.project)}` : "",
+            t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
+            t.preview,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
         this.attachInboxInteractions(chip, t);
       }
     }
