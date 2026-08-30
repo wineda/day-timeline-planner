@@ -418,26 +418,6 @@ export class DayTimelineView extends ItemView {
 
     const header = root.createDiv("dt-header");
 
-    const nav = header.createDiv("dt-nav");
-    this.iconButton(nav, "chevron-left", "前へ", () => this.goToPrev());
-    const todayBtn = nav.createEl("button", { text: "今日", cls: "dt-today-btn" });
-    todayBtn.onclick = () => this.goToToday();
-    this.iconButton(nav, "chevron-right", "次へ", () => this.goToNext());
-
-    const dateWrap = header.createDiv("dt-date");
-    this.dateLabelEl = dateWrap.createEl("button", {
-      cls: "dt-date-label",
-      attr: { "aria-label": "日付を選ぶ" },
-    });
-    this.dateInputEl = dateWrap.createEl("input", { type: "date", cls: "dt-date-input" });
-    this.dateLabelEl.onclick = () => this.openDatePicker();
-    this.dateInputEl.onchange = () => {
-      const v = this.dateInputEl.value;
-      if (!v) return;
-      const [y, m, d] = v.split("-").map(Number);
-      if (y && m && d) this.setDate(new Date(y, m - 1, d));
-    };
-
     // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替
     this.paneEl = header.createDiv("dt-mode dt-pane");
     const panes: [NarrowPane, string, string][] = [
@@ -533,7 +513,32 @@ export class DayTimelineView extends ItemView {
     // 左に Inbox のサイドバー、右にタイムライン
     const body = root.createDiv("dt-body");
     this.inboxEl = body.createDiv("dt-inbox");
-    this.scrollEl = body.createDiv("dt-scroll");
+    const main = body.createDiv("dt-main");
+
+    // 日付の操作（< 今日 > と日付ラベル）は、サイドバーの上ではなく
+    // 操作対象のタイムラインの直上に置く（マウスの移動距離を短くする）
+    const dateBar = main.createDiv("dt-date-bar");
+    const nav = dateBar.createDiv("dt-nav");
+    this.iconButton(nav, "chevron-left", "前へ", () => this.goToPrev());
+    const todayBtn = nav.createEl("button", { text: "今日", cls: "dt-today-btn" });
+    todayBtn.onclick = () => this.goToToday();
+    this.iconButton(nav, "chevron-right", "次へ", () => this.goToNext());
+
+    const dateWrap = dateBar.createDiv("dt-date");
+    this.dateLabelEl = dateWrap.createEl("button", {
+      cls: "dt-date-label",
+      attr: { "aria-label": "日付を選ぶ" },
+    });
+    this.dateInputEl = dateWrap.createEl("input", { type: "date", cls: "dt-date-input" });
+    this.dateLabelEl.onclick = () => this.openDatePicker();
+    this.dateInputEl.onchange = () => {
+      const v = this.dateInputEl.value;
+      if (!v) return;
+      const [y, m, d] = v.split("-").map(Number);
+      if (y && m && d) this.setDate(new Date(y, m - 1, d));
+    };
+
+    this.scrollEl = main.createDiv("dt-scroll");
   }
 
   /** アイコンボタン（クリック / Enter / Space で動作） */
