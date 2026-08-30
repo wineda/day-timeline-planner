@@ -2532,6 +2532,38 @@ body.is-mobile .dt-toolbar .dt-date-label {
   min-height: 34px;
 }
 
+/* スマホでは UI の文字が小さすぎて読みにくいので、プラグイン内の基準サイズを引き上げる。
+   パネル・ツールバー・タイムラインの文字はほぼこの3変数（とその em 倍率）から
+   決まるので、ここを変えるだけで全体に効く */
+body.is-mobile .dt-view {
+  --font-ui-smaller: 13px;
+  --font-ui-small: 15px;
+  --font-ui-medium: 16px;
+}
+/* パネルのタブはスマホでは主要なナビ。タップの的も兼ねて一段大きく */
+body.is-mobile .dt-panel-tab {
+  font-size: var(--font-ui-small);
+  line-height: 2;
+}
+body.is-mobile .dt-panel-tab.has-overdue::after {
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+}
+/* タスクの一覧（Inbox・再スケジュール）はパネルの主役なので本文サイズで */
+body.is-mobile .dt-inbox-chip,
+body.is-mobile .dt-reschedule-item {
+  font-size: var(--font-ui-small);
+}
+/* 予実合計・プロジェクトの集計などの補足の数字も読めるサイズまで上げる */
+body.is-mobile .dt-day-total,
+body.is-mobile .dt-project-stats,
+body.is-mobile .dt-project-ticket,
+body.is-mobile .dt-project-group-count {
+  font-size: 0.8em;
+}
+
 /* 右下の「＋」（狭い画面だけ表示） */
 .dt-fab {
   display: none;
