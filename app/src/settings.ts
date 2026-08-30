@@ -70,7 +70,7 @@ export interface Member {
   color: string;
   /** ノートのフォルダ（"" なら <自分のフォルダ>/Members/<名前>） */
   folder: string;
-  /** タイムラインに表示するか（ヘッダーのチップで切替） */
+  /** タイムラインに表示するか（ツールバーの「表示」メニューで切替） */
   visible: boolean;
   /** この人の予定もリマインドするか */
   remind: boolean;
@@ -545,7 +545,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("既定の表示")
-      .setDesc("タイムラインを開いたときの表示。ヘッダーの「日 / 週」でいつでも切り替えられます。")
+      .setDesc("タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 月」でいつでも切り替えられます。")
       .addDropdown((d) =>
         d
           .addOption("week", "週（7日）")
@@ -1138,7 +1138,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       .setName("他の人の予定をカレンダーに重ねる")
       .setDesc(
         "メンバーごとに別フォルダのノート（既定: <フォルダ>/Members/<名前>/YYYY-MM-DD.md）に保存し、" +
-          "自分の予定と同じカレンダーに色分けして表示します。表示の切替はタイムラインのヘッダーのチップで行います。"
+          "自分の予定と同じカレンダーに色分けして表示します。表示の切替はツールバーの「表示」メニューで行います。"
       )
       .addButton((b) =>
         b
