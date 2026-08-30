@@ -2622,7 +2622,9 @@ body.is-mobile .dt-project-group-count {
   font-size: 0.8em;
 }
 
-/* 右下の「＋」（狭い画面だけ表示） */
+/* 右下の「＋」（狭い画面だけ表示）。色は Obsidian モバイルの button 既定スタイル
+   （.dt-fab より詳細度が高い）に上書きされて背景色でグレーになっていたので、
+   詳細度を上げたセレクタで確実にアクセント色にする */
 .dt-fab {
   display: none;
   position: absolute;
@@ -2634,15 +2636,19 @@ body.is-mobile .dt-project-group-count {
   border-radius: 50%;
   align-items: center;
   justify-content: center;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   z-index: 30;
 }
 .dt-view.is-narrow .dt-fab {
   display: flex;
 }
-.dt-fab:hover {
+.dt-view .dt-main button.dt-fab {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.dt-view .dt-main button.dt-fab:hover,
+.dt-view .dt-main button.dt-fab:active {
   background: var(--interactive-accent-hover);
 }
 .dt-fab svg {
