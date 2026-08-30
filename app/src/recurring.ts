@@ -24,6 +24,7 @@ import { dateKey, formatDuration, minutesToHHMM, parseTimeInput, startOfDay } fr
 import { newBlockId } from "./markdown/id";
 import { projectDisplayName, type ProjectRef } from "./project";
 import type { Task } from "./model";
+import type { TaskStep } from "./markdown/blocks";
 
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -45,6 +46,31 @@ export function describeRule(rule: RecurringRule): string {
       ? `${minutesToHHMM(rule.start)} - ${minutesToHHMM(rule.end)}`
       : "時刻なし（未スケジュール）";
   return `${dayText}　${time}`;
+}
+
+/** ルールの共通のステップ（空行を除いたテキストの一覧） */
+export function ruleSteps(rule: RecurringRule): string[] {
+  return (rule.steps ?? []).map((t) => t.trim()).filter(Boolean);
+}
+
+/** 共通のステップから、タスクに入れる未チェックのステップを組み立てる */
+function buildRuleSteps(rule: RecurringRule): TaskStep[] {
+  return ruleSteps(rule).map((text) => ({ text, done: false, children: [] }));
+}
+
+/**
+ * タスクのステップがルールの共通のステップのままか
+ * （チェック・追記・並べ替え・ぶら下がり行の追加をしていない）。
+ * 共通のステップが無いルールでは「ステップが空のまま」を意味する
+ */
+export function stepsMatchRule(steps: TaskStep[], rule: RecurringRule): boolean {
+  const texts = ruleSteps(rule);
+  return (
+    steps.length === texts.length &&
+    steps.every(
+      (st, i) => !st.done && !(st.children ?? []).length && st.text.trim() === texts[i]
+    )
+  );
 }
 
 /** "YYYY-MM-DD" のキーを日付に戻す。壊れていれば null */
@@ -125,6 +151,7 @@ export async function applyRecurring(
       // 旧リスト形式は時刻必須
       if (start === null && !plugin.store.supportsUnscheduled) continue;
       const details = ov?.details !== undefined ? ov.details : rule.details ?? "";
+      const steps = buildRuleSteps(rule);
       const draft = {
         title: rule.title,
         start,
@@ -132,6 +159,7 @@ export async function applyRecurring(
         done: false,
         project: rule.project ?? undefined,
         details: details.trim() ? details : undefined,
+        steps: steps.length ? steps : undefined,
       };
       const blockStore = plugin.blockStore();
       try {
@@ -406,6 +434,7 @@ export async function propagateRecurringUpdate(
       end: number | null;
       project?: string;
       details?: string;
+      steps?: TaskStep[];
     } = {
       title: rule.title,
       start: rule.start,
@@ -418,6 +447,15 @@ export async function propagateRecurringUpdate(
     if (prev && nextDetails !== prevDetails && task.details.trim() === prevDetails) {
       patch.details = rule.details ?? "";
     }
+    // 共通のステップも詳細と同じ約束: その回のステップに手を付けていないときだけ差し替える
+    const prevSteps = prev ? ruleSteps(prev) : [];
+    if (
+      prev &&
+      ruleSteps(rule).join("\n") !== prevSteps.join("\n") &&
+      stepsMatchRule(task.steps, prev)
+    ) {
+      patch.steps = buildRuleSteps(rule);
+    }
     try {
       const ok = task.blockId
         ? await store.updateByBlockId(date, task.blockId, patch)
@@ -428,6 +466,7 @@ export async function propagateRecurringUpdate(
             done: task.done,
             ...(patch.project !== undefined ? { project: patch.project } : {}),
             ...(patch.details !== undefined ? { details: patch.details } : {}),
+            ...(patch.steps !== undefined ? { steps: patch.steps } : {}),
           });
       if (ok) result.updated++;
     } catch (e) {
@@ -448,7 +487,7 @@ function isUntouched(task: Task, rule: RecurringRule): boolean {
     task.end === rule.end &&
     task.details.trim() === (rule.details ?? "").trim() &&
     task.actual.length === 0 &&
-    task.steps.length === 0 &&
+    stepsMatchRule(task.steps, rule) &&
     task.retrospective.trim() === "" &&
     task.doneCondition.trim() === ""
   );
@@ -492,6 +531,8 @@ export interface RuleFormOptions {
     end: number | null;
     weekday?: number;
     project?: string | null;
+    /** 共通のステップの初期値（タスクのステップを引き継ぐとき） */
+    steps?: string[];
   };
   tagChoices?: TagColor[];
   /** プロジェクトの選択肢（渡すと欄を出す） */
@@ -512,6 +553,8 @@ export class RuleForm {
   private enabled: boolean;
   private project: string | null;
   private details: string;
+  /** 共通のステップ（テキストエリアの内容。1行 = 1ステップ） */
+  private steps: string;
   private tagChoices: TagColor[];
   private selectedTags: Set<string>;
   private hintEl: HTMLElement | null = null;
@@ -527,6 +570,7 @@ export class RuleForm {
       end: opts.preset?.end ?? 9 * 60 + 30,
       enabled: true,
       project: opts.preset?.project ?? undefined,
+      steps: opts.preset?.steps,
     };
     const { text, selected } = splitKnownTags(src.title, this.tagChoices.map((c) => c.tag));
     this.title = text;
@@ -537,6 +581,7 @@ export class RuleForm {
     this.enabled = src.enabled;
     this.project = src.project ?? null;
     this.details = src.details ?? "";
+    this.steps = (src.steps ?? []).join("\n");
   }
 
   render(contentEl: HTMLElement): void {
@@ -673,6 +718,19 @@ export class RuleForm {
     ta.value = this.details;
     ta.addEventListener("input", () => (this.details = ta.value));
 
+    // 共通のステップ（通常のタスクのステップと同じく、未チェックのチェックリストとして毎回入る）
+    const stepSetting = new Setting(contentEl).setName("共通のステップ");
+    stepSetting.setDesc(
+      "1行に1ステップ。毎回のタスクに未チェックのステップ（- [ ] …）として入ります。回ごとのチェックはタスクの編集ダイアログで。"
+    );
+    stepSetting.settingEl.addClass("dt-rec-details-setting");
+    const stepTa = stepSetting.controlEl.createEl("textarea", {
+      cls: "dt-rec-details-field",
+      attr: { rows: "3", placeholder: "例: アジェンダを確認\n議事録を書く" },
+    });
+    stepTa.value = this.steps;
+    stepTa.addEventListener("input", () => (this.steps = stepTa.value));
+
     if (this.opts.showEnabled ?? !!this.opts.initial) {
       new Setting(contentEl)
         .setName("有効")
@@ -712,6 +770,10 @@ export class RuleForm {
     if (!title) return { error: "タイトルを入力してください" };
     if (this.weekdays.size === 0) return { error: "曜日を1つ以上選んでください" };
     const details = this.details.replace(/\s+$/, "");
+    const steps = this.steps
+      .split("\n")
+      .map((t) => t.trim())
+      .filter(Boolean);
     return {
       rule: {
         id: this.opts.initial?.id || newRuleId(),
@@ -722,6 +784,7 @@ export class RuleForm {
         enabled: this.enabled,
         project: this.project ?? undefined,
         ...(details ? { details } : {}),
+        ...(steps.length ? { steps } : {}),
       },
     };
   }

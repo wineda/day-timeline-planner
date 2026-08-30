@@ -7,6 +7,7 @@ import {
   normalizeBlockOptions,
   parseBlockDocument,
   parseHeadingSetting,
+  type TaskStep,
 } from "./markdown/blocks";
 import {
   InsertOptions,
@@ -250,6 +251,8 @@ export class BlockTaskStore extends NoteStore {
       end?: number | null;
       project?: string | null;
       details?: string;
+      /** undefined = 変更しない / [] = 消す */
+      steps?: TaskStep[];
     }
   ): Promise<boolean> {
     if (!this.getFile(date)) return false;

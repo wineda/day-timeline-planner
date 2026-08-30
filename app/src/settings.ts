@@ -98,6 +98,8 @@ export interface RecurringRule {
   project?: string;
   /** 毎回のタスクの本文（詳細）に入れる共通のメモ。無ければ undefined */
   details?: string;
+  /** 毎回のタスクに入れる共通のステップ（未チェックの `- [ ] …` で入る）。無ければ undefined */
+  steps?: string[];
 }
 
 /** 定期タスクの発生日（日 × ルール）ごとの個別の上書き（管理画面の「個別詳細」） */
