@@ -754,10 +754,10 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* 日時が決まっていない子タスク: 破線のバッジ（月表示の「時刻なしは破線」と同じ約束） */
+/* 日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
 .dt-project-child-date.is-undated,
 .dt-project-child-date.is-unscheduled {
-  border: 1px dashed var(--text-faint);
+  border: 1px solid var(--text-faint);
   border-radius: var(--radius-s);
   padding: 0 4px;
   font-size: 0.9em;
