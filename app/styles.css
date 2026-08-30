@@ -12,11 +12,13 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  flex: 0 0 auto;
 }
 
 .dt-icon-btn {
   padding: 4px;
   border-radius: var(--radius-s);
+  flex: 0 0 auto;
 }
 .dt-icon-btn:focus-visible {
   box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
@@ -28,6 +30,11 @@
   height: auto;
   min-height: 0;
   line-height: 1.6;
+  flex: 0 0 auto;
+}
+/* 今日が画面に映っている間は押す意味がないので出さない（そのぶん日付に幅を回す） */
+.dt-today-btn.is-hidden {
+  display: none;
 }
 
 .dt-date {
@@ -37,11 +44,13 @@
   position: relative;
 }
 
+/* 日付は「押せるラベル」。塗りを持つとモードの「選択中」と見分けが付かないので、
+   背景・枠を持たない見出しとして扱う */
 .dt-date-label {
   background: transparent;
   border: none;
   box-shadow: none;
-  padding: 2px 8px;
+  padding: 2px 6px;
   height: auto;
   min-height: 0;
   font-size: var(--font-ui-medium);
@@ -58,13 +67,13 @@
   background: var(--background-modifier-hover);
   box-shadow: none;
 }
-.dt-date-label.is-today {
-  color: var(--text-accent);
-}
+/* 今日が範囲に入っているかは、列ヘッダーの丸と「今日」ボタンの有無で分かる。
+   ラベルまでアクセント色にすると、見ているのがたいてい今週なので常時青くなってしまう */
 
 /* 日 / 週 の切り替え */
 .dt-mode {
   display: inline-flex;
+  flex: 0 0 auto;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   overflow: hidden;
@@ -108,24 +117,26 @@
   display: inline-block;
 }
 
-/* ズーム・予実・メンバーをまとめた「表示 ▾」メニューのボタン */
-.dt-view-menu-btn {
-  display: inline-flex;
+/* 狭い画面で日/3日/週/月 のセグメントの代わりに出す「週 ▾」ドロップダウン */
+.dt-mode-menu-btn {
+  display: none; /* 出すのは狭い画面のときだけ（.dt-view.is-narrow で切り替える） */
   align-items: center;
   gap: 2px;
+  flex: 0 0 auto;
   height: auto;
   min-height: 0;
   padding: 2px 6px 2px 10px;
   line-height: 1.6;
-  font-size: var(--font-ui-smaller);
+  /* いま何の単位で見ているかを示す表示なので、押せるうえに読める濃さにする */
+  font-size: var(--font-ui-small);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-normal);
   box-shadow: none;
   cursor: pointer;
 }
-.dt-view-menu-btn:hover {
+.dt-mode-menu-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
   box-shadow: none;
@@ -886,22 +897,14 @@
 
 /* ---------- 狭い画面（スマホなど）: タイムライン ⇄ パネルの切り替え ---------- */
 /* 幅が足りないとサイドバーとタイムラインが共倒れになるので、
-   ヘッダーの切替ボタン（is-narrow のときだけ表示）で片方だけを全面に出す */
+   ヘッダーの切替ボタン（is-narrow のときだけ表示）で片方だけを全面に出す。
+   2つ並べるとツールバーが1行に収まらないので、押すたびに入れ替わる1つのトグルにする */
 .dt-pane {
   display: none;
+  flex: 0 0 auto;
 }
 .dt-view.is-narrow .dt-pane.is-available {
   display: inline-flex;
-}
-.dt-pane-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 9px;
-}
-.dt-pane-btn svg {
-  width: 15px;
-  height: 15px;
 }
 /* タイムライン表示中はサイドバーを隠す（畳んだ細い帯も出さない） */
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
@@ -2534,7 +2537,10 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
   background: color-mix(in srgb, currentColor 45%, transparent);
 }
 
-/* 狭い画面: ツールバーを整理する（範囲の予実合計は出さず、＋は右下の FAB に置き換え） */
+/* 狭い画面: ツールバーを1行に収める。
+   折り返すと（日付の文字数で折り返し位置が変わり）ヘッダーの高さも中身の並びも
+   その都度変わっていたので、折り返さず、あふれるときは日付を「…」で詰める。
+   範囲の予実合計は出さず、＋は右下の FAB に置き換える */
 .dt-view.is-narrow .dt-range-total {
   display: none;
 }
@@ -2542,15 +2548,44 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
   display: none;
 }
 .dt-view.is-narrow .dt-toolbar {
-  gap: 2px 4px;
+  flex-wrap: nowrap;
+  gap: 2px 3px;
   padding: 4px 6px;
+}
+/* 日付に使える幅を1pxでも増やす（切り詰められるのは日付だけなので効く） */
+.dt-view.is-narrow .dt-date-label {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.dt-view.is-narrow .dt-today-btn {
+  padding-left: 7px;
+  padding-right: 7px;
+}
+/* 4つ並ぶセグメントは幅を取りすぎるので、狭い画面ではドロップダウンに畳む */
+.dt-view.is-narrow .dt-mode {
+  display: none;
+}
+.dt-view.is-narrow .dt-mode-menu-btn {
+  display: inline-flex;
+}
+/* 計測中・タイマーのチップは、幅が足りないときに日付より先に自分が縮む
+   （日付が「2…」まで潰れるより、経過時間が切れるほうが困らない） */
+.dt-view.is-narrow .dt-tracking-chip,
+.dt-view.is-narrow .dt-timer-chip {
+  /* 縮み率を極端に大きくして、足りないぶんは事実上すべてチップ側で引き受ける
+     （比例配分だと日付にも端数が回り、最後の1文字が「…」に化けてしまう） */
+  flex: 0 9999 auto;
+  min-width: 0;
+  max-width: 32%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* モバイルはタップの的を大きく */
 body.is-mobile .dt-toolbar .dt-mode-btn,
 body.is-mobile .dt-toolbar .dt-today-btn,
 body.is-mobile .dt-toolbar .dt-icon-btn,
-body.is-mobile .dt-toolbar .dt-view-menu-btn,
+body.is-mobile .dt-toolbar .dt-mode-menu-btn,
 body.is-mobile .dt-toolbar .dt-date-label {
   min-height: 34px;
 }
