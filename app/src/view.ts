@@ -2174,6 +2174,23 @@ export class DayTimelineView extends ItemView {
     };
   }
 
+  /** 重なりで分割されて幅が狭くなったレーンに is-lane-narrow を付ける。
+      CSS の @container はブロック自身の幅で判定できない（コンテナは祖先を見る仕様）ので、
+      列の実幅からレーン幅を計算してクラスで切り替える。列幅が測れないとき（非表示中など）は
+      付けずに通常の見た目のままにする */
+  private markNarrowLane(
+    el: HTMLElement,
+    col: DayColumn,
+    info: LayoutInfo,
+    lane: { left: number; width: number }
+  ): void {
+    const colWidth = col.eventsEl.clientWidth;
+    if (colWidth <= 0) return;
+    // barGeometry と同じ計算（両側 2px ずつのすき間を引いた実幅）
+    const laneWidth = colWidth * (lane.width / info.cols) - 4;
+    el.toggleClass("is-lane-narrow", laneWidth < 40);
+  }
+
   /** 予定のバー。paired = 予実モード（実績と並べるため輪郭だけの見た目にする） */
   private renderPlanBar(
     col: DayColumn,
@@ -2195,6 +2212,7 @@ export class DayTimelineView extends ItemView {
     const geo = this.barGeometry(info, lane);
     el.style.left = geo.left;
     el.style.width = geo.width;
+    this.markNarrowLane(el, col, info, lane);
     el.toggleClass("is-plan", paired);
     el.toggleClass("is-done", task.done);
     el.toggleClass("is-forwarded", task.forwarded);
@@ -2282,6 +2300,7 @@ export class DayTimelineView extends ItemView {
     const geo = this.barGeometry(info, lane);
     el.style.left = geo.left;
     el.style.width = geo.width;
+    this.markNarrowLane(el, col, info, lane);
     el.toggleClass("is-short", h < 34);
     el.toggleClass("is-tiny", h < 18);
     this.applyTagColor(el, task);
