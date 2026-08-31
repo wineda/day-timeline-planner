@@ -158,8 +158,9 @@ export class DayTimelineView extends ItemView {
   /** 狭い画面で表示中の面 */
   private narrowPane: NarrowPane = "timeline";
   private paneEl!: HTMLElement;
-  /** タイムライン ⇄ パネルを入れ替えるトグル（狭い画面だけ） */
-  private paneToggleEl!: HTMLElement;
+  /** タイムライン ⇄ パネルの切替セグメント（狭い画面だけ）。両方のアイコンを並べ、表示中の面を強調する */
+  private paneTimelineBtnEl!: HTMLElement;
+  private panePanelBtnEl!: HTMLElement;
   /** "日付キー|タスクの key" → タイムライン上の要素（エディタ連動のハイライトに使う） */
   private taskEls = new Map<string, HTMLElement>();
   private activeTaskKey: string | null = null;
@@ -308,18 +309,14 @@ export class DayTimelineView extends ItemView {
     this.renderTimer();
   }
 
-  /** 面の切替トグルのアイコンとラベル。どちらも「切り替えた先」を指す */
+  /** 面の切替セグメントの状態。表示中の面のボタンを強調する */
   private renderPaneToggle(): void {
-    if (!this.paneToggleEl) return;
-    const toPanel = this.narrowPane === "timeline";
-    this.paneToggleEl.empty();
-    setIcon(this.paneToggleEl, iconName(toPanel ? "list-tree" : "calendar-clock"));
-    this.paneToggleEl.setAttr(
-      "aria-label",
-      toPanel
-        ? "パネル（Inbox・プロジェクト・再スケジュール）に切り替え"
-        : "タイムラインに切り替え"
-    );
+    if (!this.paneTimelineBtnEl || !this.panePanelBtnEl) return;
+    const timeline = this.narrowPane === "timeline";
+    this.paneTimelineBtnEl.toggleClass("is-active", timeline);
+    this.panePanelBtnEl.toggleClass("is-active", !timeline);
+    this.paneTimelineBtnEl.setAttr("aria-pressed", String(timeline));
+    this.panePanelBtnEl.setAttr("aria-pressed", String(!timeline));
   }
 
   /** 狭い画面で全面に出す面を切り替える */
@@ -522,10 +519,17 @@ export class DayTimelineView extends ItemView {
     const bar = main.createDiv("dt-toolbar");
 
     // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替。
-    // 2つ並べると1行に収まらないので、押すたびに入れ替わる1つのトグルにする
+    // 1つのトグルだと「いまどちらか・押すとどうなるか」が分かりにくかったので、
+    // 両方のアイコンを並べたセグメントにして、表示中の面を強調する
     this.paneEl = bar.createDiv("dt-pane");
-    this.paneToggleEl = this.iconButton(this.paneEl, "list-tree", "パネルに切り替え", () =>
-      this.setNarrowPane(this.narrowPane === "panel" ? "timeline" : "panel")
+    this.paneTimelineBtnEl = this.iconButton(this.paneEl, "calendar-clock", "タイムラインを表示", () =>
+      this.setNarrowPane("timeline")
+    );
+    this.panePanelBtnEl = this.iconButton(
+      this.paneEl,
+      "list-tree",
+      "パネル（Inbox・プロジェクト・再スケジュール）を表示",
+      () => this.setNarrowPane("panel")
     );
     this.renderPaneToggle();
 

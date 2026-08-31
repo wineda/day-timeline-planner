@@ -897,14 +897,30 @@
 
 /* ---------- 狭い画面（スマホなど）: タイムライン ⇄ パネルの切り替え ---------- */
 /* 幅が足りないとサイドバーとタイムラインが共倒れになるので、
-   ヘッダーの切替ボタン（is-narrow のときだけ表示）で片方だけを全面に出す。
-   2つ並べるとツールバーが1行に収まらないので、押すたびに入れ替わる1つのトグルにする */
+   ヘッダーの切替（is-narrow のときだけ表示）で片方だけを全面に出す。
+   タイムラインとツリーの両方のアイコンを並べたセグメントにして、
+   表示中の面（is-active）が一目で分かるようにする */
 .dt-pane {
   display: none;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
 }
 .dt-view.is-narrow .dt-pane.is-available {
   display: inline-flex;
+}
+.dt-pane .dt-icon-btn {
+  padding: 2px 6px;
+  color: var(--text-faint);
+}
+.dt-pane .dt-icon-btn.is-active {
+  background: var(--background-primary);
+  color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
 /* タイムライン表示中はサイドバーを隠す（畳んだ細い帯も出さない） */
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
