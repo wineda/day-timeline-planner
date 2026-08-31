@@ -1636,11 +1636,9 @@ export class DayTimelineView extends ItemView {
       }
     }
     const stats = row.createSpan({ cls: "dt-project-stats" });
-    stats.setText(
-      total
-        ? `${sum.doneCount}/${total}・予${hmm(sum.planMin)}・実${hmm(sum.actMin)}`
-        : "タスクなし"
-    );
+    // 予実の合計は行が見づらくなるため出さない（プロジェクトノートのタスク一覧・予実レポートで見られる）
+    stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
+    if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
     // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
     const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
       void this.plugin.openProject(key)
