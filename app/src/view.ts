@@ -309,6 +309,20 @@ export class DayTimelineView extends ItemView {
     this.renderTimer();
   }
 
+  /** タイムラインとツリー（パネル）のアイコンを親に並べる。アクティブ表示は呼び出し側で付ける */
+  private buildPaneSegmentButtons(parent: HTMLElement): { timeline: HTMLElement; panel: HTMLElement } {
+    const timeline = this.iconButton(parent, "calendar-clock", "タイムラインを表示", () =>
+      this.setNarrowPane("timeline")
+    );
+    const panel = this.iconButton(
+      parent,
+      "list-tree",
+      "パネル（Inbox・プロジェクト・再スケジュール）を表示",
+      () => this.setNarrowPane("panel")
+    );
+    return { timeline, panel };
+  }
+
   /** 面の切替セグメントの状態。表示中の面のボタンを強調する */
   private renderPaneToggle(): void {
     if (!this.paneTimelineBtnEl || !this.panePanelBtnEl) return;
@@ -522,15 +536,9 @@ export class DayTimelineView extends ItemView {
     // 1つのトグルだと「いまどちらか・押すとどうなるか」が分かりにくかったので、
     // 両方のアイコンを並べたセグメントにして、表示中の面を強調する
     this.paneEl = bar.createDiv("dt-pane");
-    this.paneTimelineBtnEl = this.iconButton(this.paneEl, "calendar-clock", "タイムラインを表示", () =>
-      this.setNarrowPane("timeline")
-    );
-    this.panePanelBtnEl = this.iconButton(
-      this.paneEl,
-      "list-tree",
-      "パネル（Inbox・プロジェクト・再スケジュール）を表示",
-      () => this.setNarrowPane("panel")
-    );
+    const seg = this.buildPaneSegmentButtons(this.paneEl);
+    this.paneTimelineBtnEl = seg.timeline;
+    this.panePanelBtnEl = seg.panel;
     this.renderPaneToggle();
 
     const nav = bar.createDiv("dt-nav");
@@ -1303,11 +1311,13 @@ export class DayTimelineView extends ItemView {
     const head = this.inboxEl.createDiv("dt-inbox-head");
     if (narrowPanel) {
       // パネルを全面表示中はツールバー（タイムライン⇄パネルの切替ごと）が隠れているので、
-      // タイムラインへ戻るボタンをここに出す
-      const back = this.iconButton(head, "calendar-clock", "タイムラインを表示", () =>
-        this.setNarrowPane("timeline")
-      );
-      back.addClass("dt-inbox-toggle");
+      // 同じ切替セグメントをここに出す（パネル側がアクティブ）
+      const seg = head.createDiv("dt-pane");
+      seg.addClass("is-available", "dt-inbox-toggle");
+      const btns = this.buildPaneSegmentButtons(seg);
+      btns.panel.addClass("is-active");
+      btns.timeline.setAttr("aria-pressed", "false");
+      btns.panel.setAttr("aria-pressed", "true");
     } else {
       const toggle = this.iconButton(
         head,

@@ -917,10 +917,11 @@
   padding: 2px 6px;
   color: var(--text-faint);
 }
-.dt-pane .dt-icon-btn.is-active {
-  background: var(--background-primary);
-  color: var(--interactive-accent);
-  box-shadow: 0 0 0 1px var(--background-modifier-border);
+/* 表示中の面はアクセント色の背景で塗る（どちらがアクティブか一目で分かるように） */
+.dt-pane .dt-icon-btn.is-active,
+.dt-pane .dt-icon-btn.is-active:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
 /* タイムライン表示中はサイドバーを隠す（畳んだ細い帯も出さない） */
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
