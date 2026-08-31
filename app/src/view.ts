@@ -2502,9 +2502,9 @@ export class DayTimelineView extends ItemView {
         }
         if (!el) el = col.headerEl.createDiv("dt-day-total");
         el.empty();
-        // 高さを取らないよう「予定/実績」を小数1桁の時間で1行に、差異をその下の1行に収める
-        el.createSpan({ text: `${hoursDecimal(plan)}/${hoursDecimal(act)}` });
-        el.setAttr("aria-label", `予定 ${hmm(plan)} / 実績 ${hmm(act)}`);
+        // 高さを取らないよう「実績/予定」を小数1桁の時間で1行に、差異をその下の1行に収める
+        el.createSpan({ text: `${hoursDecimal(act)}/${hoursDecimal(plan)}` });
+        el.setAttr("aria-label", `実績 ${hmm(act)} / 予定 ${hmm(plan)}`);
         if (plan && act) {
           const diff = act - plan;
           const d = el.createSpan({
