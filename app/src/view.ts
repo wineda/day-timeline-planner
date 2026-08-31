@@ -2502,13 +2502,14 @@ export class DayTimelineView extends ItemView {
         }
         if (!el) el = col.headerEl.createDiv("dt-day-total");
         el.empty();
-        el.createSpan({ text: `予 ${hmm(plan)}` });
-        el.createSpan({ text: `実 ${hmm(act)}` });
+        // 高さを取らないよう「予定/実績」を小数1桁の時間で1行に、差異をその下の1行に収める
+        el.createSpan({ text: `${hoursDecimal(plan)}/${hoursDecimal(act)}` });
+        el.setAttr("aria-label", `予定 ${hmm(plan)} / 実績 ${hmm(act)}`);
         if (plan && act) {
           const diff = act - plan;
           const d = el.createSpan({
             cls: "dt-day-total-diff",
-            text: `(${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))})`,
+            text: `${diff >= 0 ? "+" : "-"}${hoursDecimal(Math.abs(diff))}`,
           });
           d.toggleClass("is-over", diff > 0);
         }
@@ -4162,6 +4163,11 @@ export class DayTimelineView extends ItemView {
 /** 分を "6:30" のような時:分表示に（日ヘッダーの予実合計用） */
 function hmm(min: number): string {
   return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+}
+
+/** 分を "6.5" のような小数1桁の時間表示に（日ヘッダーの予実合計用） */
+function hoursDecimal(min: number): string {
+  return (min / 60).toFixed(1);
 }
 
 /**
