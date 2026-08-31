@@ -57,6 +57,18 @@ export interface TaskBlock {
   retrospective: string;
   /** ふりかえりの行番号（無ければ null） */
   retrospectiveLine: number | null;
+  /** 結果 = 何がどこまで終わったか（本文中の「- 結果: …」行）。無ければ "" */
+  result: string;
+  /** 結果の行番号（無ければ null） */
+  resultLine: number | null;
+  /** 残 = 完了後に残った作業（本文中の「- 残: …」行）。無ければ "" */
+  remaining: string;
+  /** 残の行番号（無ければ null） */
+  remainingLine: number | null;
+  /** 登録日（本文中の「- 登録日: YYYY-MM-DD」行。Inbox の滞留日数の判定用）。無ければ "" */
+  registered: string;
+  /** 登録日の行番号（無ければ null） */
+  registeredLine: number | null;
   /** 実績（本文中の「- 実績: …」行）。無ければ [] */
   actual: ActualRange[];
   /** 実績の行番号（無ければ null） */
@@ -150,6 +162,12 @@ export interface MetaSource {
   steps?: TaskStep[];
   /** ふりかえり（新規ブロックを組み立てるときだけ使う） */
   retrospective?: string;
+  /** 結果（新規ブロックを組み立てるときだけ使う） */
+  result?: string;
+  /** 残（新規ブロックを組み立てるときだけ使う） */
+  remaining?: string;
+  /** 登録日（新規ブロックを組み立てるときだけ使う） */
+  registered?: string;
   /** 実績（新規ブロックを組み立てるときだけ使う） */
   actual?: ActualRange[];
   /** プロジェクト（新規ブロックを組み立てるときだけ使う） */
@@ -212,6 +230,45 @@ export function renderRetrospectiveLine(text: string): string {
   return "- ふりかえり: " + text.trim();
 }
 
+/** 結果の行（例: "- 結果: 実装完了、テスト修正まで" / "結果：…"）。何がどこまで終わったかの記録 */
+const RESULT_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?結果(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 結果の行なら中身を返す（空でも ""）。違えば null */
+export function parseResultLine(line: string): string | null {
+  const m = RESULT_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderResultLine(text: string): string {
+  return "- 結果: " + text.trim();
+}
+
+/** 残の行（例: "- 残: 結合環境に投入"）。完了にした後に残っている作業の記録 */
+const REMAINING_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?残(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 残の行なら中身を返す（空でも ""）。違えば null */
+export function parseRemainingLine(line: string): string | null {
+  const m = REMAINING_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderRemainingLine(text: string): string {
+  return "- 残: " + text.trim();
+}
+
+/** 登録日の行（例: "- 登録日: 2026-08-31"）。Inbox に入れた日の記録で、滞留日数の判定に使える */
+const REGISTERED_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?登録日(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 登録日の行なら中身を返す（空でも ""）。違えば null */
+export function parseRegisteredLine(line: string): string | null {
+  const m = REGISTERED_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderRegisteredLine(text: string): string {
+  return "- 登録日: " + text.trim();
+}
+
 /** 実績の時間帯（0:00 からの分）。予定とは別に「実際に作業した時間」を記録する */
 export interface ActualRange {
   start: number;
@@ -249,6 +306,32 @@ export function renderActualLine(ranges: ActualRange[]): string {
 /** 実績の合計（分） */
 export function actualTotal(ranges: ActualRange[]): number {
   return ranges.reduce((n, r) => n + (r.end - r.start), 0);
+}
+
+/**
+ * 候補の時間帯から、others と重なる部分を取り除く（1分未満のかけらは捨てる）。
+ * 完了時の実績の自動記録が、同じ日の他タスクの実績と重ならないようにするために使う
+ */
+export function subtractActualRanges(candidate: ActualRange[], others: ActualRange[]): ActualRange[] {
+  const blocks = [...others].sort((a, b) => a.start - b.start);
+  const out: ActualRange[] = [];
+  for (const c of candidate) {
+    let segs: ActualRange[] = [{ start: c.start, end: c.end }];
+    for (const b of blocks) {
+      const next: ActualRange[] = [];
+      for (const s of segs) {
+        if (b.end <= s.start || b.start >= s.end) {
+          next.push(s);
+          continue;
+        }
+        if (b.start > s.start) next.push({ start: s.start, end: b.start });
+        if (b.end < s.end) next.push({ start: b.end, end: s.end });
+      }
+      segs = next;
+    }
+    out.push(...segs.filter((s) => s.end - s.start >= 1));
+  }
+  return out;
 }
 
 /** プロジェクト（大きなタスク）への参照行（例: "- プロジェクト: [[Timeline/Projects/環境構築]]"） */
@@ -493,11 +576,17 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
     const meta = mi < end ? parseMetaLine(lines[mi]) : null;
     if (!meta) continue;
 
-    // 本文の中の「完了条件」「ふりかえり」「実績」「プロジェクト」行（コードブロック内は除く）
+    // 本文の中の「完了条件」「ふりかえり」「結果」「残」「登録日」「実績」「プロジェクト」行（コードブロック内は除く）
     let doneCondition = "";
     let doneConditionLine: number | null = null;
     let retrospective = "";
     let retrospectiveLine: number | null = null;
+    let result = "";
+    let resultLine: number | null = null;
+    let remaining = "";
+    let remainingLine: number | null = null;
+    let registered = "";
+    let registeredLine: number | null = null;
     let actual: ActualRange[] = [];
     let actualLine: number | null = null;
     let project: string | null = null;
@@ -553,6 +642,30 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           continue;
         }
       }
+      if (resultLine === null) {
+        const rs = parseResultLine(lines[k]);
+        if (rs !== null) {
+          result = rs;
+          resultLine = k;
+          continue;
+        }
+      }
+      if (remainingLine === null) {
+        const rm = parseRemainingLine(lines[k]);
+        if (rm !== null) {
+          remaining = rm;
+          remainingLine = k;
+          continue;
+        }
+      }
+      if (registeredLine === null) {
+        const rg = parseRegisteredLine(lines[k]);
+        if (rg !== null) {
+          registered = rg;
+          registeredLine = k;
+          continue;
+        }
+      }
       if (retrospectiveLine === null) {
         const rt = parseRetrospectiveLine(lines[k]);
         if (rt !== null) {
@@ -563,6 +676,9 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       if (
         doneConditionLine !== null &&
         retrospectiveLine !== null &&
+        resultLine !== null &&
+        remainingLine !== null &&
+        registeredLine !== null &&
         actualLine !== null &&
         projectLine !== null &&
         carryToLine !== null &&
@@ -582,6 +698,9 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
         (lines[k].trim() === "" ||
           k === doneConditionLine ||
           k === retrospectiveLine ||
+          k === resultLine ||
+          k === remainingLine ||
+          k === registeredLine ||
           k === actualLine ||
           k === projectLine ||
           k === carryToLine ||
@@ -594,6 +713,9 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           if (
             k === doneConditionLine ||
             k === retrospectiveLine ||
+            k === resultLine ||
+            k === remainingLine ||
+            k === registeredLine ||
             k === actualLine ||
             k === projectLine ||
             k === carryToLine ||
@@ -614,13 +736,16 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       }
     }
 
-    // 詳細の領域: メタ行直下の「完了条件・ステップ・ふりかえり・空行」のかたまりの後ろから、ブロック末尾まで
+    // 詳細の領域: メタ行直下の「完了条件・ステップ・ふりかえり・結果・残・登録日・空行」のかたまりの後ろから、ブロック末尾まで
     let detailsStart = mi + 1;
     while (detailsStart < end) {
       const k = detailsStart;
       if (
         k === doneConditionLine ||
         k === retrospectiveLine ||
+        k === resultLine ||
+        k === remainingLine ||
+        k === registeredLine ||
         k === actualLine ||
         k === projectLine ||
         k === carryToLine ||
@@ -649,6 +774,12 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       doneConditionLine,
       retrospective,
       retrospectiveLine,
+      result,
+      resultLine,
+      remaining,
+      remainingLine,
+      registered,
+      registeredLine,
       actual,
       actualLine,
       project,
@@ -717,8 +848,11 @@ export function renderTaskBlock(
   if (t.actual?.length) out.push(renderActualLine(t.actual));
   if (t.carryFrom) out.push(renderCarryFromLine(t.carryFrom));
   if (t.carryTo) out.push(renderCarryToLine(t.carryTo));
+  if (t.registered && t.registered.trim()) out.push(renderRegisteredLine(t.registered));
   if (t.doneCondition && t.doneCondition.trim()) out.push(renderDoneConditionLine(t.doneCondition));
   if (t.steps?.length) out.push(...renderStepLines(t.steps));
+  if (t.result && t.result.trim()) out.push(renderResultLine(t.result));
+  if (t.remaining && t.remaining.trim()) out.push(renderRemainingLine(t.remaining));
   if (t.retrospective && t.retrospective.trim()) out.push(renderRetrospectiveLine(t.retrospective));
   const body = trimBlankLines(t.body ?? []);
   if (body.length) out.push("", ...body);
@@ -732,6 +866,7 @@ export function bodyPreview(body: string[], max = 60): string {
     if (parseActualLine(raw) !== null) continue; // 実績はバーとして出す
     if (parseProjectLine(raw) !== null) continue; // プロジェクトはバッジとして出す
     if (parseCarryToLine(raw) !== null || parseCarryFromLine(raw) !== null) continue; // 持ち越しもバッジ
+    if (parseRegisteredLine(raw) !== null) continue; // 登録日はただのメタ情報
     const line = raw
       .replace(/^\s*[-*+]\s+(?:\[.\]\s*)?/, "") // リスト記号とチェックボックス
       .replace(/^\s*>\s?/, "") // 引用

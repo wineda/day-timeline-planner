@@ -152,6 +152,8 @@ export interface DayTimelineSettings {
   insertPosition: InsertPosition;
   /** 本文があるタスクを消すときに確認するか */
   confirmBodyDelete: boolean;
+  /** タスクを削除したとき <フォルダ>/Log.md に記録を残すか */
+  deletionLog: boolean;
   /** メタ行にもタイトルを書くか（他プラグインとの互換用） */
   mirrorTitleInMeta: boolean;
 
@@ -249,6 +251,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   taskRootHeading: "",
   insertPosition: "time",
   confirmBodyDelete: true,
+  deletionLog: true,
   mirrorTitleInMeta: false,
   startHour: 7,
   endHour: 22,
@@ -505,6 +508,19 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         );
 
       new Setting(containerEl)
+        .setName("削除したタスクの記録を残す")
+        .setDesc(
+          "タスクを削除したとき、<フォルダ>/Log.md に日時・タイトル・元のノートを1行で記録します。" +
+            "「消えたタスク」が意図した削除だったかを後から確かめられます。"
+        )
+        .addToggle((t) =>
+          t.setValue(s.deletionLog).onChange(async (v) => {
+            s.deletionLog = v;
+            await save();
+          })
+        );
+
+      new Setting(containerEl)
         .setName("メタ行にもタイトルを書く")
         .setDesc(
           "「- [ ] 09:00 - 10:00 朝会 ^dtp-xxx」のようにタイトルを重複して書きます。" +
@@ -717,7 +733,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         .setName("完了にしたとき実績を自動で記録")
         .setDesc(
           "実績が空のタスクを完了にすると「開始 = 予定の開始、終了 = 今」で実績を記録します" +
-            "（完了が予定とかけ離れた時刻のときは予定どおりとして記録）。ふりかえりのポップアップで直せます。"
+            "（完了が予定とかけ離れた時刻のときは予定どおりとして記録）。" +
+            "同じ日の他のタスクの実績と重なる時間帯は除いて記録します。完了時のポップアップで直せます。"
         )
         .addToggle((t) =>
           t.setValue(s.autoRecordActual).onChange(async (v) => {

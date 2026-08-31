@@ -14,8 +14,15 @@ import {
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
-import { ConfirmModal, PromptModal, RetrospectiveModal, TaskModal, formatActualRanges } from "./modal";
-import type { ActualRange } from "./markdown/blocks";
+import {
+  ConfirmModal,
+  PromptModal,
+  RemainingStepsModal,
+  RetrospectiveModal,
+  TaskModal,
+  formatActualRanges,
+} from "./modal";
+import { subtractActualRanges, type ActualRange } from "./markdown/blocks";
 import {
   groupProjects,
   knownGroupNames,
@@ -3566,6 +3573,8 @@ export class DayTimelineView extends ItemView {
       doneCondition: task.doneCondition,
       steps: task.steps,
       retrospective: task.retrospective,
+      result: task.result,
+      remaining: task.remaining,
       actual: task.actual,
       project: task.project,
       details: task.details,
@@ -3613,6 +3622,35 @@ export class DayTimelineView extends ItemView {
       await this.commitChangeOwner(date, task, data);
       return;
     }
+    // 未完了 → 完了で未チェックのステップが残っていれば、先に確認する
+    if (this.maybeConfirmRemainingSteps(date, task, data, wasDone)) return;
+    await this.performUpdate(date, task, data, wasDone);
+  }
+
+  /**
+   * 未完了 → 完了にするとき、未チェックのステップが残っていれば確認ダイアログを出す。
+   * 「残:」を書かずに完了にすると、日報などの下流で残件が完了扱いのまま埋もれてしまうため。
+   * ダイアログを出したら true（続きは選択に応じて performUpdate / commitCarryOver が行う）
+   */
+  private maybeConfirmRemainingSteps(date: Date, task: Task, data: TaskDraft, wasDone: boolean): boolean {
+    if (!this.plugin.blockStoreFor(task.owner)) return false; // ブロック形式のみ
+    if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
+    const steps = data.steps ?? task.steps;
+    const unchecked = steps.filter((st) => !st.done && st.text.trim()).map((st) => st.text.trim());
+    if (!unchecked.length) return false;
+    // すでに「残:」が書いてあれば、改めては聞かない
+    const remaining = data.remaining !== undefined ? data.remaining : task.remaining;
+    if (remaining.trim()) return false;
+    new RemainingStepsModal(this.app, {
+      taskTitle: stripTags(data.title || task.title),
+      steps: unchecked,
+      onComplete: (rem) => this.performUpdate(date, task, rem ? { ...data, remaining: rem } : data, wasDone),
+      onCarryOver: !task.forwarded ? () => this.commitCarryOver(date, task, "next-day") : undefined,
+    }).open();
+    return true;
+  }
+
+  private async performUpdate(date: Date, task: Task, data: TaskDraft, wasDone = task.done): Promise<void> {
     // 未完了 → 完了で実績が空なら、自動で実績を入れる
     const auto = this.autoActual(date, task, data, wasDone);
     if (auto) data = { ...data, actual: auto };
@@ -3672,6 +3710,8 @@ export class DayTimelineView extends ItemView {
    * 完了にしたときの実績の自動記録（設定でオフ可）。
    * 今日のタスクを作業の前後で完了にしたときは「予定の開始 〜 今」、
    * それ以外（後からまとめてチェックした・別の日のタスク）は「予定どおり」として記録する。
+   * 同じ日の他タスクの実績と重なる時間帯は除く（完了操作の遅れや中断が
+   * 二重の実績として記録され、予実の合計と記録チェックを狂わせるのを防ぐ）。
    */
   private autoActual(date: Date, task: Task, data: TaskDraft, wasDone: boolean): ActualRange[] | null {
     const s = this.plugin.settings;
@@ -3682,11 +3722,17 @@ export class DayTimelineView extends ItemView {
     const start = data.start ?? task.start;
     const end = data.end ?? task.end;
     if (start === null || end === null) return null;
+    let candidate: ActualRange[] = [{ start, end }];
     if (isToday(date)) {
       const now = nowMinutes();
-      if (now > start && now <= end + 60) return [{ start, end: Math.min(now, 1440) }];
+      if (now > start && now <= end + 60) candidate = [{ start, end: Math.min(now, 1440) }];
     }
-    return [{ start, end }];
+    const others = (this.data.get(dateKey(date))?.tasks ?? [])
+      .filter((t) => t.key !== task.key && (t.owner ?? null) === (task.owner ?? null))
+      .flatMap((t) => t.actual);
+    const clipped = subtractActualRanges(candidate, others);
+    // すべて他タスクの実績と重なっていたら、記録しないよりは元の候補を残す（ポップアップで直せる）
+    return clipped.length ? clipped : candidate;
   }
 
   /**
@@ -3729,7 +3775,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * 15分以上のタスクを完了にしたとき、ふりかえりが空なら入力を促す。
+   * 15分以上のタスクを完了にしたとき、結果かふりかえりが空なら入力を促す。
    * 実績の確認・修正欄も一緒に出す。ポップアップを出したら true
    */
   private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): boolean {
@@ -3739,16 +3785,19 @@ export class DayTimelineView extends ItemView {
     const end = data.end ?? task.end;
     if (start === null || end === null || end - start < 15) return false;
     const retro = data.retrospective !== undefined ? data.retrospective : task.retrospective;
-    if (retro && retro.trim()) return false;
+    const result = data.result !== undefined ? data.result : task.result;
+    if (retro && retro.trim() && result && result.trim()) return false; // 両方書いてあれば促さない
     const recorded = data.actual !== undefined ? data.actual : task.actual;
     new RetrospectiveModal(this.app, {
       taskTitle: stripTags(data.title || task.title),
       durationLabel: formatDuration(end - start),
       actual: recorded,
-      onSave: async (text, actual) => {
+      result,
+      onSave: async (text, actual, resultText) => {
         try {
           const patch: TaskDraft = { ...data };
           if (text) patch.retrospective = text;
+          if (resultText.trim() !== (result ?? "").trim()) patch.result = resultText;
           if (actual !== undefined) patch.actual = actual;
           const ok = await this.storeOf(task).update(date, task, patch);
           if (!ok) new Notice("ふりかえりを保存できませんでした。ノートが変更された可能性があります。");
@@ -4059,13 +4108,13 @@ export class DayTimelineView extends ItemView {
         new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
       } else {
         await inbox.putBlock(INBOX_DATE, block, null);
-        if (draft || task.start !== null) {
-          await inbox.update(INBOX_DATE, task, {
-            ...(draft ?? this.draftOf(task)),
-            start: null,
-            end: null,
-          });
-        }
+        // 時刻を外し、Inbox に入れた日を「登録日」として刻む（滞留日数を後から判定できるように）
+        await inbox.update(INBOX_DATE, task, {
+          ...(draft ?? this.draftOf(task)),
+          start: null,
+          end: null,
+          registered: moment().format("YYYY-MM-DD"),
+        });
         new Notice("Inbox へ戻しました（日付未定）");
       }
     } catch (e) {
