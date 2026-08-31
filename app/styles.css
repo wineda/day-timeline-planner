@@ -1007,12 +1007,12 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
-/* 日付ヘッダーの予実合計（予 6:00 実 6:45 (+0:45)） */
+/* 日付ヘッダーの予実合計。1行目「予定/実績」（小数1桁の時間）、2行目に差異の2行で高さを抑える */
 .dt-day-total {
   display: flex;
-  gap: 5px;
-  justify-content: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
   font-size: 0.72em;
   line-height: 1.2;
   color: var(--text-muted);
