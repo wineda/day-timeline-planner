@@ -2002,6 +2002,7 @@
 }
 .dt-modal-buttons .setting-item-control {
   gap: 8px;
+  flex-wrap: wrap; /* ボタンが多いダイアログ（未完了ステップの確認など）でも収まるように */
 }
 /* 自動保存の状態（ボタン行の左側に出す） */
 .dt-modal .dt-modal-buttons .setting-item-description.dt-autosave-error {
@@ -2045,10 +2046,18 @@
   min-height: 140px;
 }
 
-/* ふりかえりの入力促進ポップアップ */
+/* 結果とふりかえりの入力促進ポップアップ */
 .dt-retro-modal {
   width: 560px;
   max-width: 90vw;
+}
+/* 未完了ステップの確認ダイアログの一覧 */
+.dt-remaining-list {
+  margin: 8px 0 4px;
+  padding-inline-start: 22px;
+}
+.dt-remaining-list li {
+  line-height: 1.6;
 }
 .dt-retro-lead {
   line-height: 1.6;

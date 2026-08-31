@@ -39,6 +39,12 @@ export interface Task {
   steps: TaskStep[];
   /** ふりかえり（ブロック形式のみ。無ければ ""） */
   retrospective: string;
+  /** 結果 = 何がどこまで終わったか（ブロック形式のみ。無ければ ""） */
+  result: string;
+  /** 残 = 完了後に残った作業（ブロック形式のみ。無ければ ""） */
+  remaining: string;
+  /** 登録日（Inbox に入れた日。ブロック形式のみ。無ければ ""） */
+  registered: string;
   /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
   actual: ActualRange[];
   /** プロジェクト（大きなタスク）ノートへのリンク先（ブロック形式のみ。無ければ null） */
@@ -82,6 +88,12 @@ export interface TaskDraft {
   steps?: TaskStep[];
   /** undefined = 変更しない */
   retrospective?: string;
+  /** 結果。undefined = 変更しない / "" = 消す */
+  result?: string;
+  /** 残。undefined = 変更しない / "" = 消す */
+  remaining?: string;
+  /** 登録日。undefined = 変更しない / "" = 消す */
+  registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
   actual?: ActualRange[];
   /** プロジェクト。undefined = 変更しない / null = 外す */

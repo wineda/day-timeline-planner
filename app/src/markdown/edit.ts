@@ -22,6 +22,9 @@ import {
   renderProjectLine,
   renderDoneConditionLine,
   renderHeadingLine,
+  renderRegisteredLine,
+  renderRemainingLine,
+  renderResultLine,
   renderRetrospectiveLine,
   renderStepLines,
   renderMetaLine,
@@ -57,6 +60,12 @@ export interface TaskPatch {
   steps?: TaskStep[];
   /** undefined = 変更しない / "" = 消す */
   retrospective?: string;
+  /** 結果。undefined = 変更しない / "" = 消す */
+  result?: string;
+  /** 残。undefined = 変更しない / "" = 消す */
+  remaining?: string;
+  /** 登録日。undefined = 変更しない / "" = 消す */
+  registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
   actual?: ActualRange[];
   /** プロジェクト。undefined = 変更しない / null = 外す */
@@ -81,6 +90,9 @@ export interface NewTaskInput {
   doneCondition?: string;
   steps?: TaskStep[];
   retrospective?: string;
+  result?: string;
+  remaining?: string;
+  registered?: string;
   actual?: ActualRange[];
   project?: string | null;
   carryTo?: string | null;
@@ -120,6 +132,9 @@ export function insertTask(content: string, draft: NewTaskInput, opts: InsertOpt
     doneCondition: draft.doneCondition,
     steps: draft.steps,
     retrospective: draft.retrospective,
+    result: draft.result,
+    remaining: draft.remaining,
+    registered: draft.registered,
     actual: draft.actual,
     project: draft.project,
     carryTo: draft.carryTo,
@@ -202,16 +217,24 @@ export function updateTask(
   // 詳細の領域内にある「ふりかえり」「完了条件」「実績」行は詳細と一緒に編集されるので、個別の書き換えは行わない
   const insideDetails = (line: number | null) =>
     patch.details !== undefined && line !== null && line >= t.detailsStart;
-  // メタ行直下に並ぶ特別な行（プロジェクト・実績・持ち越し・完了条件）を飛ばした挿入位置
+  // メタ行直下に並ぶ特別な行（プロジェクト・実績・持ち越し・登録日・完了条件）を飛ばした挿入位置
   let afterMeta = t.metaLine + 1;
   while (
     afterMeta === t.actualLine ||
     afterMeta === t.doneConditionLine ||
     afterMeta === t.projectLine ||
     afterMeta === t.carryToLine ||
-    afterMeta === t.carryFromLine
+    afterMeta === t.carryFromLine ||
+    afterMeta === t.registeredLine
   )
     afterMeta++;
+  // ふりかえり・結果・残の新規行を入れる位置（ステップ・完了条件の後ろ）
+  const afterSteps =
+    t.stepsStart !== null
+      ? t.stepsEnd
+      : t.doneConditionLine !== null
+        ? t.doneConditionLine + 1
+        : afterMeta;
   // ふりかえり: 既存行を書き換え / 無ければステップ・完了条件の後ろに足す / 空なら消す
   if (patch.retrospective !== undefined && !insideDetails(t.retrospectiveLine)) {
     const text = patch.retrospective.trim();
@@ -219,13 +242,36 @@ export function updateTask(
       ops.push({ at: t.retrospectiveLine, del: 1, lines: text ? [renderRetrospectiveLine(text)] : [], order: 0 });
       if (!text) deleted = true;
     } else if (text) {
-      const at =
-        t.stepsStart !== null
-          ? t.stepsEnd
-          : t.doneConditionLine !== null
-            ? t.doneConditionLine + 1
-            : afterMeta;
-      ops.push({ at, del: 0, lines: [renderRetrospectiveLine(text)], order: 0 });
+      ops.push({ at: afterSteps, del: 0, lines: [renderRetrospectiveLine(text)], order: 0 });
+    }
+  }
+  // 結果・残: ふりかえりと同じ扱い（同じ位置に重なったら 結果 → 残 → ふりかえり の順に並ぶ）
+  if (patch.result !== undefined && !insideDetails(t.resultLine)) {
+    const text = patch.result.trim();
+    if (t.resultLine !== null) {
+      ops.push({ at: t.resultLine, del: 1, lines: text ? [renderResultLine(text)] : [], order: 0.7 });
+      if (!text) deleted = true;
+    } else if (text) {
+      ops.push({ at: afterSteps, del: 0, lines: [renderResultLine(text)], order: 0.7 });
+    }
+  }
+  if (patch.remaining !== undefined && !insideDetails(t.remainingLine)) {
+    const text = patch.remaining.trim();
+    if (t.remainingLine !== null) {
+      ops.push({ at: t.remainingLine, del: 1, lines: text ? [renderRemainingLine(text)] : [], order: 0.5 });
+      if (!text) deleted = true;
+    } else if (text) {
+      ops.push({ at: afterSteps, del: 0, lines: [renderRemainingLine(text)], order: 0.5 });
+    }
+  }
+  // 登録日: 既存行を書き換え / 無ければメタ行直下の特別な行の下に足す / 空なら消す
+  if (patch.registered !== undefined && !insideDetails(t.registeredLine)) {
+    const text = patch.registered.trim();
+    if (t.registeredLine !== null) {
+      ops.push({ at: t.registeredLine, del: 1, lines: text ? [renderRegisteredLine(text)] : [], order: 2.4 });
+      if (!text) deleted = true;
+    } else if (text) {
+      ops.push({ at: afterMeta, del: 0, lines: [renderRegisteredLine(text)], order: 2.4 });
     }
   }
   if (patch.steps !== undefined) {

@@ -68,6 +68,8 @@ export class TaskModal extends Modal {
   private reminder: ReminderSetting;
   private doneCondition: string;
   private retrospective: string;
+  private result: string;
+  private remaining: string;
   private details: string;
   private ticketTracker: string;
   private ticketId: string;
@@ -109,6 +111,8 @@ export class TaskModal extends Modal {
     this.reminder = opts.initial.reminder ?? null;
     this.doneCondition = opts.initial.doneCondition ?? "";
     this.retrospective = opts.initial.retrospective ?? "";
+    this.result = opts.initial.result ?? "";
+    this.remaining = opts.initial.remaining ?? "";
     this.details = opts.initial.details ?? "";
     this.ticketTracker = opts.initial.ticket?.tracker ?? "";
     this.ticketId = opts.initial.ticket?.id ?? "";
@@ -425,6 +429,56 @@ export class TaskModal extends Modal {
       });
       window.setTimeout(growDetail, 0);
       collapsible(detailSetting.settingEl, "詳細", this.details.trim() !== "", () => detailTa.focus());
+
+      // ---- 結果・残（編集時のみ。何がどこまで終わったか / 完了後に何が残ったか）----
+      if (this.opts.mode === "edit") {
+        const resSetting = new Setting(contentEl).setName("結果");
+        tip(resSetting.settingEl, "何がどこまで終わったか。ノートには「- 結果: …」として保存され、日報の元データになります。");
+        resSetting.settingEl.addClass("dt-retro-setting");
+        const resTa = resSetting.controlEl.createEl("textarea", {
+          cls: "dt-retro-field",
+          attr: { rows: "1", placeholder: "例: 実装完了。テストケースの修正まで終わった" },
+        });
+        resTa.value = this.result.replace(/ \/ /g, "\n");
+        const growRes = () => {
+          resTa.style.height = "auto";
+          resTa.style.height = Math.min(Math.max(resTa.scrollHeight, 36), 220) + "px";
+        };
+        resTa.addEventListener("input", () => {
+          this.result = resTa.value;
+          growRes();
+        });
+        resTa.addEventListener("focus", () => {
+          resTa.addClass("is-active");
+          growRes();
+        });
+        resTa.addEventListener("blur", () => {
+          resTa.removeClass("is-active");
+          growRes();
+        });
+        // Enter は改行（保存は Ctrl+Enter）
+        resTa.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+            e.preventDefault();
+            void this.submit();
+          }
+        });
+        window.setTimeout(growRes, 0);
+        collapsible(resSetting.settingEl, "結果", this.result.trim() !== "", () => resTa.focus());
+
+        const remSetting = new Setting(contentEl).setName("残");
+        tip(remSetting.settingEl, "完了にしたあとに残っている作業。ノートには「- 残: …」として保存されます。");
+        let remInput: HTMLInputElement | null = null;
+        remSetting.addText((t) => {
+          t.setPlaceholder("例: 結合環境に投入")
+            .setValue(this.remaining)
+            .onChange((v) => (this.remaining = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+          remInput = t.inputEl;
+        });
+        collapsible(remSetting.settingEl, "残", this.remaining.trim() !== "", () => remInput?.focus());
+      }
 
       // ---- ふりかえり（編集時のみ。作った直後には要らない）----
       if (this.opts.mode === "edit") {
@@ -1079,6 +1133,8 @@ export class TaskModal extends Modal {
       retrospective: this.opts.showDoneCondition
         ? this.retrospective.replace(/\s*\n+\s*/g, " / ").trim()
         : undefined,
+      result: this.opts.showDoneCondition ? this.result.replace(/\s*\n+\s*/g, " / ").trim() : undefined,
+      remaining: this.opts.showDoneCondition ? this.remaining.trim() : undefined,
       details: this.opts.showDoneCondition ? this.details.replace(/\s+$/, "") : undefined,
       ticket: this.opts.showDoneCondition
         ? this.ticketId.trim()
@@ -1391,13 +1447,19 @@ export interface RetrospectiveOptions {
   durationLabel: string;
   /** 記録済みの実績。渡すと実績の確認・修正欄を出す（完了時の自動記録の直しに使う） */
   actual?: ActualRange[];
-  /** actual は実績欄の内容（欄を出していなければ undefined） */
-  onSave: (text: string, actual?: ActualRange[]) => void | Promise<void>;
+  /** 記録済みの「結果」。欄の初期値になる（すでに書いてあれば書き換えの機会になる） */
+  result?: string;
+  /**
+   * text = ふりかえり（空 = 変更なし）、actual = 実績欄の内容（欄を出していなければ undefined）、
+   * result = 結果欄の内容
+   */
+  onSave: (text: string, actual: ActualRange[] | undefined, result: string) => void | Promise<void>;
 }
 
-/** 完了時に「ふりかえり」の入力を促すダイアログ（実績の確認・修正もここでできる） */
+/** 完了時に「結果」と「ふりかえり」の入力を促すダイアログ（実績の確認・修正もここでできる） */
 export class RetrospectiveModal extends Modal {
   private text = "";
+  private resultText: string;
   private actualText: string;
 
   constructor(
@@ -1405,17 +1467,49 @@ export class RetrospectiveModal extends Modal {
     private opts: RetrospectiveOptions
   ) {
     super(app);
+    this.resultText = (opts.result ?? "").replace(/ \/ /g, "\n");
     this.actualText = formatActualRanges(opts.actual ?? []);
   }
 
   onOpen(): void {
     this.modalEl.addClass("dt-modal", "dt-retro-modal");
-    this.titleEl.setText("ふりかえりを書きませんか？");
+    this.titleEl.setText("結果とふりかえりを書きませんか？");
     this.contentEl.createEl("p", {
       cls: "dt-retro-lead",
-      text: `「${this.opts.taskTitle || "(無題)"}」（${this.opts.durationLabel}）が完了しました。作業してみてどうだったか・次はどう改善するかを一言残しておくと、次回に活きます。`,
+      text:
+        `「${this.opts.taskTitle || "(無題)"}」（${this.opts.durationLabel}）が完了しました。` +
+        "何がどこまで終わったか（結果）と、次への改善（ふりかえり）を残しておくと、日報とふりかえりに活きます。",
     });
 
+    // ---- 結果 ----
+    const resSetting = new Setting(this.contentEl).setName("結果");
+    resSetting.settingEl.addClass("dt-retro-setting");
+    resSetting.setDesc("ノートには「- 結果: …」として保存されます。1行の要約でかまいません。");
+    const resTa = resSetting.controlEl.createEl("textarea", {
+      cls: "dt-retro-field",
+      attr: { rows: "2", placeholder: "例: 実装完了。テストケースの修正まで終わった" },
+    });
+    resTa.value = this.resultText;
+    const growRes = () => {
+      resTa.style.height = "auto";
+      resTa.style.height = Math.min(Math.max(resTa.scrollHeight, 56), 220) + "px";
+    };
+    resTa.addEventListener("input", () => {
+      this.resultText = resTa.value;
+      growRes();
+    });
+    resTa.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+        e.preventDefault();
+        void this.save();
+      }
+    });
+    window.setTimeout(() => {
+      growRes();
+      resTa.focus();
+    }, 0);
+
+    // ---- 実績 ----
     if (this.opts.actual !== undefined) {
       const actSetting = new Setting(this.contentEl).setName("実績");
       const updateDesc = () => {
@@ -1425,7 +1519,7 @@ export class RetrospectiveModal extends Modal {
           r === null
             ? "実績は 10:05 - 11:20 のように入力してください"
             : this.opts.actual?.length
-              ? "自動で記録した実績です。違っていればここで直せます。"
+              ? "自動で記録した実績です。違っていればここで直せます（中断は / で区切り）。"
               : "実際に作業した時間（空のままでもかまいません）。"
         );
       };
@@ -1447,13 +1541,17 @@ export class RetrospectiveModal extends Modal {
       updateDesc();
     }
 
-    const ta = this.contentEl.createEl("textarea", {
-      cls: "dt-retro-input",
-      attr: { rows: "5", placeholder: "例: 想定より調査に時間がかかった。次は先に既知の事例を探す" },
+    // ---- ふりかえり ----
+    const retroSetting = new Setting(this.contentEl).setName("ふりかえり");
+    retroSetting.settingEl.addClass("dt-retro-setting");
+    retroSetting.setDesc("作業してみてどうだったか・次はどう改善するか。");
+    const ta = retroSetting.controlEl.createEl("textarea", {
+      cls: "dt-retro-field",
+      attr: { rows: "3", placeholder: "例: 想定より調査に時間がかかった。次は先に既知の事例を探す" },
     });
     const grow = () => {
       ta.style.height = "auto";
-      ta.style.height = Math.min(Math.max(ta.scrollHeight, 120), 320) + "px";
+      ta.style.height = Math.min(Math.max(ta.scrollHeight, 80), 320) + "px";
     };
     ta.addEventListener("input", () => {
       this.text = ta.value;
@@ -1465,7 +1563,7 @@ export class RetrospectiveModal extends Modal {
         void this.save();
       }
     });
-    window.setTimeout(() => ta.focus(), 0);
+    window.setTimeout(grow, 0);
 
     const buttons = new Setting(this.contentEl);
     buttons.settingEl.addClass("dt-modal-buttons");
@@ -1479,6 +1577,7 @@ export class RetrospectiveModal extends Modal {
 
   private async save(): Promise<void> {
     const text = this.text.replace(/\s*\n+\s*/g, " / ").trim();
+    const result = this.resultText.replace(/\s*\n+\s*/g, " / ").trim();
     let actual: ActualRange[] | undefined;
     if (this.opts.actual !== undefined) {
       const r = parseActualRanges(this.actualText);
@@ -1489,9 +1588,89 @@ export class RetrospectiveModal extends Modal {
       actual = r;
     }
     this.close();
-    // ふりかえりが空でも、実績を直していれば保存する
+    // ふりかえりが空でも、結果や実績を書き換えていれば保存する
     const actualChanged =
       actual !== undefined && JSON.stringify(actual) !== JSON.stringify(this.opts.actual ?? []);
-    if (text || actualChanged) await this.opts.onSave(text, actual);
+    const resultChanged = result !== (this.opts.result ?? "").trim();
+    if (text || actualChanged || resultChanged) await this.opts.onSave(text, actual, result);
+  }
+}
+
+export interface RemainingStepsOptions {
+  taskTitle: string;
+  /** 未チェックのステップの文言 */
+  steps: string[];
+  /**
+   * 完了を続行する。remaining = 「- 残: …」として書き込む文言（「そのまま完了」なら null）
+   */
+  onComplete: (remaining: string | null) => void | Promise<void>;
+  /** 「翌日へ持ち越す」を選んだとき（完了にはしない）。無ければボタンを出さない */
+  onCarryOver?: () => void | Promise<void>;
+}
+
+/**
+ * 未チェックのステップが残っているタスクを完了にしようとしたときの確認。
+ * 残件を「- 残: …」として明示するか、持ち越すか、そのまま完了するかを選ぶ
+ * （残が書かれていないと、日報などの下流では完了扱いになってしまうため）
+ */
+export class RemainingStepsModal extends Modal {
+  constructor(
+    app: App,
+    private opts: RemainingStepsOptions
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal", "dt-retro-modal");
+    this.titleEl.setText("未完了のステップがあります");
+    this.contentEl.createEl("p", {
+      cls: "dt-retro-lead",
+      text:
+        `「${this.opts.taskTitle || "(無題)"}」を完了にしようとしていますが、` +
+        `チェックされていないステップが ${this.opts.steps.length} 件あります。` +
+        "残件を「残:」として書いておくと、完了扱いのまま埋もれるのを防げます。",
+    });
+    const ul = this.contentEl.createEl("ul", { cls: "dt-remaining-list" });
+    for (const st of this.opts.steps) ul.createEl("li", { text: st });
+
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+    if (this.opts.onCarryOver) {
+      const onCarryOver = this.opts.onCarryOver;
+      buttons.addButton((b) =>
+        b
+          .setButtonText("翌日へ持ち越す")
+          .setTooltip("完了にせず、残ステップを引き継いだ続きのブロックを翌日に作ります")
+          .onClick(async () => {
+            this.close();
+            await onCarryOver();
+          })
+      );
+    }
+    buttons.addButton((b) =>
+      b
+        .setButtonText("そのまま完了")
+        .setTooltip("残: を書かずに完了にします")
+        .onClick(async () => {
+          this.close();
+          await this.opts.onComplete(null);
+        })
+    );
+    buttons.addButton((b) =>
+      b
+        .setButtonText("残: に記録して完了")
+        .setCta()
+        .setTooltip("未チェックのステップを「- 残: …」として書き込んでから完了にします")
+        .onClick(async () => {
+          this.close();
+          await this.opts.onComplete(this.opts.steps.join(" / "));
+        })
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }
