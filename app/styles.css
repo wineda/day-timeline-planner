@@ -1690,6 +1690,26 @@
   border-color: var(--interactive-accent);
   background: var(--background-modifier-hover);
 }
+/* 選択中のタグの「候補」フィールドのチップ（先頭に並ぶ）は少し目立たせる */
+.dt-modal .dt-add-field-chip.is-suggested {
+  color: var(--text-normal);
+  border-style: solid;
+  border-color: var(--interactive-accent);
+}
+/* タグ別スキーマで必須になった欄のラベルのマーク */
+.dt-required-mark {
+  color: var(--color-red, #e06c75);
+  margin-left: 4px;
+  font-size: 0.7em;
+  vertical-align: 2px;
+}
+/* 必須なのに空のまま保存しようとした欄 */
+.dt-modal .setting-item.dt-field-invalid,
+.dt-modal .dt-steps.dt-field-invalid {
+  box-shadow: inset 3px 0 0 var(--color-red, #e06c75);
+  padding-left: 8px;
+  border-radius: var(--radius-s);
+}
 .dt-modal .dt-tag-setting .setting-item-control {
   flex-wrap: wrap;
   justify-content: flex-start;
@@ -2219,6 +2239,13 @@
 }
 .dt-tracker-row .dt-tracker-url {
   width: 280px;
+}
+/* タグ別フィールドの設定行（タグ / 必須 / 候補の3入力） */
+.dt-tag-schema-row .dt-schema-tag {
+  width: 110px;
+}
+.dt-tag-schema-row .dt-schema-fields {
+  width: 190px;
 }
 
 .dt-setting-preview {

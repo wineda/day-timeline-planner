@@ -1,8 +1,24 @@
 import { App, DropdownComponent, Modal, Notice, Platform, Setting, moment, setIcon } from "obsidian";
 import type { TaskDraft } from "./model";
 import { projectDisplayName, type ProjectRef } from "./project";
-import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
-import { normalizeTag, ticketUrl, type IssueTracker, type TagColor } from "./settings";
+import {
+  actualTotal,
+  renderStatusValue,
+  statusReason,
+  type ActualRange,
+  type ReminderSetting,
+  type TaskStep,
+  type TicketRef,
+} from "./markdown/blocks";
+import {
+  normalizeFieldLabel,
+  normalizeTag,
+  schemaForTag,
+  ticketUrl,
+  type IssueTracker,
+  type TagColor,
+  type TagFieldSchema,
+} from "./settings";
 import { contrastTextColor, formatDuration, minutesToHHMM, parseTimeInput } from "./util";
 import { iconName } from "./icons";
 
@@ -29,6 +45,12 @@ export interface TaskModalOptions {
   unscheduledHint?: string;
   /** 設定画面で登録したタグ（ボタンで選べるようにする） */
   tagChoices?: TagColor[];
+  /** タグごとの必須・候補フィールド（選んだタグに応じて欄を開き、チップを並べ替える） */
+  tagFieldSchema?: TagFieldSchema[];
+  /** 必須フィールドが空のまま保存しようとしたとき警告する（既定: true。保存は止めない） */
+  validateRequiredOnSave?: boolean;
+  /** メンバーの名前（「Owner」欄の入力候補に出す） */
+  memberNames?: string[];
   /** リマインドの選択欄を出すか（既定の「N分前」を表示に使う）。undefined なら出さない */
   reminderDefault?: number;
   /** 完了条件・ステップの入力欄を出すか（ブロック形式のみ） */
@@ -70,6 +92,17 @@ export class TaskModal extends Modal {
   private retrospective: string;
   private result: string;
   private remaining: string;
+  private cause: string;
+  private judgment: string;
+  /** 他者の入力（1行 = 1件。保存時に「- 他者: …」の行に分ける） */
+  private othersText: string;
+  private answer: string;
+  /** 状態の中断理由（表示・入力用。保存時に「中断(理由)」へ戻す） */
+  private statusText: string;
+  /** 開いたときの状態の生の値（理由が変わっていなければ書式を保つ） */
+  private initialStatus: string;
+  private ownerNameText: string;
+  private dueText: string;
   private details: string;
   private ticketTracker: string;
   private ticketId: string;
@@ -103,6 +136,17 @@ export class TaskModal extends Modal {
   private selectedTags = new Set<string>();
   /** ボタンで選べるタグ（正規化して重複を除いたもの） */
   private tagChoices: TagColor[];
+  /** 折りたためる欄の一覧（タグ別スキーマの適用と保存時の必須チェックに使う） */
+  private fieldRows: { label: string; el: HTMLElement; hasValue: () => boolean; focus?: () => void }[] = [];
+  /**
+   * 開いたままにする欄。値が入っていた欄と、ユーザーが「＋」チップで開いた欄。
+   * タグ切り替えで required から外れても、ここに載っている欄は閉じない
+   */
+  private userOpened = new Set<string>();
+  /** 「＋」チップを並べるコンテナ */
+  private addFieldsEl: HTMLElement | null = null;
+  /** 必須フィールドの警告を出したあと「このまま保存」が選ばれた */
+  private skipRequiredCheck = false;
 
   constructor(app: App, opts: TaskModalOptions) {
     super(app);
@@ -113,6 +157,14 @@ export class TaskModal extends Modal {
     this.retrospective = opts.initial.retrospective ?? "";
     this.result = opts.initial.result ?? "";
     this.remaining = opts.initial.remaining ?? "";
+    this.cause = opts.initial.cause ?? "";
+    this.judgment = opts.initial.judgment ?? "";
+    this.othersText = (opts.initial.others ?? []).join("\n");
+    this.answer = opts.initial.answer ?? "";
+    this.initialStatus = opts.initial.status ?? "";
+    this.statusText = statusReason(this.initialStatus);
+    this.ownerNameText = opts.initial.ownerName ?? "";
+    this.dueText = opts.initial.due ?? "";
     this.details = opts.initial.details ?? "";
     this.ticketTracker = opts.initial.ticket?.tracker ?? "";
     this.ticketId = opts.initial.ticket?.id ?? "";
@@ -150,12 +202,15 @@ export class TaskModal extends Modal {
     // 項目の説明は行のツールチップ（ホバー）で出す
     const tip = (el: HTMLElement, text: string) => el.setAttr("title", text);
 
-    // 値が空の任意項目は隠しておき、下の「＋」チップで開く
-    const collapsed: { label: string; el: HTMLElement; focus?: () => void }[] = [];
-    const collapsible = (el: HTMLElement, label: string, hasValue: boolean, focus?: () => void) => {
-      if (hasValue) return;
-      el.addClass("dt-collapsed");
-      collapsed.push({ label, el, focus });
+    // 値が空の任意項目は隠しておき、下の「＋」チップで開く。
+    // hasValue は「今の入力に値があるか」を返す関数（タグ別スキーマの適用時に毎回見直す）
+    this.fieldRows = [];
+    this.userOpened = new Set();
+    const collapsible = (el: HTMLElement, label: string, hasValue: () => boolean, focus?: () => void) => {
+      // 最初から値が入っていた欄は、タグを切り替えても閉じない
+      if (hasValue()) this.userOpened.add(label);
+      else el.addClass("dt-collapsed");
+      this.fieldRows.push({ label, el, hasValue, focus });
     };
     /** 横に並べた2欄が両方隠れていたら行ごと隠す（欄が無ければ行ごと消す） */
     const finishPair = (pair: HTMLElement) => {
@@ -364,7 +419,7 @@ export class TaskModal extends Modal {
         ownerSelect = d.selectEl;
       });
       paintDot();
-      collapsible(ownerSetting.settingEl, "誰の予定か", this.owner !== null, () => ownerSelect?.focus());
+      collapsible(ownerSetting.settingEl, "誰の予定か", () => this.owner !== null, () => ownerSelect?.focus());
     }
     finishPair(pairMain);
 
@@ -373,13 +428,15 @@ export class TaskModal extends Modal {
       const tagSetting = new Setting(contentEl).setName("タグ");
       tagSetting.settingEl.addClass("dt-tag-setting");
       tip(tagSetting.settingEl, "選んだタグは見出しの末尾に #タグ として書き込まれます。");
-      renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags);
+      renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags, () =>
+        this.applyTagSchema()
+      );
     }
 
     if (this.opts.showDoneCondition) {
       // ---- ステップ（空のときは「＋」チップから開く）----
       const stepsEl = this.buildStepsSection(contentEl);
-      collapsible(stepsEl, "ステップ", this.steps.length > 0, () => this.stepAddInput?.focus());
+      collapsible(stepsEl, "ステップ", () => this.steps.length > 0, () => this.stepAddInput?.focus());
 
       // ---- 完了条件 ----
       const dcSetting = new Setting(contentEl).setName("完了条件");
@@ -393,7 +450,7 @@ export class TaskModal extends Modal {
         t.inputEl.addEventListener("keydown", onKey);
         dcInput = t.inputEl;
       });
-      collapsible(dcSetting.settingEl, "完了条件", this.doneCondition.trim() !== "", () => dcInput?.focus());
+      collapsible(dcSetting.settingEl, "完了条件", () => this.doneCondition.trim() !== "", () => dcInput?.focus());
 
       // ---- 詳細 ----
       const detailSetting = new Setting(contentEl).setName("詳細");
@@ -428,7 +485,7 @@ export class TaskModal extends Modal {
         }
       });
       window.setTimeout(growDetail, 0);
-      collapsible(detailSetting.settingEl, "詳細", this.details.trim() !== "", () => detailTa.focus());
+      collapsible(detailSetting.settingEl, "詳細", () => this.details.trim() !== "", () => detailTa.focus());
 
       // ---- 結果・残（編集時のみ。何がどこまで終わったか / 完了後に何が残ったか）----
       if (this.opts.mode === "edit") {
@@ -464,7 +521,36 @@ export class TaskModal extends Modal {
           }
         });
         window.setTimeout(growRes, 0);
-        collapsible(resSetting.settingEl, "結果", this.result.trim() !== "", () => resTa.focus());
+        collapsible(resSetting.settingEl, "結果", () => this.result.trim() !== "", () => resTa.focus());
+
+        // ---- 原因・判断（横並び。障害・バグ系の記録）----
+        const pairCause = contentEl.createDiv("dt-row-pair");
+        const causeSetting = new Setting(pairCause).setName("原因");
+        tip(causeSetting.settingEl, "障害・バグの原因。ノートには「- 原因: …」として保存されます。");
+        let causeInput: HTMLInputElement | null = null;
+        causeSetting.addText((t) => {
+          t.setPlaceholder("例: 排他制御の考慮漏れ")
+            .setValue(this.cause)
+            .onChange((v) => (this.cause = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+          causeInput = t.inputEl;
+        });
+        collapsible(causeSetting.settingEl, "原因", () => this.cause.trim() !== "", () => causeInput?.focus());
+
+        const judgeSetting = new Setting(pairCause).setName("判断");
+        tip(judgeSetting.settingEl, "その場でどう判断したか。ノートには「- 判断: …」として保存されます。");
+        let judgeInput: HTMLInputElement | null = null;
+        judgeSetting.addText((t) => {
+          t.setPlaceholder("例: 恒久対応は次スプリントで")
+            .setValue(this.judgment)
+            .onChange((v) => (this.judgment = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+          judgeInput = t.inputEl;
+        });
+        collapsible(judgeSetting.settingEl, "判断", () => this.judgment.trim() !== "", () => judgeInput?.focus());
+        finishPair(pairCause);
 
         const remSetting = new Setting(contentEl).setName("残");
         tip(remSetting.settingEl, "完了にしたあとに残っている作業。ノートには「- 残: …」として保存されます。");
@@ -477,7 +563,120 @@ export class TaskModal extends Modal {
           t.inputEl.addEventListener("keydown", onKey);
           remInput = t.inputEl;
         });
-        collapsible(remSetting.settingEl, "残", this.remaining.trim() !== "", () => remInput?.focus());
+        collapsible(remSetting.settingEl, "残", () => this.remaining.trim() !== "", () => remInput?.focus());
+
+        // ---- 他者（ボールが相手にあるもの。1行 = 1件で複数書ける）----
+        const othSetting = new Setting(contentEl).setName("他者");
+        tip(
+          othSetting.settingEl,
+          "ボールが相手にあるもの。「相手 / 内容」を1行に1件で書くと、ノートには「- 他者: …」の行が件数ぶん保存されます。"
+        );
+        othSetting.settingEl.addClass("dt-retro-setting");
+        const othTa = othSetting.controlEl.createEl("textarea", {
+          cls: "dt-retro-field",
+          attr: { rows: "1", placeholder: "例: 田中 / レビュー依頼中（1行に1件）" },
+        });
+        othTa.value = this.othersText;
+        const growOth = () => {
+          othTa.style.height = "auto";
+          othTa.style.height = Math.min(Math.max(othTa.scrollHeight, 36), 220) + "px";
+        };
+        othTa.addEventListener("input", () => {
+          this.othersText = othTa.value;
+          growOth();
+        });
+        othTa.addEventListener("focus", () => {
+          othTa.addClass("is-active");
+          growOth();
+        });
+        othTa.addEventListener("blur", () => {
+          othTa.removeClass("is-active");
+          growOth();
+        });
+        // Enter は改行（1行 = 1件なので変換しない）。保存は Ctrl+Enter
+        othTa.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+            e.preventDefault();
+            void this.submit();
+          }
+        });
+        window.setTimeout(growOth, 0);
+        collapsible(othSetting.settingEl, "他者", () => this.othersText.trim() !== "", () => othTa.focus());
+
+        // ---- 回答・状態（横並び）----
+        const pairAns = contentEl.createDiv("dt-row-pair");
+        const ansSetting = new Setting(pairAns).setName("回答");
+        tip(ansSetting.settingEl, "質問への回答が済んだか。ノートには「- 回答: 済 / 未」として保存されます。");
+        let ansSelect: HTMLSelectElement | null = null;
+        ansSetting.addDropdown((d) => {
+          d.addOption("", "（未設定）");
+          d.addOption("未", "未");
+          d.addOption("済", "済");
+          if (this.answer && !["未", "済"].includes(this.answer)) d.addOption(this.answer, this.answer);
+          d.setValue(this.answer).onChange((v) => (this.answer = v));
+          ansSelect = d.selectEl;
+        });
+        collapsible(ansSetting.settingEl, "回答", () => this.answer.trim() !== "", () => ansSelect?.focus());
+
+        const stSetting = new Setting(pairAns).setName("状態");
+        tip(
+          stSetting.settingEl,
+          "中断したタスクの理由。ノートには「- 状態: 中断(理由)」として保存されます（空なら行を出しません）。"
+        );
+        let stInput: HTMLInputElement | null = null;
+        stSetting.addText((t) => {
+          t.setPlaceholder("中断した理由")
+            .setValue(this.statusText)
+            .onChange((v) => (this.statusText = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+          stInput = t.inputEl;
+        });
+        collapsible(stSetting.settingEl, "状態", () => this.statusText.trim() !== "", () => stInput?.focus());
+        finishPair(pairAns);
+
+        // ---- Owner・期限（横並び）----
+        const pairOwn = contentEl.createDiv("dt-row-pair");
+        const onSetting = new Setting(pairOwn).setName("Owner");
+        tip(
+          onSetting.settingEl,
+          "このタスクのオーナー（ボールを持っている人）。ノートには「- Owner: 名前」として保存されます。"
+        );
+        let onInput: HTMLInputElement | null = null;
+        onSetting.addText((t) => {
+          t.setPlaceholder("例: 田中")
+            .setValue(this.ownerNameText)
+            .onChange((v) => (this.ownerNameText = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+          // メンバー設定があれば入力候補に出す（自由入力も可）
+          const names = (this.opts.memberNames ?? []).map((n) => n.trim()).filter(Boolean);
+          if (names.length) {
+            const dlId = "dt-owner-names-" + Math.random().toString(36).slice(2, 8);
+            const dl = contentEl.createEl("datalist", { attr: { id: dlId } });
+            for (const n of names) dl.createEl("option", { attr: { value: n } });
+            t.inputEl.setAttr("list", dlId);
+          }
+          onInput = t.inputEl;
+        });
+        collapsible(onSetting.settingEl, "Owner", () => this.ownerNameText.trim() !== "", () => onInput?.focus());
+
+        const dueSetting = new Setting(pairOwn).setName("期限");
+        tip(
+          dueSetting.settingEl,
+          "タスクの期限。ノートには「- 期限: YYYY-MM-DD」として保存されます（既存の「期日:」の行も読み込めます）。"
+        );
+        let dueInput: HTMLInputElement | null = null;
+        dueSetting.addText((t) => {
+          t.setPlaceholder("YYYY-MM-DD")
+            .setValue(this.dueText)
+            .onChange((v) => (this.dueText = v));
+          t.inputEl.addClass("dt-title-input");
+          t.inputEl.addEventListener("keydown", onKey);
+          dueInput = t.inputEl;
+        });
+        collapsible(dueSetting.settingEl, "期限", () => this.dueText.trim() !== "", () => dueInput?.focus());
+        finishPair(pairOwn);
       }
 
       // ---- ふりかえり（編集時のみ。作った直後には要らない）----
@@ -515,7 +714,7 @@ export class TaskModal extends Modal {
           }
         });
         window.setTimeout(growRetro, 0);
-        collapsible(retroSetting.settingEl, "ふりかえり", this.retrospective.trim() !== "", () => retroTa.focus());
+        collapsible(retroSetting.settingEl, "ふりかえり", () => this.retrospective.trim() !== "", () => retroTa.focus());
       }
     }
 
@@ -567,7 +766,7 @@ export class TaskModal extends Modal {
         tkInput = t.inputEl;
       });
       updateDesc();
-      collapsible(tkSetting.settingEl, "チケット", this.ticketId.trim() !== "", () => tkInput?.focus());
+      collapsible(tkSetting.settingEl, "チケット", () => this.ticketId.trim() !== "", () => tkInput?.focus());
     }
     if (this.opts.reminderDefault !== undefined) {
       const def = this.opts.reminderDefault;
@@ -588,29 +787,21 @@ export class TaskModal extends Modal {
         });
         rmSelect = d.selectEl;
       });
-      collapsible(rmSetting.settingEl, "リマインド", this.reminder !== null, () => rmSelect?.focus());
+      collapsible(rmSetting.settingEl, "リマインド", () => this.reminder !== null, () => rmSelect?.focus());
     }
     finishPair(pairSub);
 
-    // ---- 隠している項目を開く「＋」チップ ----
-    if (collapsed.length) {
-      const addRow = contentEl.createDiv("dt-add-fields");
-      for (const c of collapsed) {
-        const chip = addRow.createEl("button", {
-          cls: "dt-add-field-chip",
-          text: "＋ " + c.label,
-          attr: { type: "button", title: `${c.label}の欄を開く` },
-        });
-        chip.onclick = () => {
-          c.el.removeClass("dt-collapsed");
-          const pair = c.el.parentElement;
-          if (pair && pair.hasClass("dt-row-pair")) pair.removeClass("dt-collapsed");
-          chip.remove();
-          if (!addRow.querySelector("button")) addRow.remove();
-          c.focus?.();
-        };
+    // ---- 隠している項目を開く「＋」チップ + タグ別スキーマの適用 ----
+    // 選択中のタグの required の欄を開き、suggested のチップを先頭に並べる
+    this.addFieldsEl = contentEl.createDiv("dt-add-fields");
+    this.applyTagSchema();
+
+    // 入力が入ったら、保存時の警告で付けた「未入力」マークを消す
+    contentEl.addEventListener("input", () => {
+      for (const row of this.fieldRows) {
+        if (row.hasValue()) row.el.removeClass("dt-field-invalid");
       }
-    }
+    });
 
     const buttons = new Setting(contentEl);
     buttons.settingEl.addClass("dt-modal-buttons");
@@ -679,6 +870,96 @@ export class TaskModal extends Modal {
     if (this.autosaveOn) this.saveOnClose();
     this.contentEl.empty();
     this.opts.onClose?.();
+  }
+
+  // ---------- タグ別スキーマ（選んだタグに応じた欄の表示） ----------
+
+  /** 選択中のタグの必須・候補フィールドをまとめる（サブタグは親タグへフォールバック） */
+  private schemaForSelectedTags(): { required: Set<string>; suggested: string[] } {
+    const required = new Set<string>();
+    const suggested: string[] = [];
+    const schema = this.opts.tagFieldSchema ?? [];
+    for (const tag of this.selectedTags) {
+      const def = schemaForTag(schema, tag);
+      if (!def) continue;
+      for (const f of def.required) {
+        const label = normalizeFieldLabel(f);
+        if (label) required.add(label);
+      }
+      for (const f of def.suggested) {
+        const label = normalizeFieldLabel(f);
+        if (label && !suggested.includes(label)) suggested.push(label);
+      }
+    }
+    return { required, suggested: suggested.filter((l) => !required.has(l)) };
+  }
+
+  /**
+   * 選択中のタグに応じて、欄の開閉・必須マーク・「＋」チップの並びを更新する。
+   * 値が入っている欄と一度開いた欄は、タグを切り替えても閉じない（書いた内容が隠れて
+   * 消える事故を防ぐ）。開いている欄の入力内容とフォーカスには触らない
+   */
+  private applyTagSchema(): void {
+    const sch = this.schemaForSelectedTags();
+    for (const row of this.fieldRows) {
+      const required = sch.required.has(row.label);
+      const open = required || this.userOpened.has(row.label) || row.hasValue();
+      row.el.toggleClass("dt-collapsed", !open);
+      row.el.toggleClass("dt-field-required", required);
+      this.setRequiredMark(row.el, required);
+      if (row.hasValue()) row.el.removeClass("dt-field-invalid");
+    }
+    // 横並びの行: 中身が全部隠れていたら行ごと隠す
+    this.contentEl.querySelectorAll<HTMLElement>(".dt-row-pair").forEach((pair) => {
+      pair.toggleClass("dt-collapsed", !pair.querySelector(".setting-item:not(.dt-collapsed)"));
+    });
+    this.renderAddFieldChips(sch.suggested);
+  }
+
+  /** 欄のラベルに必須マーク（●）を付け外しする */
+  private setRequiredMark(el: HTMLElement, required: boolean): void {
+    const nameEl = (el.querySelector(".setting-item-name") ??
+      el.querySelector(".dt-steps-name")) as HTMLElement | null;
+    if (!nameEl) return;
+    const mark = nameEl.querySelector(".dt-required-mark");
+    if (required && !mark) {
+      nameEl.createSpan({ cls: "dt-required-mark", text: "●", attr: { "aria-label": "必須" } });
+    } else if (!required && mark) {
+      mark.remove();
+    }
+  }
+
+  /** 閉じている欄を開く「＋」チップを並べ直す。候補（suggested）の欄が定義順で先頭に来る */
+  private renderAddFieldChips(suggested: string[]): void {
+    const box = this.addFieldsEl;
+    if (!box) return;
+    box.empty();
+    const closed = this.fieldRows.filter((r) => r.el.hasClass("dt-collapsed"));
+    const head = closed
+      .filter((r) => suggested.includes(r.label))
+      .sort((a, b) => suggested.indexOf(a.label) - suggested.indexOf(b.label));
+    const rest = closed.filter((r) => !suggested.includes(r.label));
+    box.toggleClass("dt-collapsed", closed.length === 0);
+    for (const r of [...head, ...rest]) {
+      const chip = box.createEl("button", {
+        cls: "dt-add-field-chip",
+        text: "＋ " + r.label,
+        attr: { type: "button", title: `${r.label}の欄を開く` },
+      });
+      if (suggested.includes(r.label)) chip.addClass("is-suggested");
+      chip.onclick = () => {
+        this.userOpened.add(r.label);
+        this.applyTagSchema();
+        r.focus?.();
+      };
+    }
+  }
+
+  /** 必須なのに空の欄（保存時の警告に使う） */
+  private requiredMissing(): { label: string; el: HTMLElement; focus?: () => void }[] {
+    const sch = this.schemaForSelectedTags();
+    if (!sch.required.size) return [];
+    return this.fieldRows.filter((r) => sch.required.has(r.label) && !r.hasValue());
   }
 
   // ---------- 自動保存 ----------
@@ -1108,6 +1389,22 @@ export class TaskModal extends Modal {
       new Notice("日付を入力してください");
       return;
     }
+    // 選択中のタグで必須の欄が空なら警告する（「このまま保存」も選べる。途中保存を妨げないため）
+    if (!this.skipRequiredCheck && (this.opts.validateRequiredOnSave ?? true)) {
+      const missing = this.requiredMissing();
+      if (missing.length) {
+        for (const row of missing) {
+          row.el.removeClass("dt-collapsed");
+          row.el.addClass("dt-field-invalid");
+        }
+        missing[0].focus?.();
+        new RequiredFieldsModal(this.app, missing.map((r) => r.label), () => {
+          this.skipRequiredCheck = true;
+          void this.submit();
+        }).open();
+        return;
+      }
+    }
     if (this.autosaveOn) {
       // 変更があれば onClose 側（saveOnClose）が保存する
       this.close();
@@ -1116,6 +1413,15 @@ export class TaskModal extends Modal {
     const data = this.buildDraft(r);
     this.close();
     await this.opts.onSubmit(data, this.dateSelection());
+  }
+
+  /**
+   * 状態欄の入力（中断理由）から保存する値を作る。
+   * 理由が変わっていなければ元の書式のまま（既存ノートの表記を崩さない）
+   */
+  private statusValue(): string {
+    if (this.statusText.trim() === statusReason(this.initialStatus)) return this.initialStatus;
+    return renderStatusValue(this.statusText);
   }
 
   /** いまの入力内容を TaskDraft にまとめる */
@@ -1135,6 +1441,18 @@ export class TaskModal extends Modal {
         : undefined,
       result: this.opts.showDoneCondition ? this.result.replace(/\s*\n+\s*/g, " / ").trim() : undefined,
       remaining: this.opts.showDoneCondition ? this.remaining.trim() : undefined,
+      cause: this.opts.showDoneCondition ? this.cause.trim() : undefined,
+      judgment: this.opts.showDoneCondition ? this.judgment.trim() : undefined,
+      others: this.opts.showDoneCondition
+        ? this.othersText
+            .split(/\r?\n/)
+            .map((v) => v.trim())
+            .filter(Boolean)
+        : undefined,
+      answer: this.opts.showDoneCondition ? this.answer.trim() : undefined,
+      status: this.opts.showDoneCondition ? this.statusValue() : undefined,
+      ownerName: this.opts.showDoneCondition ? this.ownerNameText.trim() : undefined,
+      due: this.opts.showDoneCondition ? this.dueText.trim() : undefined,
       details: this.opts.showDoneCondition ? this.details.replace(/\s+$/, "") : undefined,
       ticket: this.opts.showDoneCondition
         ? this.ticketId.trim()
@@ -1201,9 +1519,20 @@ export function normalizeTagChoices(choices: TagColor[] | undefined): TagColor[]
   return out;
 }
 
-/** 色付きのタグボタンを並べる。クリックで selected を付け外しする */
-export function renderTagChips(parent: HTMLElement, choices: TagColor[], selected: Set<string>): void {
+/**
+ * 色付きのタグボタンを並べる。クリックで selected を付け外しし、変更を onChange に通知する。
+ * タイトルに付けるタグは1タスク1つ（Rules/Timeline記録ルール.md。複数付くと日報の集計が
+ * 二重計上になる）。ただし親タグとサブタグの併記（#管理 と #管理/質問）は将来的にありうるため、
+ * 完全な単一選択ではなく「親タグが異なるタグは同時に選べない」という制約として実装している
+ */
+export function renderTagChips(
+  parent: HTMLElement,
+  choices: TagColor[],
+  selected: Set<string>,
+  onChange?: (selected: Set<string>) => void
+): void {
   const chips = parent.createDiv("dt-tag-chips");
+  const paints: (() => void)[] = [];
   for (const c of choices) {
     const chip = chips.createEl("button", {
       cls: "dt-tag-chip",
@@ -1217,11 +1546,21 @@ export function renderTagChips(parent: HTMLElement, choices: TagColor[], selecte
       chip.toggleClass("is-selected", on);
       chip.setAttr("aria-pressed", String(on));
     };
+    paints.push(paint);
     paint();
     chip.onclick = () => {
-      if (selected.has(c.tag)) selected.delete(c.tag);
-      else selected.add(c.tag);
-      paint();
+      if (selected.has(c.tag)) {
+        selected.delete(c.tag);
+      } else {
+        const parentOf = (tag: string) => tag.split("/")[0];
+        for (const t of [...selected]) {
+          if (parentOf(t) !== parentOf(c.tag)) selected.delete(t);
+        }
+        selected.add(c.tag);
+      }
+      // 他のタグの選択も外れうるので、全チップを塗り直す
+      for (const p of paints) p();
+      onChange?.(selected);
     };
   }
 }
@@ -1249,6 +1588,45 @@ export function splitKnownTags(title: string, known: string[]): { text: string; 
 export function joinTitleAndTags(title: string, choices: TagColor[], selected: Set<string>): string {
   const tags = choices.filter((c) => selected.has(c.tag)).map((c) => "#" + c.tag);
   return [title.trim(), ...tags].filter(Boolean).join(" ");
+}
+
+/**
+ * 選択中のタグで必須のフィールドが空のまま保存しようとしたときの警告。
+ * 会議中の途中保存などを妨げないよう、「このまま保存」で必ず保存できる
+ */
+class RequiredFieldsModal extends Modal {
+  constructor(
+    app: App,
+    private labels: string[],
+    private onProceed: () => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal");
+    this.titleEl.setText("必須の欄が未入力です");
+    const list = this.labels.map((l) => `「${l}:」`).join("・");
+    this.contentEl.createEl("p", {
+      text: `選択中のタグでは必須の ${list} が未入力です。あとで書く場合は、このまま保存できます。`,
+    });
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) =>
+      b
+        .setButtonText("このまま保存")
+        .setTooltip("空欄のまま保存します")
+        .onClick(() => {
+          this.close();
+          this.onProceed();
+        })
+    );
+    buttons.addButton((b) => b.setButtonText("入力に戻る").setCta().onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 /** 削除の確認（本文があるタスク用） */

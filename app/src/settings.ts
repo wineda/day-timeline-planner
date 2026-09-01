@@ -38,6 +38,59 @@ export interface TagColor {
   color: string;
 }
 
+/**
+ * タグ → 必須・候補フィールドの対応。
+ * タスク編集ダイアログでこのタグを選ぶと、required の欄が自動で開き（必須マーク付き）、
+ * suggested の欄が「＋」チップの先頭に並ぶ。フィールド名はダイアログの欄名
+ * （結果 / 原因 / 判断 / 残 / 他者 / 回答 / 状態 / Owner / 期限 / 完了条件 / ふりかえり など）
+ */
+export interface TagFieldSchema {
+  /** "#" 抜きのタグ。サブタグ（"管理/質問"）は完全一致 → 親タグ（"管理"）の順で引く */
+  tag: string;
+  /** 必須のフィールド名 */
+  required: string[];
+  /** 候補（推奨）のフィールド名。並び順のままチップの先頭に出す */
+  suggested: string[];
+}
+
+/** tagFieldSchema の既定値（Rules/Timeline記録ルール.md のタグ別の記入ルールに合わせたもの） */
+export const DEFAULT_TAG_FIELD_SCHEMA: TagFieldSchema[] = [
+  { tag: "障害", required: ["結果", "原因", "判断"], suggested: ["残", "他者", "状態"] },
+  { tag: "会議", required: ["結果"], suggested: ["他者", "残"] },
+  { tag: "管理", required: ["結果"], suggested: ["完了条件", "回答", "他者"] },
+  { tag: "レビュー", required: ["結果"], suggested: ["他者"] },
+  { tag: "開発", required: ["結果"], suggested: ["残", "完了条件"] },
+  { tag: "資料", required: ["結果"], suggested: ["残"] },
+  { tag: "雑務", required: ["結果"], suggested: [] },
+  { tag: "私用", required: [], suggested: [] },
+];
+
+/**
+ * タグに対応するフィールド定義を引く。完全一致 → 親タグ一致の順
+ * （"#管理/質問" は "管理/質問" の定義があればそれ、無ければ "管理" の定義に従う）。
+ * どちらも無ければ null（= そのタグにルールなし。従来どおりの表示）
+ */
+export function schemaForTag(schema: TagFieldSchema[], tag: string): TagFieldSchema | null {
+  const key = normalizeTag(tag);
+  if (!key) return null;
+  const exact = schema.find((r) => normalizeTag(r.tag) === key);
+  if (exact) return exact;
+  const parent = key.split("/")[0];
+  if (parent === key) return null;
+  return schema.find((r) => normalizeTag(r.tag) === parent) ?? null;
+}
+
+/**
+ * スキーマに書くフィールド名の表記ゆれを、ダイアログの欄名に揃える
+ * （「期日」→「期限」、「振り返り」→「ふりかえり」）
+ */
+export function normalizeFieldLabel(label: string): string {
+  const t = label.trim();
+  if (t === "期日") return "期限";
+  if (t === "振り返り") return "ふりかえり";
+  return t;
+}
+
 /** プロジェクトのグループの表示設定（配列の順 = パネルでの表示順） */
 export interface ProjectGroupSetting {
   /** グループ名（プロジェクトノートの frontmatter「group」の値と一致させる） */
@@ -128,7 +181,7 @@ export const DEFAULT_FOLDER = "Timeline";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 6;
+export const SETTINGS_VERSION = 7;
 
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
@@ -195,6 +248,10 @@ export interface DayTimelineSettings {
   weekStart: number;
   /** タグごとの色 */
   tagColors: TagColor[];
+  /** タグごとの必須・候補フィールド（タスク編集ダイアログの表示に使う） */
+  tagFieldSchema: TagFieldSchema[];
+  /** 必須フィールドが空のまま保存しようとしたとき警告する（保存自体は止めない） */
+  validateRequiredOnSave: boolean;
 
   /** 定期タスクのルール */
   recurring: RecurringRule[];
@@ -272,6 +329,8 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   viewModeMobile: "day",
   weekStart: 0,
   tagColors: [],
+  tagFieldSchema: DEFAULT_TAG_FIELD_SCHEMA,
+  validateRequiredOnSave: true,
   recurring: [],
   autoApplyRecurring: true,
   recurringApplied: {},
@@ -299,6 +358,8 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  * v1（版なし）: 表示時間帯の既定が 0:00〜24:00、フォルダの既定が保管庫直下だった。
  * v2: recurringInstances が「ルールID → ブロックID の文字列」だった。
  * v3〜v5: プロジェクト行にアイコン（defaultProjectIcon）を出していた。
+ * v6 → v7: tagFieldSchema（タグ別の必須・候補フィールド）と validateRequiredOnSave を追加。
+ *          保存済みの設定に無ければ既定値が入る（既存の設定は変えない）。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -311,6 +372,16 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   }
   if (!s.folder.trim()) s.folder = DEFAULT_FOLDER;
   if (!Array.isArray(s.tagColors)) s.tagColors = [];
+  // 形の崩れた項目を落としつつ、既定値の配列を共有参照しないようコピーする
+  if (!Array.isArray(s.tagFieldSchema)) s.tagFieldSchema = DEFAULT_TAG_FIELD_SCHEMA;
+  s.tagFieldSchema = s.tagFieldSchema
+    .filter((r) => !!r && typeof r === "object" && typeof r.tag === "string")
+    .map((r) => ({
+      tag: r.tag,
+      required: Array.isArray(r.required) ? r.required.filter((f): f is string => typeof f === "string") : [],
+      suggested: Array.isArray(r.suggested) ? r.suggested.filter((f): f is string => typeof f === "string") : [],
+    }));
+  if (typeof s.validateRequiredOnSave !== "boolean") s.validateRequiredOnSave = true;
   if (!Array.isArray(s.recurring)) s.recurring = [];
   if (!s.recurringApplied || typeof s.recurringApplied !== "object") s.recurringApplied = {};
   if (!s.recurringInstances || typeof s.recurringInstances !== "object") s.recurringInstances = {};
@@ -808,6 +879,106 @@ export class DayTimelineSettingTab extends PluginSettingTab {
             .setTooltip("削除")
             .onClick(async () => {
               s.tagColors.splice(idx, 1);
+              await save();
+              this.display();
+            })
+        );
+    });
+
+    // ---------- タグ別フィールド ----------
+    new Setting(containerEl).setName("タグ別フィールド").setHeading();
+    new Setting(containerEl)
+      .setName("タグで必須・候補のフィールドを決める")
+      .setDesc(
+        "タスク編集ダイアログでタグを選ぶと、「必須」の欄が自動で開いて必須マークが付き、" +
+          "「候補」の欄が「＋」チップの先頭に並びます。フィールド名はダイアログの欄名" +
+          "（結果 / 原因 / 判断 / 残 / 他者 / 回答 / 状態 / Owner / 期限 / 完了条件 / ふりかえり など）を" +
+          "カンマ区切りで書きます。サブタグ（#管理/質問）は親タグ（#管理）の定義に従います。" +
+          "ここに無いタグを選んだときは従来どおりの表示です。"
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("追加")
+          .setCta()
+          .onClick(async () => {
+            s.tagFieldSchema.push({ tag: "", required: ["結果"], suggested: [] });
+            await save();
+            this.display();
+          })
+      );
+    new Setting(containerEl)
+      .setName("必須フィールドが空のまま保存するとき警告")
+      .setDesc("空でも「このまま保存」を選べます（途中保存を妨げないため、保存自体は止めません）。")
+      .addToggle((t) =>
+        t.setValue(s.validateRequiredOnSave).onChange(async (v) => {
+          s.validateRequiredOnSave = v;
+          await save();
+        })
+      );
+    const parseFieldList = (v: string) =>
+      v
+        .split(/[,、，]/)
+        .map((f) => f.trim())
+        .filter(Boolean);
+    s.tagFieldSchema.forEach((rule, idx) => {
+      const row = new Setting(containerEl);
+      row.settingEl.addClass("dt-tag-schema-row");
+      const nameSpan = row.nameEl.createSpan();
+      const updateName = () =>
+        nameSpan.setText(rule.tag ? `#${normalizeTag(rule.tag)}` : "(タグ未設定)");
+      updateName();
+      row
+        .addText((t) => {
+          t.setPlaceholder("タグ（例: 障害）")
+            .setValue(rule.tag)
+            .onChange(async (v) => {
+              rule.tag = v.trim().replace(/^#+/, "");
+              updateName();
+              await save();
+            });
+          t.inputEl.addClass("dt-schema-tag");
+        })
+        .addText((t) => {
+          t.setPlaceholder("必須（例: 結果, 原因）")
+            .setValue(rule.required.join(", "))
+            .onChange(async (v) => {
+              rule.required = parseFieldList(v);
+              await save();
+            });
+          t.inputEl.addClass("dt-schema-fields");
+          t.inputEl.setAttr("title", "必須のフィールド名（カンマ区切り）");
+        })
+        .addText((t) => {
+          t.setPlaceholder("候補（例: 残, 他者）")
+            .setValue(rule.suggested.join(", "))
+            .onChange(async (v) => {
+              rule.suggested = parseFieldList(v);
+              await save();
+            });
+          t.inputEl.addClass("dt-schema-fields");
+          t.inputEl.setAttr("title", "候補のフィールド名（カンマ区切り。この順でチップの先頭に並びます）");
+        })
+        .addExtraButton((b) =>
+          b
+            .setIcon("arrow-up")
+            .setTooltip("上へ")
+            .setDisabled(idx === 0)
+            .onClick(async () => {
+              if (idx === 0) return;
+              [s.tagFieldSchema[idx - 1], s.tagFieldSchema[idx]] = [
+                s.tagFieldSchema[idx],
+                s.tagFieldSchema[idx - 1],
+              ];
+              await save();
+              this.display();
+            })
+        )
+        .addExtraButton((b) =>
+          b
+            .setIcon("trash")
+            .setTooltip("削除")
+            .onClick(async () => {
+              s.tagFieldSchema.splice(idx, 1);
               await save();
               this.display();
             })
