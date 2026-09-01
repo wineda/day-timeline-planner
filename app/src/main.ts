@@ -26,7 +26,7 @@ import {
   type ProjectSummary,
 } from "./project";
 import { newBlockId } from "./markdown/id";
-import { DayTimelineView, VIEW_TYPE_DAY_TIMELINE } from "./view";
+import { DayTimelineView, PROJECT_HOVER_SOURCE, VIEW_TYPE_DAY_TIMELINE } from "./view";
 
 export default class DayTimelinePlugin extends Plugin {
   settings: DayTimelineSettings = { ...DEFAULT_SETTINGS };
@@ -51,6 +51,13 @@ export default class DayTimelinePlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_DAY_TIMELINE, (leaf) => new DayTimelineView(leaf, this));
     this.registerView(VIEW_TYPE_RECURRING, (leaf) => new RecurringManagerView(leaf, this));
+
+    // プロジェクト名のホバーでノートをページプレビュー表示するための登録。
+    // defaultMod: false = 修飾キーなしのホバーで出す（ページプレビューの設定から変更可能）
+    this.registerHoverLinkSource(PROJECT_HOVER_SOURCE, {
+      display: "タイムスケジュール: プロジェクト名",
+      defaultMod: false,
+    });
 
     this.addRibbonIcon("calendar-clock", "タイムスケジュールを開く", () => {
       void this.activateView();
