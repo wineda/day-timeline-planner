@@ -17,15 +17,22 @@ import {
   parseBlockDocument,
   parseHeadingSetting,
   renderActualLine,
+  renderAnswerLine,
   renderCarryFromLine,
   renderCarryToLine,
+  renderCauseLine,
   renderProjectLine,
   renderDoneConditionLine,
+  renderDueLine,
   renderHeadingLine,
+  renderJudgmentLine,
+  renderOthersLine,
+  renderOwnerNameLine,
   renderRegisteredLine,
   renderRemainingLine,
   renderResultLine,
   renderRetrospectiveLine,
+  renderStatusLine,
   renderStepLines,
   renderMetaLine,
   renderTaskBlock,
@@ -64,6 +71,20 @@ export interface TaskPatch {
   result?: string;
   /** 残。undefined = 変更しない / "" = 消す */
   remaining?: string;
+  /** 原因。undefined = 変更しない / "" = 消す */
+  cause?: string;
+  /** 判断。undefined = 変更しない / "" = 消す */
+  judgment?: string;
+  /** 他者（1件 = 1行）。undefined = 変更しない / [] = 全部消す */
+  others?: string[];
+  /** 回答。undefined = 変更しない / "" = 消す */
+  answer?: string;
+  /** 状態。undefined = 変更しない / "" = 消す */
+  status?: string;
+  /** Owner。undefined = 変更しない / "" = 消す */
+  ownerName?: string;
+  /** 期限。undefined = 変更しない / "" = 消す */
+  due?: string;
   /** 登録日。undefined = 変更しない / "" = 消す */
   registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
@@ -92,6 +113,13 @@ export interface NewTaskInput {
   retrospective?: string;
   result?: string;
   remaining?: string;
+  cause?: string;
+  judgment?: string;
+  others?: string[];
+  answer?: string;
+  status?: string;
+  ownerName?: string;
+  due?: string;
   registered?: string;
   actual?: ActualRange[];
   project?: string | null;
@@ -134,6 +162,13 @@ export function insertTask(content: string, draft: NewTaskInput, opts: InsertOpt
     retrospective: draft.retrospective,
     result: draft.result,
     remaining: draft.remaining,
+    cause: draft.cause,
+    judgment: draft.judgment,
+    others: draft.others,
+    answer: draft.answer,
+    status: draft.status,
+    ownerName: draft.ownerName,
+    due: draft.due,
     registered: draft.registered,
     actual: draft.actual,
     project: draft.project,
@@ -217,7 +252,7 @@ export function updateTask(
   // 詳細の領域内にある「ふりかえり」「完了条件」「実績」行は詳細と一緒に編集されるので、個別の書き換えは行わない
   const insideDetails = (line: number | null) =>
     patch.details !== undefined && line !== null && line >= t.detailsStart;
-  // メタ行直下に並ぶ特別な行（プロジェクト・実績・持ち越し・登録日・完了条件）を飛ばした挿入位置
+  // メタ行直下に並ぶ特別な行（プロジェクト・実績・持ち越し・登録日・期限・完了条件）を飛ばした挿入位置
   let afterMeta = t.metaLine + 1;
   while (
     afterMeta === t.actualLine ||
@@ -225,7 +260,8 @@ export function updateTask(
     afterMeta === t.projectLine ||
     afterMeta === t.carryToLine ||
     afterMeta === t.carryFromLine ||
-    afterMeta === t.registeredLine
+    afterMeta === t.registeredLine ||
+    afterMeta === t.dueLine
   )
     afterMeta++;
   // ふりかえり・結果・残の新規行を入れる位置（ステップ・完了条件の後ろ）
@@ -262,6 +298,50 @@ export function updateTask(
       if (!text) deleted = true;
     } else if (text) {
       ops.push({ at: afterSteps, del: 0, lines: [renderRemainingLine(text)], order: 0.5 });
+    }
+  }
+  // 1行の値を持つフィールドの共通処理: 既存行を書き換え / 無ければ at に足す / 空なら消す
+  const patchLine = (
+    value: string | undefined,
+    line: number | null,
+    render: (text: string) => string,
+    at: number,
+    order: number
+  ) => {
+    if (value === undefined || insideDetails(line)) return;
+    const text = value.trim();
+    if (line !== null) {
+      ops.push({ at: line, del: 1, lines: text ? [render(text)] : [], order });
+      if (!text) deleted = true;
+    } else if (text) {
+      ops.push({ at, del: 0, lines: [render(text)], order });
+    }
+  };
+  // 原因・判断・回答・状態・Owner: 結果・残と同じ扱い
+  //（order は同じ位置に重なったときの並び。大きいほど上 = 結果 → 原因 → 判断 → 残 → 他者 → 回答 → 状態 → Owner → ふりかえり）
+  patchLine(patch.cause, t.causeLine, renderCauseLine, afterSteps, 0.65);
+  patchLine(patch.judgment, t.judgmentLine, renderJudgmentLine, afterSteps, 0.6);
+  patchLine(patch.answer, t.answerLine, renderAnswerLine, afterSteps, 0.2);
+  patchLine(patch.status, t.statusLine, renderStatusLine, afterSteps, 0.15);
+  patchLine(patch.ownerName, t.ownerNameLine, renderOwnerNameLine, afterSteps, 0.1);
+  // 期限: メタ行直下の特別な行（登録日の下）に置く。既存の「期日:」行も「期限:」に書き換わる（出力の統一）
+  patchLine(patch.due, t.dueLine, renderDueLine, afterMeta, 2.35);
+  // 他者: 唯一の複数行フィールド。既存の行を前から順に書き換え、余りは消し、足りなければ最後の行の下に足す
+  if (patch.others !== undefined) {
+    const values = patch.others.map((v) => v.trim()).filter(Boolean);
+    const existing = t.othersLines.filter((ln) => !insideDetails(ln));
+    const shared = Math.min(existing.length, values.length);
+    for (let i = 0; i < shared; i++) {
+      ops.push({ at: existing[i], del: 1, lines: [renderOthersLine(values[i])], order: 0.25 });
+    }
+    for (let i = values.length; i < existing.length; i++) {
+      ops.push({ at: existing[i], del: 1, lines: [], order: 0.25 });
+      deleted = true;
+    }
+    if (values.length > existing.length) {
+      const rest = values.slice(existing.length).map(renderOthersLine);
+      const at = existing.length ? existing[existing.length - 1] + 1 : afterSteps;
+      ops.push({ at, del: 0, lines: rest, order: 0.25 });
     }
   }
   // 登録日: 既存行を書き換え / 無ければメタ行直下の特別な行の下に足す / 空なら消す

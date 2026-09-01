@@ -43,6 +43,20 @@ export interface Task {
   result: string;
   /** 残 = 完了後に残った作業（ブロック形式のみ。無ければ ""） */
   remaining: string;
+  /** 原因 = 障害・バグの原因（ブロック形式のみ。無ければ ""） */
+  cause: string;
+  /** 判断 = どう判断したか（ブロック形式のみ。無ければ ""） */
+  judgment: string;
+  /** 他者 = ボールが相手にあるもの（ブロック形式のみ。1件 = 1行。無ければ []） */
+  others: string[];
+  /** 回答 = 質問に回答が付いたか（"済" / "未" など。ブロック形式のみ。無ければ ""） */
+  answer: string;
+  /** 状態 = 中断などの状態（「中断(理由)」の値。ブロック形式のみ。無ければ ""） */
+  status: string;
+  /** Owner = タスクのオーナー名（「誰の予定か」とは別の記録上の担当。無ければ ""） */
+  ownerName: string;
+  /** 期限（「- 期限: YYYY-MM-DD」行。旧表記「期日:」も読む。無ければ ""） */
+  due: string;
   /** 登録日（Inbox に入れた日。ブロック形式のみ。無ければ ""） */
   registered: string;
   /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
@@ -92,6 +106,20 @@ export interface TaskDraft {
   result?: string;
   /** 残。undefined = 変更しない / "" = 消す */
   remaining?: string;
+  /** 原因。undefined = 変更しない / "" = 消す */
+  cause?: string;
+  /** 判断。undefined = 変更しない / "" = 消す */
+  judgment?: string;
+  /** 他者（1件 = 1行）。undefined = 変更しない / [] = 全部消す */
+  others?: string[];
+  /** 回答。undefined = 変更しない / "" = 消す */
+  answer?: string;
+  /** 状態。undefined = 変更しない / "" = 消す */
+  status?: string;
+  /** Owner。undefined = 変更しない / "" = 消す */
+  ownerName?: string;
+  /** 期限。undefined = 変更しない / "" = 消す */
+  due?: string;
   /** 登録日。undefined = 変更しない / "" = 消す */
   registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
