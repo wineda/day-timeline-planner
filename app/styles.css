@@ -1081,7 +1081,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   padding: 4px 2px 5px;
   border-left: 1px solid var(--background-modifier-border);
   cursor: pointer;
@@ -1091,8 +1091,16 @@
 .dt-day-header:hover {
   background: var(--background-modifier-hover);
 }
+/* 曜日 + 日付のまとまり（スマホでは横並びにする） */
+.dt-day-header-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
 .dt-day-header-dow {
   font-size: var(--font-ui-smaller);
+  letter-spacing: 0.04em;
 }
 .dt-day-header-num {
   font-size: var(--font-ui-medium);
@@ -1113,20 +1121,54 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
-/* 日付ヘッダーの予実合計。1行目「予定/実績」（小数1桁の時間）、2行目に差異の2行で高さを抑える */
+/* 日付ヘッダーの予実合計。「実績/予定」と差異を1つのピルにまとめ、
+   下端の極小バーで予定に対する実績の割合を示す（超過は赤）。
+   列が広ければ1行に並び、狭ければ差異が2行目へ折り返す */
 .dt-day-total {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  column-gap: 4px;
+  overflow: hidden;
+  max-width: 100%;
+  padding: 1px 7px 4px;
+  border-radius: 8px;
+  background: var(--background-secondary);
   font-size: 0.72em;
-  line-height: 1.2;
+  line-height: 1.25;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  margin-top: 1px;
+}
+.dt-day-total .dt-day-total-nums {
+  white-space: nowrap;
+}
+.dt-day-total .dt-day-total-act {
+  color: var(--text-normal);
+  font-weight: 600;
+}
+.dt-day-total .dt-day-total-diff {
+  font-size: 0.9em;
+  white-space: nowrap;
 }
 .dt-day-total .dt-day-total-diff.is-over {
   color: var(--color-red);
+}
+.dt-day-total .dt-day-total-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--background-modifier-border);
+}
+.dt-day-total .dt-day-total-bar > div {
+  height: 100%;
+  background: var(--interactive-accent);
+}
+.dt-day-total .dt-day-total-bar > div.is-over {
+  background: var(--color-red);
 }
 
 .dt-day-header.is-other-month .dt-day-header-num {
@@ -1136,6 +1178,10 @@
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   opacity: 1;
+}
+.dt-day-header.is-today .dt-day-header-dow {
+  color: var(--interactive-accent);
+  font-weight: 600;
 }
 
 .dt-grid {
@@ -2827,6 +2873,34 @@ body.is-mobile .dt-project-stats,
 body.is-mobile .dt-project-ticket,
 body.is-mobile .dt-project-group-count {
   font-size: 0.8em;
+}
+
+/* スマホの日付ヘッダー: 列が狭く縦の場所も貴重なので、
+   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実のピルは一段小さく。
+   （タブレットは列が広いのでデスクトップと同じ縦積みのまま） */
+body.is-phone .dt-day-header {
+  padding: 3px 1px 4px;
+  gap: 2px;
+}
+body.is-phone .dt-day-header-date {
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+body.is-phone .dt-day-header-dow {
+  font-size: 10px;
+  letter-spacing: 0;
+}
+body.is-phone .dt-day-header-num {
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  font-size: var(--font-ui-small);
+}
+body.is-phone .dt-day-total {
+  font-size: 0.68em;
+  padding: 1px 5px 4px;
+  column-gap: 3px;
 }
 
 /* 週表示・月表示は 7 列で 1 マスが狭いので、上の基準サイズ引き上げの対象から

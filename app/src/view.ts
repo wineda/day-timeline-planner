@@ -1145,8 +1145,10 @@ export class DayTimelineView extends ItemView {
       el.toggleClass("is-sunday", dow === 0);
       el.toggleClass("is-saturday", dow === 6);
       el.toggleClass("is-other-month", col.date.getMonth() !== this.date.getMonth());
-      el.createSpan({ cls: "dt-day-header-dow", text: WEEKDAY_JA[dow] });
-      el.createSpan({ cls: "dt-day-header-num", text: String(col.date.getDate()) });
+      // 曜日と日付は1つのまとまりに（スマホでは横並びにして高さを節約する）
+      const dateEl = el.createDiv("dt-day-header-date");
+      dateEl.createSpan({ cls: "dt-day-header-dow", text: WEEKDAY_JA[dow] });
+      dateEl.createSpan({ cls: "dt-day-header-num", text: String(col.date.getDate()) });
       el.setAttr("aria-label", `${moment(col.date).format("M月D日 (ddd)")} を日表示で開く`);
       el.onclick = () => {
         this.date = startOfDay(col.date);
@@ -2866,8 +2868,11 @@ export class DayTimelineView extends ItemView {
         }
         if (!el) el = col.headerEl.createDiv("dt-day-total");
         el.empty();
-        // 高さを取らないよう「実績/予定」を小数1桁の時間で1行に、差異をその下の1行に収める
-        el.createSpan({ text: `${hoursDecimal(act)}/${hoursDecimal(plan)}` });
+        // 「実績/予定」（小数1桁の時間）と差異を1つのピルにまとめる。列が広ければ1行、
+        // 狭ければ差異が自然に2行目へ折り返す。下端の極小バーが予定に対する実績の割合
+        const nums = el.createSpan("dt-day-total-nums");
+        nums.createSpan({ cls: "dt-day-total-act", text: hoursDecimal(act) });
+        nums.createSpan({ text: `/${hoursDecimal(plan)}` });
         el.setAttr("aria-label", `実績 ${hmm(act)} / 予定 ${hmm(plan)}`);
         if (plan && act) {
           const diff = act - plan;
@@ -2876,6 +2881,11 @@ export class DayTimelineView extends ItemView {
             text: `${diff >= 0 ? "+" : "-"}${hoursDecimal(Math.abs(diff))}`,
           });
           d.toggleClass("is-over", diff > 0);
+        }
+        if (plan) {
+          const fill = el.createDiv("dt-day-total-bar").createDiv();
+          fill.style.width = `${Math.min(100, Math.round((act / plan) * 100))}%`;
+          fill.toggleClass("is-over", act > plan);
         }
       }
     }
@@ -4580,9 +4590,9 @@ function hmm(min: number): string {
   return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
 }
 
-/** 分を "6.5" のような小数1桁の時間表示に（日ヘッダーの予実合計用） */
+/** 分を "6.5" のような小数1桁の時間表示に（日ヘッダーの予実合計用）。"9.0" は "9" に詰める */
 function hoursDecimal(min: number): string {
-  return (min / 60).toFixed(1);
+  return (min / 60).toFixed(1).replace(/\.0$/, "");
 }
 
 /**
