@@ -11,6 +11,8 @@ import {
   getIcon,
   moment,
   setIcon,
+  type HoverParent,
+  type HoverPopover,
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
 import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
@@ -68,9 +70,36 @@ import {
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
 
 /** プロジェクト名のホバープレビューの hover-link ソース ID。
- * タスクブロックのプレビュー（VIEW_TYPE_DAY_TIMELINE。Ctrl+ホバー）とは分け、
- * こちらは修飾キーなしのホバーで出す（ページプレビューの設定で変更可能） */
+ * タスクブロックのプレビュー（VIEW_TYPE_DAY_TIMELINE）と同じく Ctrl/Cmd + ホバーで出す。
+ * 修飾キーはプラグイン側（attachProjectHoverPreview）でも判定するので、
+ * ページプレビューの設定にかかわらず、修飾キーなしのホバーでは出ない */
 export const PROJECT_HOVER_SOURCE = "day-timeline-planner-project";
+
+/** プロジェクトノートのプレビューのポップアップに付けるクラス（styles.css で通常のプレビューより大きく表示する） */
+const PROJECT_PREVIEW_CLASS = "dt-project-preview";
+
+/**
+ * プロジェクト名のプレビュー用の hover-link の親（HoverParent）。
+ * ページプレビューはポップアップ（HoverPopover）を作るとき親の hoverPopover に代入してくるので、
+ * そのタイミングでポップアップの要素にクラスを付け、CSS で通常のプレビューより大きく表示する。
+ * タスクブロックのプレビュー（親はビュー自身）とは分けているので、そちらの大きさは変わらない。
+ */
+class ProjectHoverParent implements HoverParent {
+  private popover: HoverPopover | null = null;
+
+  get hoverPopover(): HoverPopover | null {
+    return this.popover;
+  }
+
+  set hoverPopover(popover: HoverPopover | null) {
+    this.popover = popover;
+    if (!popover) return;
+    // hoverEl はポップアップのコンストラクタ内で作られる。代入のほうが先に来ても拾えるよう、無ければ直後にもう一度試す
+    const tag = () => popover.hoverEl?.addClass(PROJECT_PREVIEW_CLASS);
+    if (popover.hoverEl) tag();
+    else queueMicrotask(tag);
+  }
+}
 
 interface DragHandlers {
   onMove?: (dy: number, ev: PointerEvent) => void;
@@ -187,6 +216,8 @@ export class DayTimelineView extends ItemView {
   /** "日付キー|タスクの key" → タイムライン上の要素（エディタ連動のハイライトに使う） */
   private taskEls = new Map<string, HTMLElement>();
   private activeTaskKey: string | null = null;
+  /** プロジェクト名のプレビューの hover-link の親（ポップアップを大きく表示するためのクラス付け用） */
+  private readonly projectHoverParent = new ProjectHoverParent();
 
   /** ドラッグ操作中は再描画しない */
   private interacting = false;
@@ -3084,19 +3115,39 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * プロジェクト名にマウスを乗せたら、プロジェクトノートをページプレビューでポップアップ表示する。
-   * ツールチップ（チップ）の代わりで、ノートのタスク一覧やメモがその場で読める。
-   * 修飾キーは不要（ページプレビューの設定「タイムスケジュール: プロジェクト名」で変更可能）
+   * プロジェクト名を Ctrl/Cmd + ホバーしたら、プロジェクトノートをページプレビューでポップアップ表示する。
+   * ノートのタスク一覧やメモがその場で読める（クリックでノートを開く動作はそのまま）。
+   * マウスを乗せただけでは出さない（名前の上を通るたびにノートが次々に出てくるのを避ける）。
+   * ページプレビュー側の設定にかかわらず、ここで Ctrl/Cmd を判定してから hover-link を投げる。
    */
   private attachProjectHoverPreview(el: HTMLElement, linktext: string): void {
-    el.addEventListener("mouseover", (e: MouseEvent) => {
+    const show = (e: MouseEvent) => {
       this.app.workspace.trigger("hover-link", {
         event: e,
         source: PROJECT_HOVER_SOURCE,
-        hoverParent: this,
+        hoverParent: this.projectHoverParent,
         targetEl: el,
         linktext,
       });
+    };
+    // 修飾キーなしで乗せたときは「押されたら出す」待ちにする。
+    // 乗せてから Ctrl/Cmd を押した場合も、押したまま少しマウスを動かせば出る
+    let waitingForMod = false;
+    el.addEventListener("mouseover", (e: MouseEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        waitingForMod = false;
+        show(e);
+      } else {
+        waitingForMod = true;
+      }
+    });
+    el.addEventListener("mousemove", (e: MouseEvent) => {
+      if (!waitingForMod || !(e.ctrlKey || e.metaKey)) return;
+      waitingForMod = false;
+      show(e);
+    });
+    el.addEventListener("mouseleave", () => {
+      waitingForMod = false;
     });
   }
 

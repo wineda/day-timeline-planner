@@ -52,11 +52,12 @@ export default class DayTimelinePlugin extends Plugin {
     this.registerView(VIEW_TYPE_DAY_TIMELINE, (leaf) => new DayTimelineView(leaf, this));
     this.registerView(VIEW_TYPE_RECURRING, (leaf) => new RecurringManagerView(leaf, this));
 
-    // プロジェクト名のホバーでノートをページプレビュー表示するための登録。
-    // defaultMod: false = 修飾キーなしのホバーで出す（ページプレビューの設定から変更可能）
+    // プロジェクト名の Ctrl/Cmd + ホバーでノートをページプレビュー表示するための登録。
+    // defaultMod: true = 修飾キー付きのホバーで出す（ビュー側でも Ctrl/Cmd を判定してから
+    // hover-link を投げるので、ページプレビューの設定で修飾キーなしにしても出ない）
     this.registerHoverLinkSource(PROJECT_HOVER_SOURCE, {
       display: "タイムスケジュール: プロジェクト名",
-      defaultMod: false,
+      defaultMod: true,
     });
 
     this.addRibbonIcon("calendar-clock", "タイムスケジュールを開く", () => {
