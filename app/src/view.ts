@@ -40,6 +40,8 @@ import { layoutEvents, type LayoutInfo } from "./layout";
 import {
   colorForTags,
   ticketUrl,
+  MAX_HOUR_HEIGHT,
+  MIN_HOUR_HEIGHT,
   type Member,
   type PlanActualMode,
   type SidebarTab,
@@ -112,6 +114,9 @@ const TOUCH_SLOP = 10;
 const LONG_PRESS_MS = 350;
 /** 横スワイプで前後の日へ移動するのに必要な移動量（px） */
 const SWIPE_MIN_X = 48;
+
+/** Ctrl+ホイールのズーム感度。1ノッチ（deltaY=100）で約 1.16 倍になる */
+const WHEEL_ZOOM_INTENSITY = 0.0015;
 
 /** 狭い画面で全面に出す面 */
 type NarrowPane = "timeline" | "panel";
@@ -188,6 +193,12 @@ export class DayTimelineView extends ItemView {
   private shouldScroll = true;
   private reloadDebounced: () => void;
   private syncCursorDebounced: () => void;
+  /** Ctrl+ホイールのズーム: フレームごとにまとめて反映するための適用待ちの倍率と位置 */
+  private wheelZoomFactor = 1;
+  private wheelZoomClientY = 0;
+  private wheelZoomRaf: number | null = null;
+  /** ホイールの1ノッチごとに設定ファイルへ書かないよう、保存はまとめて行う */
+  private persistZoomDebounced: () => void;
 
   constructor(leaf: WorkspaceLeaf, plugin: DayTimelinePlugin) {
     super(leaf);
@@ -195,6 +206,7 @@ export class DayTimelineView extends ItemView {
     this.mode = this.defaultViewMode();
     this.reloadDebounced = debounce(() => void this.reload(), 250, true);
     this.syncCursorDebounced = debounce(() => void this.syncCursorHighlight(), 150, true);
+    this.persistZoomDebounced = debounce(() => void this.plugin.persistSettings(), 500, true);
 
     // ビューにフォーカスがあるとき: ← → で前後へ
     this.scope = new Scope(this.app.scope);
@@ -634,6 +646,7 @@ export class DayTimelineView extends ItemView {
 
     this.scrollEl = main.createDiv("dt-scroll");
     this.attachSwipeNavigation();
+    this.attachWheelZoom();
 
     // 狭い画面用: 右下の「＋」ボタン（Google カレンダー方式）。ツールバーの＋の代わり
     const fab = main.createEl("button", { cls: "dt-fab", attr: { "aria-label": "タスクを追加" } });
@@ -714,6 +727,52 @@ export class DayTimelineView extends ItemView {
       },
       { passive: true }
     );
+  }
+
+  /**
+   * Ctrl（macOS では Cmd でも可）＋ホイールで時間軸を拡大・縮小する。
+   * トラックパッドのピンチも Chromium では ctrlKey 付きの wheel として届くので同じ経路になる。
+   * Obsidian 本体の Ctrl+ホイール（UI 全体のズーム）に取られないよう、既定の動作と伝播を止める
+   */
+  private attachWheelZoom(): void {
+    this.scrollEl.addEventListener(
+      "wheel",
+      (ev: WheelEvent) => {
+        if (this.mode === "month") return; // 時間軸がないので既定の動作に任せる
+        if (!ev.ctrlKey && !ev.metaKey) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (this.interacting) return; // ドラッグ中に縮尺が変わると座標計算が狂う
+        // deltaMode は 0=px / 1=行 / 2=ページ（Chromium は px だが念のため換算する）
+        const dy = ev.deltaY * (ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 300 : 1);
+        this.wheelZoomFactor *= Math.exp(-dy * WHEEL_ZOOM_INTENSITY);
+        this.wheelZoomClientY = ev.clientY;
+        // wheel は1ノッチでも連続して発火する。グリッドの作り直しは重いのでフレームごとに1回にまとめる
+        if (this.wheelZoomRaf == null) {
+          this.wheelZoomRaf = requestAnimationFrame(() => {
+            this.wheelZoomRaf = null;
+            this.applyWheelZoom();
+          });
+        }
+      },
+      { passive: false }
+    );
+  }
+
+  /** ためておいたホイールぶんの拡大縮小を、ポインタ位置の時刻を保ったまま反映する */
+  private applyWheelZoom(): void {
+    const factor = this.wheelZoomFactor;
+    this.wheelZoomFactor = 1;
+    if (this.mode === "month" || !this.scrollEl?.isConnected) return;
+    const s = this.plugin.settings;
+    const next = clamp(this.hourHeightPx * factor, MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT);
+    if (Math.abs(next - this.hourHeightPx) < 0.01) return; // 既に上限・下限
+    // 手動ズームに入ったら「一度に表示する時間」(4h/8h/12h) は外し、「1時間の高さ」として記憶する。
+    // 0.1px 単位に丸めるのは、トラックパッドの細かい delta でも値が進む（整数に丸めると止まる）ようにするため
+    s.zoomHours = 0;
+    s.hourHeight = Math.round(next * 10) / 10;
+    this.persistZoomDebounced();
+    this.rebuildTimeline(this.wheelZoomClientY);
   }
 
   /**
@@ -2948,14 +3007,26 @@ export class DayTimelineView extends ItemView {
     return Math.max(avail / s.zoomHours, 24);
   }
 
-  /** 縮尺が変わったときに、いま見えている時刻を保ったままグリッドを作り直す */
-  private rebuildTimeline(): void {
+  /**
+   * 縮尺が変わったときに、いま見えている時刻を保ったままグリッドを作り直す。
+   * anchorClientY を渡すと、その画面位置（ポインタ位置）の時刻を動かさないように合わせる
+   */
+  private rebuildTimeline(anchorClientY?: number): void {
     if (this.mode === "month" || !this.scrollEl) return;
     const s = this.plugin.settings;
-    const anchor = s.startHour * 60 + this.pxToMinutes(this.scrollEl.scrollTop);
+    const anchor =
+      anchorClientY != null
+        ? this.clientYToMinutes(anchorClientY)
+        : s.startHour * 60 + this.pxToMinutes(this.scrollEl.scrollTop);
     this.buildGrid();
     this.renderEvents();
-    if (!this.shouldScroll) this.scrollEl.scrollTop = Math.max(0, this.minutesToPx(anchor));
+    if (anchorClientY != null) {
+      // 作り直しで scrollTop は 0 に戻っている。アンカーの時刻がポインタ位置に来る量だけずらす
+      const rect = this.daysEl.getBoundingClientRect();
+      this.scrollEl.scrollTop += rect.top + this.minutesToPx(anchor) - anchorClientY;
+    } else if (!this.shouldScroll) {
+      this.scrollEl.scrollTop = Math.max(0, this.minutesToPx(anchor));
+    }
   }
 
   private setZoom(hours: number): void {

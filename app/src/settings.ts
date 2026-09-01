@@ -17,6 +17,10 @@ export type ProjectsViewStyle = "tree" | "table";
 /** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
 export type PlanActualMode = "plan" | "both" | "actual";
 
+/** 1時間あたりの高さ（px）の範囲。設定のスライダーと Ctrl+ホイールのズームで共用する */
+export const MIN_HOUR_HEIGHT = 20;
+export const MAX_HOUR_HEIGHT = 240;
+
 /** 実績の計測（ストップウォッチ）の状態。Obsidian を再起動しても続くように設定に保存する */
 export interface TrackingState {
   /** 対象タスクの日付キー（YYYY-MM-DD） */
@@ -705,10 +709,10 @@ export class DayTimelineSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("1時間の高さ")
-      .setDesc("タイムラインの拡大率（px）。")
+      .setDesc("タイムラインの拡大率（px）。タイムライン上の Ctrl＋スクロールでも変えられます。")
       .addSlider((sl) =>
         sl
-          .setLimits(30, 160, 5)
+          .setLimits(MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT, 5)
           .setValue(s.hourHeight)
           .setDynamicTooltip()
           .onChange(async (v) => {
