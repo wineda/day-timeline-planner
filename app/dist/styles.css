@@ -172,6 +172,10 @@
   color: var(--icon-color-hover, var(--text-normal));
   box-shadow: none;
 }
+.dt-mode-menu-btn svg {
+  width: var(--icon-size, 18px);
+  height: var(--icon-size, 18px);
+}
 
 /* 予実モードの予定バー: 輪郭 + 薄い塗りにして「枠」に見せる（実績が主役） */
 .dt-event.is-plan {
@@ -1053,7 +1057,7 @@
   display: none;
 }
 /* パネル表示中はタイムライン（ツールバーごと）を隠し、サイドバーを全幅に広げる。
-   タイムラインへはパネルのヘッダーの戻るボタンで切り替える */
+   タイムラインへはパネルのヘッダー左端の同じ切替で戻る（位置はツールバーと同じ） */
 .dt-view.is-narrow.is-pane-panel .dt-main {
   display: none;
 }
@@ -2935,9 +2939,9 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
 }
 
 /* 狭い画面: ツールバーを TickTick 風のシンプルなヘッダーにする。
-   左に「9月」の月タイトル、右にアイコンだけを並べ、◀ ▶ の矢印は出さない
-   （前後へは横スワイプで移動する）。折り返すと（文字数で折り返し位置が変わり）
-   ヘッダーの高さも中身の並びもその都度変わっていたので、折り返さず、
+   左にタイムライン ⇄ パネルの切替と「9月」の月タイトル、右にアイコンだけを並べ、
+   ◀ ▶ の矢印は出さない（前後へは横スワイプで移動する）。折り返すと（文字数で折り返し
+   位置が変わり）ヘッダーの高さも中身の並びもその都度変わっていたので、折り返さず、
    あふれるときはタイトルとチップを「…」で詰める。
    範囲の予実合計は出さず、＋は右下の FAB に置き換える */
 .dt-view.is-narrow .dt-range-total {
@@ -2949,7 +2953,41 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
 .dt-view.is-narrow .dt-toolbar {
   flex-wrap: nowrap;
   gap: 2px;
-  padding: 6px 8px 4px 12px;
+  padding: 6px 8px 4px 8px;
+}
+/* パネルを全面表示中のヘッダーも、ツールバーと同じ高さ・余白・並び
+   （左に面の切替と見出し、右に操作）にそろえる。切替のアイコンが両方の面で
+   同じ場所に留まるので、行き来するときに指を動かさずに済む */
+.dt-view.is-narrow.is-pane-panel .dt-inbox-head {
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 6px 8px 4px 8px;
+}
+/* 左端の切替は、続く見出しと近すぎないよう少し離す */
+.dt-view.is-narrow .dt-pane {
+  margin-right: 6px;
+}
+/* パネルの見出し（Inbox / プロジェクト / 再スケジュール）はツールバーの月タイトルと同じ見た目に */
+.dt-view.is-narrow.is-pane-panel .dt-inbox-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 2px 4px 2px 0;
+  font-size: var(--font-ui-large, 20px);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-normal);
+  cursor: default;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 見出しと右端の操作の間の伸びる余白（狭い画面のパネルのヘッダーだけ） */
+.dt-inbox-spacer {
+  flex: 1 1 0;
+}
+.dt-view.is-narrow.is-pane-panel .dt-inbox-open {
+  margin-left: 0;
 }
 /* 3日・週表示はすぐ下に曜日ヘッダーの帯が続くので、境目の線は引かず1枚に見せる */
 .dt-view.is-narrow.is-multi-day .dt-toolbar {
@@ -3012,13 +3050,64 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
   text-overflow: ellipsis;
 }
 
-/* モバイルはタップの的を大きく */
+/* モバイルはタップの的を大きく（パネルを全面表示中のヘッダーもツールバーと同じ高さに） */
 body.is-mobile .dt-toolbar .dt-mode-btn,
 body.is-mobile .dt-toolbar .dt-today-btn,
 body.is-mobile .dt-toolbar .dt-icon-btn,
 body.is-mobile .dt-toolbar .dt-mode-menu-btn,
-body.is-mobile .dt-toolbar .dt-date-label {
+body.is-mobile .dt-toolbar .dt-date-label,
+body.is-mobile .dt-view.is-pane-panel .dt-inbox-head .dt-icon-btn,
+body.is-mobile .dt-view.is-pane-panel .dt-inbox-head .dt-inbox-label {
   min-height: 34px;
+}
+/* Obsidian モバイルの button 既定スタイル（背景色・影・余白・高さ）は単独のクラスより
+   詳細度が高く、月タイトルと表示の単位のアイコンにグレーの箱が付き、チップの色も
+   上書きされていた。FAB と同じく、詳細度を上げたセレクタで打ち消す */
+body.is-mobile .dt-view .dt-toolbar button.dt-date-label,
+body.is-mobile .dt-view .dt-toolbar button.dt-mode-menu-btn,
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-today-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  height: auto;
+  min-height: 34px;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-date-label {
+  padding: 2px 6px;
+  color: var(--text-normal);
+}
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-date-label {
+  padding-left: 0;
+  padding-right: 4px;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-mode-menu-btn,
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-today-btn {
+  padding: 4px 6px;
+  color: var(--icon-color, var(--text-muted));
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-date-label:hover,
+body.is-mobile .dt-view .dt-toolbar button.dt-mode-menu-btn:hover,
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-today-btn:hover {
+  background: var(--background-modifier-hover);
+}
+/* 計測中・タイマーのチップの色・丸み・高さも同様に守る */
+body.is-mobile .dt-view .dt-toolbar button.dt-tracking-chip,
+body.is-mobile .dt-view .dt-toolbar button.dt-timer-chip {
+  height: auto;
+  min-height: 0;
+  padding: 2px 10px;
+  border: none;
+  border-radius: var(--radius-l);
+  box-shadow: none;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-tracking-chip,
+body.is-mobile .dt-view .dt-toolbar button.dt-timer-chip.is-finished {
+  background: var(--color-red);
+  color: #fff;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-timer-chip {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
 
 /* スマホでは UI の文字が小さすぎて読みにくいので、プラグイン内の基準サイズを引き上げる。
@@ -3131,4 +3220,125 @@ body.is-mobile .dt-view.is-month .dt-month-item .dt-owner-label {
 .dt-fab svg {
   width: 26px;
   height: 26px;
+}
+
+/* ---------- スマホのヘッダー用ドロップダウン ----------
+   Obsidian の Menu はスマホでは画面下のシートとして出るので、ヘッダー（上端）のボタンから
+   開くと選択肢が指から遠い。押したボタンの真下に付く小さなメニューで出す（TickTick 風）。
+   要素は body 直下に置く（ビューの overflow で切れないように） */
+.dt-dropdown-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-menu, 65);
+  background: transparent;
+}
+.dt-dropdown {
+  position: fixed;
+  z-index: calc(var(--layer-menu, 65) + 1);
+  box-sizing: border-box;
+  min-width: 190px;
+  max-width: min(360px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px;
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-l, 0 8px 24px rgba(0, 0, 0, 0.25));
+  font-size: var(--font-ui-medium, 15px);
+  color: var(--text-normal);
+  transform-origin: top left;
+  animation: dt-dropdown-in 120ms ease-out;
+}
+.dt-dropdown.is-align-right {
+  transform-origin: top right;
+}
+@keyframes dt-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 1行 = 1項目。指で押しやすい高さにし、Obsidian モバイルの button 既定スタイル
+   （背景色・影・高さ）は詳細度を上げたセレクタで打ち消す */
+body .dt-dropdown button.dt-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  margin: 0;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-s, 4px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: inherit;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+body .dt-dropdown button.dt-dropdown-item:hover,
+body .dt-dropdown button.dt-dropdown-item:active {
+  background: var(--background-modifier-hover);
+}
+body .dt-dropdown button.dt-dropdown-item.is-checked {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+/* アイコンの列（アイコン付きの項目が1つでもあるメニューだけ幅を確保し、文字の頭をそろえる） */
+.dt-dropdown-icon {
+  display: none;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.dt-dropdown.has-icons .dt-dropdown-icon {
+  display: inline-flex;
+}
+.dt-dropdown-icon svg,
+.dt-dropdown-check svg {
+  width: 18px;
+  height: 18px;
+}
+/* 長い項目名は切らずに折り返す（スマホでは「…」で切れると何の項目か分からない） */
+.dt-dropdown-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.dt-dropdown-check {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--interactive-accent);
+}
+/* 小見出し（「一度に表示する時間」など。Obsidian の Menu の disabled 項目に相当） */
+.dt-dropdown-label {
+  padding: 8px 12px 2px;
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dt-dropdown-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--background-modifier-border);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-dropdown {
+    animation: none;
+  }
 }
