@@ -67,6 +67,11 @@ import {
 
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
 
+/** プロジェクト名のホバープレビューの hover-link ソース ID。
+ * タスクブロックのプレビュー（VIEW_TYPE_DAY_TIMELINE。Ctrl+ホバー）とは分け、
+ * こちらは修飾キーなしのホバーで出す（ページプレビューの設定で変更可能） */
+export const PROJECT_HOVER_SOURCE = "day-timeline-planner-project";
+
 interface DragHandlers {
   onMove?: (dy: number, ev: PointerEvent) => void;
   onEnd: (moved: boolean, ev: PointerEvent) => void;
@@ -1492,11 +1497,8 @@ export class DayTimelineView extends ItemView {
         // プロジェクトがパネルに出ていない（完了済み・見つからない）ため Inbox に出ているタスク
         const link = t.project;
         const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
-        badge.setAttr(
-          "aria-label",
-          `プロジェクト: ${projectDisplayName(link)}\n` +
-            "このプロジェクトはパネルに出ていない（完了済み・ノートが見つからない）ため、タスクを Inbox に表示しています。クリックでノートを開く"
-        );
+        // ツールチップの代わりに、ホバーでプロジェクトノートをプレビュー表示（クリックで開く）
+        this.attachProjectHoverPreview(badge, link);
         badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
         badge.addEventListener("click", (ev) => {
           ev.stopPropagation();
@@ -1773,7 +1775,9 @@ export class DayTimelineView extends ItemView {
     const nameWrap = nameTd.createDiv("dt-ptc-name-wrap");
     const chev = nameWrap.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    nameWrap.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    const nameEl = nameWrap.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    // 名前にマウスを乗せるとプロジェクトノートをプレビュー表示
+    this.attachProjectHoverPreview(nameEl, sum.ref.linktext);
     const fields = sum.fields;
     if (fields?.ticket) this.renderProjectTicketBadge(nameWrap, fields.ticket);
     const dueTd = tr.createEl("td", { cls: "dt-ptc-due" });
@@ -1833,7 +1837,9 @@ export class DayTimelineView extends ItemView {
     const row = container.createDiv("dt-project-row");
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    // 名前にマウスを乗せるとプロジェクトノートをプレビュー表示
+    this.attachProjectHoverPreview(nameEl, sum.ref.linktext);
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
@@ -2540,7 +2546,8 @@ export class DayTimelineView extends ItemView {
     if (task.project) {
       const link = task.project;
       const badge = el.createDiv({ cls: "dt-event-project", text: projectDisplayName(link) });
-      badge.setAttr("aria-label", `プロジェクト: ${projectDisplayName(link)}\nクリックでノートを開く`);
+      // ツールチップの代わりに、ホバーでプロジェクトノートをプレビュー表示（クリックで開く）
+      this.attachProjectHoverPreview(badge, link);
       badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
       badge.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -2951,6 +2958,23 @@ export class DayTimelineView extends ItemView {
     if (key === this.activeTaskKey) return;
     this.activeTaskKey = key;
     for (const [k, el] of this.taskEls) el.toggleClass("is-active-in-note", k === key);
+  }
+
+  /**
+   * プロジェクト名にマウスを乗せたら、プロジェクトノートをページプレビューでポップアップ表示する。
+   * ツールチップ（チップ）の代わりで、ノートのタスク一覧やメモがその場で読める。
+   * 修飾キーは不要（ページプレビューの設定「タイムスケジュール: プロジェクト名」で変更可能）
+   */
+  private attachProjectHoverPreview(el: HTMLElement, linktext: string): void {
+    el.addEventListener("mouseover", (e: MouseEvent) => {
+      this.app.workspace.trigger("hover-link", {
+        event: e,
+        source: PROJECT_HOVER_SOURCE,
+        hoverParent: this,
+        targetEl: el,
+        linktext,
+      });
+    });
   }
 
   /** Ctrl/Cmd + ホバーでノートの該当ブロックをプレビュー */
