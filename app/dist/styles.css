@@ -1910,6 +1910,131 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* ---------- モバイルの編集ダイアログ（TickTick 風のシンプル表示） ----------
+   上段は「丸い完了チェック + 日時サマリー」の1行だけ。日付・時間・実績の入力欄は
+   サマリーのタップで開閉し、空の任意項目は「＋ 項目を追加」のメニューにまとまる
+   （.dt-modal-mobile は modal.ts が Platform.isMobile のときに付ける） */
+.dt-modal-mobile .dt-m-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0 4px;
+}
+/* 丸い完了チェック（TickTick のチェック円と同じ役割） */
+.dt-modal-mobile button.dt-m-done {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--text-faint);
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent; /* 未完了はチェックを見せない */
+  cursor: pointer;
+}
+.dt-modal-mobile button.dt-m-done svg {
+  width: 15px;
+  height: 15px;
+}
+.dt-modal-mobile button.dt-m-done.is-done {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+/* 日時サマリー（アクセント色の1行。タップで編集欄を開閉） */
+.dt-modal-mobile button.dt-m-sched {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-accent);
+  font-size: var(--font-ui-medium);
+  cursor: pointer;
+}
+.dt-modal-mobile .dt-m-sched-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-modal-mobile button.dt-m-sched.is-error .dt-m-sched-text {
+  color: var(--text-error);
+}
+.dt-modal-mobile .dt-m-sched-chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+}
+.dt-modal-mobile .dt-m-sched-chevron svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 120ms ease;
+}
+.dt-modal-mobile button.dt-m-sched.is-open .dt-m-sched-chevron svg {
+  transform: rotate(180deg);
+}
+/* 開いた日付・時間・実績の欄はひとつの枠にまとめる */
+.dt-modal-mobile .dt-m-sched-body {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 2px 10px;
+  margin-bottom: 8px;
+}
+/* タイトルはラベルを出さず、大きめの枠なし入力に */
+.dt-modal-mobile .dt-title-setting .setting-item-info {
+  display: none;
+}
+.dt-modal-mobile .dt-title-setting input.dt-title-input {
+  font-size: 1.25em;
+  font-weight: 600;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding-left: 0;
+  padding-right: 0;
+}
+/* タグもラベルなしでチップだけを並べる */
+.dt-modal-mobile .dt-tag-setting .setting-item-info {
+  display: none;
+}
+/* 行間は少し詰める */
+.dt-modal-mobile .setting-item {
+  padding: 6px 0;
+}
+/* 「＋ 項目を追加」ボタン（チップの羅列の代わり。Obsidian のスマホCSSの幅100%を戻す） */
+.dt-modal-mobile .dt-add-fields {
+  border-top: none;
+  padding-top: 4px;
+}
+.dt-modal-mobile button.dt-add-field-menu-btn {
+  width: auto !important;
+  flex: 0 1 auto !important;
+  min-height: 0;
+  padding: 6px 14px;
+}
+/* 「削除」「ノートで開く」のアイコンボタン */
+.dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn {
+  width: auto !important;
+  flex: 0 0 auto !important;
+  padding: 6px 12px;
+}
+.dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
 .dt-tag-chips {
   display: flex;
   flex-wrap: wrap;
