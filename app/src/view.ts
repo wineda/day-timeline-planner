@@ -148,8 +148,10 @@ export class DayTimelineView extends ItemView {
   private dateInputEl!: HTMLInputElement;
   /** 「今日」ボタン。今日が画面に映っている間は隠す */
   private todayBtnEl!: HTMLElement;
-  /** 狭い画面でモードのセグメントの代わりに出すドロップダウンのラベル */
-  private modeMenuLabelEl!: HTMLElement;
+  /** 「今日」ボタンのアイコン版（狭い画面）に入れる今日の日付の数字 */
+  private todayNumEl!: HTMLElement;
+  /** 狭い画面でモードのセグメントの代わりに出すアイコンボタン */
+  private modeMenuBtnEl!: HTMLElement;
   private timerEl!: HTMLElement;
   private trackingEl!: HTMLElement;
   private modeBtns = new Map<ViewMode, HTMLElement>();
@@ -557,27 +559,14 @@ export class DayTimelineView extends ItemView {
     this.inboxEl = body.createDiv("dt-inbox");
     const main = body.createDiv("dt-main");
 
-    // ツールバーはタイムラインの直上に1行だけ。狭い画面でも折り返さないよう、
-    // 常時出すのは「面の切替・日付移動・日付・モード・⋮」に絞り、
+    // ツールバーはタイムラインの直上に1行だけ（TickTick 風のシンプルなヘッダー）。
+    // 左は「9月」の月タイトル、右は操作のまとまり。狭い画面でも折り返さないよう、
+    // 常時出すのは「タイトル・今日・面の切替・モード・⋮」に絞り、
     // ズーム・予実・メンバーを含む設定系はすべて ⋮ メニューにまとめる
     const bar = main.createDiv("dt-toolbar");
 
-    // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替。
-    // 1つのトグルだと「いまどちらか・押すとどうなるか」が分かりにくかったので、
-    // 両方のアイコンを並べたセグメントにして、表示中の面を強調する
-    this.paneEl = bar.createDiv("dt-pane");
-    const seg = this.buildPaneSegmentButtons(this.paneEl);
-    this.paneTimelineBtnEl = seg.timeline;
-    this.panePanelBtnEl = seg.panel;
-    this.renderPaneToggle();
-
-    const nav = bar.createDiv("dt-nav");
-    this.iconButton(nav, "chevron-left", "前へ", () => this.goToPrev());
-    // 「今日」は今日が画面に映っていないときだけ出す（映っている間は押す意味がない）
-    this.todayBtnEl = nav.createEl("button", { text: "今日", cls: "dt-today-btn" });
-    this.todayBtnEl.onclick = () => this.goToToday();
-    this.iconButton(nav, "chevron-right", "次へ", () => this.goToNext());
-
+    // 左端: 月タイトル（クリックで日付ピッカー）。詳しい日付は下の列ヘッダーが持つので、
+    // ここは大きな見出しとしてだけ使う
     const dateWrap = bar.createDiv("dt-date");
     this.dateLabelEl = dateWrap.createEl("button", {
       cls: "dt-date-label",
@@ -591,6 +580,22 @@ export class DayTimelineView extends ItemView {
       const [y, m, d] = v.split("-").map(Number);
       if (y && m && d) this.setDate(new Date(y, m - 1, d));
     };
+
+    // 日付の移動。狭い画面では矢印を出さず、横スワイプと「今日」で移動する
+    const nav = bar.createDiv("dt-nav");
+    this.iconButton(nav, "chevron-left", "前へ", () => this.goToPrev());
+    // 「今日」は今日が画面に映っていないときだけ出す（映っている間は押す意味がない）。
+    // 広い画面では文字、狭い画面では「カレンダーの枠 + 今日の日付」のアイコンで出す
+    this.todayBtnEl = nav.createEl("button", {
+      cls: "dt-today-btn",
+      attr: { "aria-label": "今日へ移動" },
+    });
+    const todayIcon = this.todayBtnEl.createSpan("dt-today-icon");
+    setIcon(todayIcon, iconName("calendar"));
+    this.todayNumEl = todayIcon.createSpan("dt-today-num");
+    this.todayBtnEl.createSpan({ cls: "dt-today-text", text: "今日" });
+    this.todayBtnEl.onclick = () => this.goToToday();
+    this.iconButton(nav, "chevron-right", "次へ", () => this.goToNext());
 
     // 表示範囲（3日・週）の予実合計。表示中の範囲の情報なので日付ラベルの隣に置く
     this.rangeTotalEl = bar.createDiv("dt-range-total");
@@ -618,6 +623,15 @@ export class DayTimelineView extends ItemView {
     this.renderTimer();
     this.register(this.plugin.timer.onChange(() => this.renderTimer()));
 
+    // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替。
+    // 1つのトグルだと「いまどちらか・押すとどうなるか」が分かりにくかったので、
+    // 両方のアイコンを並べて表示中の面を色で強調する（右側のアイコン群の一部として、枠は持たせない）
+    this.paneEl = bar.createDiv("dt-pane");
+    const seg = this.buildPaneSegmentButtons(this.paneEl);
+    this.paneTimelineBtnEl = seg.timeline;
+    this.panePanelBtnEl = seg.panel;
+    this.renderPaneToggle();
+
     const modeWrap = bar.createDiv("dt-mode");
     for (const [mode, label] of VIEW_MODES) {
       const b = modeWrap.createEl("button", { text: label, cls: "dt-mode-btn" });
@@ -625,23 +639,22 @@ export class DayTimelineView extends ItemView {
       this.modeBtns.set(mode, b);
     }
 
-    // 狭い画面ではセグメント（4個ぶんの幅）が1行に収まらないので、同じ中身を
-    // ドロップダウンに畳む。どちらを出すかは CSS（.dt-view.is-narrow）で切り替える
-    const modeMenuBtn = bar.createEl("button", {
+    // 狭い画面ではセグメント（4個ぶんの幅）が1行に収まらないので、アイコン1つの
+    // メニューに畳む（TickTick 風。選択中の単位はメニュー内のチェックで分かる）。
+    // どちらを出すかは CSS（.dt-view.is-narrow）で切り替える
+    this.modeMenuBtnEl = bar.createEl("button", {
       cls: "dt-mode-menu-btn",
       attr: { "aria-label": "表示の単位を選ぶ（日・3日・週・月）" },
     });
-    this.modeMenuLabelEl = modeMenuBtn.createSpan();
-    const modeCaret = modeMenuBtn.createSpan("dt-menu-caret");
-    setIcon(modeCaret, "chevron-down");
-    modeMenuBtn.onclick = () => {
+    setIcon(this.modeMenuBtnEl, iconName("columns"));
+    this.modeMenuBtnEl.onclick = () => {
       const menu = new Menu();
       for (const [mode, , label] of VIEW_MODES) {
         menu.addItem((i) =>
           i.setTitle(label).setChecked(mode === this.mode).onClick(() => this.setViewMode(mode))
         );
       }
-      const r = modeMenuBtn.getBoundingClientRect();
+      const r = this.modeMenuBtnEl.getBoundingClientRect();
       menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
     };
 
@@ -1292,46 +1305,41 @@ export class DayTimelineView extends ItemView {
     const days = this.visibleDays();
     const a = moment(days[0]);
     const b = moment(days[days.length - 1]);
-    // 年は今年以外のときだけ出す（毎回読む情報ではない）。
-    // さらに狭い画面では、日付を含む表記を「9/27 〜 10/3」と詰める。
-    // 「9月27日 〜 10月3日」は1行に収まらず、末尾が「…」で切れてしまう
+    // タイトルは「9月」のような月の見出し（TickTick 風）。見えている日々は真下の
+    // 列ヘッダー（曜日 + 日付）に出ているので、ここでは範囲を繰り返さない。
+    // 年は今年以外のときだけ添える（毎回読む情報ではない）。
+    // 月をまたぐ週は、基準日ではなく「見えている範囲の真ん中の日」の月を出す
+    //（8/30〜9/5 の週なら「9月」。TickTick と同じ見え方になる）
+    const rep =
+      this.mode === "month" || this.mode === "day" ? m : moment(days[Math.floor(days.length / 2)]);
     const thisYear = new Date().getFullYear();
-    const needYear = (this.mode === "month" ? m : a).year() !== thisYear;
+    const needYear = rep.year() !== thisYear;
     const narrow = this.isNarrow;
-    const ymd = narrow
-      ? needYear
-        ? "YYYY/M/D"
-        : "M/D"
-      : needYear
-        ? "YYYY年M月D日"
-        : "M月D日";
     if (this.mode === "day") {
+      // 日表示だけは列ヘッダーが1列で日付の並びが無いので、どの日かをタイトルで示す。
       // 曜日は真下の列ヘッダーに出ているので、1行に収める狭い画面では省く
+      const ymd = needYear ? "YYYY年M月D日" : "M月D日";
       this.dateLabelEl.setText(m.format(narrow ? ymd : `${ymd} (ddd)`));
       this.dateLabelEl.setAttr("aria-label", `${m.format("YYYY年M月D日 (ddd)")}（日付を選ぶ）`);
-    } else if (this.mode === "month") {
-      // 月表示は日を含まないので、狭い画面でもそのままで収まる
-      this.dateLabelEl.setText(m.format(needYear ? "YYYY年M月" : "M月"));
-      this.dateLabelEl.setAttr("aria-label", `${m.format("YYYY年M月")}（日付を選ぶ）`);
-    } else {
-      // 実際に見えている範囲をそのまま出す。以前は長さが変わるとツールバーの折り返しが
-      // 変わってヘッダーがずれたが、いまは1行固定（折り返さず、あふれたら「…」）なのでずれない。
-      // 終わりの日は始まりと重なるぶんを落とす。狭い画面では年も出さない
-      //（「12/28 〜 1/3」なら年をまたぐのは見て分かるし、年まで出すと年末の1週間だけ末尾が切れる）
-      const endFmt = narrow
-        ? "M/D"
-        : a.year() !== b.year()
-          ? "YYYY年M月D日"
-          : a.month() !== b.month()
-            ? "M月D日"
-            : "D日";
-      this.dateLabelEl.setText(`${a.format(ymd)} 〜 ${b.format(endFmt)}`);
+    } else if (!narrow && this.mode !== "month" && a.month() !== b.month()) {
+      // 広い画面では月をまたぐ範囲を「8月〜9月」と示す（狭い画面は真ん中の月だけで十分）
+      const af = a.year() !== thisYear ? "YYYY年M月" : "M月";
+      const bf = b.year() !== a.year() ? "YYYY年M月" : "M月";
+      this.dateLabelEl.setText(`${a.format(af)}〜${b.format(bf)}`);
       this.dateLabelEl.setAttr(
         "aria-label",
         `${a.format("YYYY年M月D日")} 〜 ${b.format("YYYY年M月D日")}（日付を選ぶ）`
       );
+    } else {
+      this.dateLabelEl.setText(rep.format(needYear ? "YYYY年M月" : "M月"));
+      this.dateLabelEl.setAttr(
+        "aria-label",
+        this.mode === "month"
+          ? `${m.format("YYYY年M月")}（日付を選ぶ）`
+          : `${a.format("YYYY年M月D日")} 〜 ${b.format("YYYY年M月D日")}（日付を選ぶ）`
+      );
     }
-    // 今日が映っている間は「今日」を押す意味がないので隠し、そのぶんの幅を日付に回す。
+    // 今日が映っている間は「今日」を押す意味がないので隠し、そのぶんの幅をタイトルに回す。
     // 月表示は前後の月のマスにも今日が入りうるので、月そのものが今月かで見る
     const now = new Date();
     const showsToday =
@@ -1339,9 +1347,14 @@ export class DayTimelineView extends ItemView {
         ? now.getFullYear() === this.date.getFullYear() && now.getMonth() === this.date.getMonth()
         : days.some((d) => isToday(d));
     this.todayBtnEl.toggleClass("is-hidden", showsToday);
+    // 狭い画面のアイコン版「今日」には、今日の日付の数字を入れる（TickTick 風）
+    this.todayNumEl.setText(String(now.getDate()));
     this.dateInputEl.value = m.format("YYYY-MM-DD");
     for (const [mode, btn] of this.modeBtns) btn.toggleClass("is-active", mode === this.mode);
-    this.modeMenuLabelEl.setText(VIEW_MODES.find(([v]) => v === this.mode)?.[1] ?? "");
+    this.modeMenuBtnEl.setAttr(
+      "aria-label",
+      `表示の単位を選ぶ（いま: ${VIEW_MODES.find(([v]) => v === this.mode)?.[2] ?? ""}）`
+    );
     this.renderTracking();
   }
 
