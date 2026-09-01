@@ -688,6 +688,13 @@
   white-space: nowrap;
   font-size: var(--font-ui-small);
 }
+/* プロジェクト名の Ctrl/Cmd + ホバーで出すプロジェクトノートのプレビュー（ページプレビューのポップアップ）。
+   ノートのタスク一覧（表）やメモが読みやすいよう、通常のプレビュー（既定 450×400px）より一回り大きくする。
+   クラスは view.ts の ProjectHoverParent がポップアップに付ける（タスクブロックのプレビューは対象外） */
+.popover.hover-popover.dt-project-preview {
+  --popover-width: 640px;
+  --popover-height: 560px;
+}
 .dt-project-stats {
   flex: 0 0 auto;
   font-size: 0.72em;
