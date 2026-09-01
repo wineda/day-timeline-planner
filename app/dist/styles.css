@@ -31,10 +31,41 @@
   min-height: 0;
   line-height: 1.6;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 /* 今日が画面に映っている間は押す意味がないので出さない（そのぶん日付に幅を回す） */
 .dt-today-btn.is-hidden {
   display: none;
+}
+/* 「今日」のアイコン版（カレンダーの枠 + 今日の日付。TickTick 風）。
+   出すのは狭い画面のときだけで、広い画面では文字の「今日」を出す */
+.dt-today-icon {
+  display: none;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+}
+.dt-today-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-today-num {
+  position: absolute;
+  /* カレンダーの枠線（上部の帯より下）の真ん中に数字を置く */
+  left: 0;
+  right: 0;
+  top: 38%;
+  bottom: 4%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .dt-date {
@@ -44,8 +75,8 @@
   position: relative;
 }
 
-/* 日付は「押せるラベル」。塗りを持つとモードの「選択中」と見分けが付かないので、
-   背景・枠を持たない見出しとして扱う */
+/* 日付は「押せる月タイトル」（TickTick 風にヘッダーの主役として大きく出す）。
+   塗りを持つとモードの「選択中」と見分けが付かないので、背景・枠を持たない見出しとして扱う */
 .dt-date-label {
   background: transparent;
   border: none;
@@ -53,8 +84,9 @@
   padding: 2px 6px;
   height: auto;
   min-height: 0;
-  font-size: var(--font-ui-medium);
-  font-weight: 600;
+  font-size: var(--font-ui-large, 20px);
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--text-normal);
   cursor: pointer;
   border-radius: var(--radius-s);
@@ -117,37 +149,28 @@
   display: inline-block;
 }
 
-/* 狭い画面で日/3日/週/月 のセグメントの代わりに出す「週 ▾」ドロップダウン */
+/* 狭い画面で日/3日/週/月 のセグメントの代わりに出す切替ボタン。
+   TickTick 風にアイコンだけの枠なしボタンにする（いまの単位はメニュー内のチェックと
+   画面の列の並びで分かる） */
 .dt-mode-menu-btn {
   display: none; /* 出すのは狭い画面のときだけ（.dt-view.is-narrow で切り替える） */
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   flex: 0 0 auto;
   height: auto;
   min-height: 0;
-  padding: 2px 6px 2px 10px;
-  line-height: 1.6;
-  /* いま何の単位で見ているかを示す表示なので、押せるうえに読める濃さにする */
-  font-size: var(--font-ui-small);
-  border: 1px solid var(--background-modifier-border);
+  padding: 4px 6px;
+  border: none;
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--text-normal);
+  color: var(--icon-color, var(--text-muted));
   box-shadow: none;
   cursor: pointer;
 }
 .dt-mode-menu-btn:hover {
   background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  color: var(--icon-color-hover, var(--text-normal));
   box-shadow: none;
-}
-.dt-menu-caret {
-  display: flex;
-  align-items: center;
-}
-.dt-menu-caret svg {
-  width: 12px;
-  height: 12px;
 }
 
 /* 予実モードの予定バー: 輪郭 + 薄い塗りにして「枠」に見せる（実績が主役） */
@@ -1004,30 +1027,26 @@
 /* ---------- 狭い画面（スマホなど）: タイムライン ⇄ パネルの切り替え ---------- */
 /* 幅が足りないとサイドバーとタイムラインが共倒れになるので、
    ヘッダーの切替（is-narrow のときだけ表示）で片方だけを全面に出す。
-   タイムラインとツリーの両方のアイコンを並べたセグメントにして、
-   表示中の面（is-active）が一目で分かるようにする */
+   タイムラインとツリーの両方のアイコンを並べ、表示中の面（is-active）を色で示す。
+   ヘッダーを軽く見せるため、セグメントの箱（枠・塗り）は持たせない（TickTick 風） */
 .dt-pane {
   display: none;
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-s);
-  background: var(--background-secondary-alt);
-  border: 1px solid var(--background-modifier-border);
 }
 .dt-view.is-narrow .dt-pane.is-available {
   display: inline-flex;
 }
 .dt-pane .dt-icon-btn {
-  padding: 2px 6px;
+  padding: 4px 6px;
   color: var(--text-faint);
 }
-/* 表示中の面はアクセント色の背景で塗る（どちらがアクティブか一目で分かるように） */
+/* 表示中の面はアクセント色（薄い塗り + アイコン色）で示す */
 .dt-pane .dt-icon-btn.is-active,
 .dt-pane .dt-icon-btn.is-active:hover {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+  color: var(--interactive-accent);
 }
 /* タイムライン表示中はサイドバーを隠す（畳んだ細い帯も出さない） */
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
@@ -2790,9 +2809,11 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
   background: color-mix(in srgb, currentColor 45%, transparent);
 }
 
-/* 狭い画面: ツールバーを1行に収める。
-   折り返すと（日付の文字数で折り返し位置が変わり）ヘッダーの高さも中身の並びも
-   その都度変わっていたので、折り返さず、あふれるときは日付を「…」で詰める。
+/* 狭い画面: ツールバーを TickTick 風のシンプルなヘッダーにする。
+   左に「9月」の月タイトル、右にアイコンだけを並べ、◀ ▶ の矢印は出さない
+   （前後へは横スワイプで移動する）。折り返すと（文字数で折り返し位置が変わり）
+   ヘッダーの高さも中身の並びもその都度変わっていたので、折り返さず、
+   あふれるときはタイトルとチップを「…」で詰める。
    範囲の予実合計は出さず、＋は右下の FAB に置き換える */
 .dt-view.is-narrow .dt-range-total {
   display: none;
@@ -2802,19 +2823,51 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
 }
 .dt-view.is-narrow .dt-toolbar {
   flex-wrap: nowrap;
-  gap: 2px 3px;
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 6px 8px 4px 12px;
 }
-/* 日付に使える幅を1pxでも増やす（切り詰められるのは日付だけなので効く） */
+/* 3日・週表示はすぐ下に曜日ヘッダーの帯が続くので、境目の線は引かず1枚に見せる */
+.dt-view.is-narrow.is-multi-day .dt-toolbar {
+  border-bottom: none;
+}
+/* タイトルに使える幅を1pxでも増やす（切り詰められるのはタイトルだけなので効く） */
 .dt-view.is-narrow .dt-date-label {
-  padding-left: 4px;
+  padding-left: 0;
   padding-right: 4px;
 }
-.dt-view.is-narrow .dt-today-btn {
-  padding-left: 7px;
-  padding-right: 7px;
+/* ◀ ▶ の矢印は出さず、「今日」だけを右側のアイコン群へ回す（order で右端側に寄せる。
+   DOM の並びは広い画面のまま「タイトル・移動・…・⋮」なので、右側に置きたいものへ順に番号を振る） */
+.dt-view.is-narrow .dt-nav .dt-icon-btn {
+  display: none;
 }
-/* 4つ並ぶセグメントは幅を取りすぎるので、狭い画面ではドロップダウンに畳む */
+.dt-view.is-narrow .dt-nav {
+  order: 4;
+}
+.dt-view.is-narrow .dt-toolbar .dt-mode-menu-btn {
+  order: 5;
+}
+.dt-view.is-narrow .dt-toolbar .dt-kebab-btn {
+  order: 6;
+}
+/* 「今日」は文字ではなく「カレンダーの枠 + 今日の日付」のアイコンで出す（枠なしのボタン） */
+.dt-view.is-narrow .dt-toolbar button.dt-today-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 4px 6px;
+  color: var(--icon-color, var(--text-muted));
+}
+.dt-view.is-narrow .dt-toolbar button.dt-today-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--icon-color-hover, var(--text-normal));
+}
+.dt-view.is-narrow .dt-today-btn .dt-today-text {
+  display: none;
+}
+.dt-view.is-narrow .dt-today-btn .dt-today-icon {
+  display: inline-flex;
+}
+/* 4つ並ぶセグメントは幅を取りすぎるので、狭い画面ではアイコンのメニューに畳む */
 .dt-view.is-narrow .dt-mode {
   display: none;
 }
@@ -2850,6 +2903,8 @@ body.is-mobile .dt-view {
   --font-ui-smaller: 13px;
   --font-ui-small: 15px;
   --font-ui-medium: 16px;
+  /* ヘッダーの月タイトル（.dt-date-label）用。TickTick のヘッダーと同じくらいの大きさ */
+  --font-ui-large: 21px;
 }
 /* パネルのタブはスマホでは主要なナビ。タップの的も兼ねて一段大きく */
 body.is-mobile .dt-panel-tab {
