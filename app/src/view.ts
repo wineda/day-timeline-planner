@@ -22,13 +22,16 @@ import {
   TaskModal,
   formatActualRanges,
 } from "./modal";
-import { subtractActualRanges, type ActualRange } from "./markdown/blocks";
+import { subtractActualRanges, type ActualRange, type TicketRef } from "./markdown/blocks";
 import {
   groupProjects,
   knownGroupNames,
   projectDisplayName,
   renderGroupIcon,
+  type ProjectChild,
   type ProjectDoc,
+  type ProjectFields,
+  type ProjectGroup,
   type ProjectSummary,
 } from "./project";
 import { newBlockId } from "./markdown/id";
@@ -93,6 +96,14 @@ const RESCHEDULE_LOOKBACK_DAYS = 30;
 /** ビューの幅（px）がこれ未満なら「狭い画面」（スマホなど）。
  * サイドバーとタイムラインを並べると共倒れになるので、片方だけを全面に出して切り替える */
 const NARROW_VIEW_WIDTH = 500;
+
+/** サイドバー（Inbox・プロジェクト）の幅の下限（px） */
+const SIDEBAR_MIN_WIDTH = 160;
+/** サイドバーの幅の上限（px）。実際の上限はビューの幅からも決まる（maxSidebarWidth） */
+const SIDEBAR_MAX_WIDTH = 800;
+
+/** プロジェクトのテーブル表示の列数（名前・期日・進捗・予定・実績・操作） */
+const PROJECT_TABLE_COLS = 6;
 
 /** タッチでこれ以上（px）動いたら「タップ・長押し」ではなくスクロール等とみなす */
 const TOUCH_SLOP = 10;
@@ -1343,10 +1354,20 @@ export class DayTimelineView extends ItemView {
       );
       openBtn.addClass("dt-inbox-open");
     } else if (active.id === "projects") {
+      const table = s.projectsViewStyle === "table";
+      const styleBtn = this.iconButton(
+        head,
+        table ? "list-tree" : "table",
+        table
+          ? "ツリー表示に切り替え"
+          : "テーブル表示に切り替え（期日・進捗・予定・実績を列で見る）",
+        () => this.toggleProjectsViewStyle()
+      );
+      styleBtn.addClass("dt-inbox-open");
       const kebab = this.menuButton(head, "プロジェクトのメニュー", (menu) =>
         this.buildProjectsMenu(menu, activeProjects)
       );
-      kebab.addClass("dt-inbox-open");
+      kebab.addClass("dt-inbox-add");
     } else {
       const addBtn = this.iconButton(head, "plus", "時刻を決めていないタスクを追加", () =>
         this.openCreateModal(this.date, null, null)
@@ -1428,6 +1449,16 @@ export class DayTimelineView extends ItemView {
     }
   }
 
+  /**
+   * サイドバーの幅の上限。タイムラインが潰れないようビュー幅の6割までとしつつ、
+   * デスクトップなど広い画面では最大 800px まで広げられる（狭い画面でも従来の 480px は保証）
+   */
+  private maxSidebarWidth(): number {
+    const w = this.contentEl.clientWidth;
+    if (!w) return SIDEBAR_MAX_WIDTH;
+    return clamp(Math.round(w * 0.6), 480, SIDEBAR_MAX_WIDTH);
+  }
+
   /** サイドバーの幅を反映する（null なら CSS の既定 = 畳んだ状態に任せる） */
   private applySidebarWidth(width: number | null): void {
     if (width === null) {
@@ -1435,7 +1466,7 @@ export class DayTimelineView extends ItemView {
       this.inboxEl.style.flexBasis = "";
       return;
     }
-    const w = clamp(width, 160, 480);
+    const w = clamp(width, SIDEBAR_MIN_WIDTH, this.maxSidebarWidth());
     this.inboxEl.style.width = w + "px";
     this.inboxEl.style.flexBasis = w + "px";
   }
@@ -1452,10 +1483,11 @@ export class DayTimelineView extends ItemView {
       e.stopPropagation();
       const startW = this.inboxEl.getBoundingClientRect().width;
       const startX = e.clientX;
+      const maxW = this.maxSidebarWidth();
       let w = startW;
       this.startDrag(grip, e, {
         onMove: (_dy, ev) => {
-          w = clamp(startW + (ev.clientX - startX), 160, 480);
+          w = clamp(startW + (ev.clientX - startX), SIDEBAR_MIN_WIDTH, maxW);
           this.applySidebarWidth(w);
         },
         onEnd: (moved) => {
@@ -1500,6 +1532,14 @@ export class DayTimelineView extends ItemView {
     this.renderInbox();
   }
 
+  /** プロジェクト一覧をツリー表示 ⇄ テーブル表示で切り替える（パネルのボタン・メニュー・コマンドから） */
+  toggleProjectsViewStyle(): void {
+    const s = this.plugin.settings;
+    s.projectsViewStyle = s.projectsViewStyle === "table" ? "tree" : "table";
+    void this.plugin.persistSettings();
+    this.renderInbox();
+  }
+
   /** プロジェクトのパネルのヘッダー（⋮）から開くメニュー。active は進行中のプロジェクト */
   private buildProjectsMenu(menu: Menu, active: ProjectSummary[]): void {
     menu.addItem((i) =>
@@ -1516,6 +1556,13 @@ export class DayTimelineView extends ItemView {
           .setTitle(allExpanded ? "すべてのプロジェクトを閉じる" : "すべてのプロジェクトを展開")
           .setIcon(allExpanded ? "chevrons-down-up" : "chevrons-up-down")
           .onClick(() => this.setAllProjectsExpanded(!allExpanded))
+      );
+      const tableStyle = this.plugin.settings.projectsViewStyle === "table";
+      menu.addItem((i) =>
+        i
+          .setTitle(tableStyle ? "ツリーで表示" : "テーブルで表示（期日・進捗・予実を列で）")
+          .setIcon(tableStyle ? "list-tree" : "table")
+          .onClick(() => this.toggleProjectsViewStyle())
       );
       // グループ分けしているときだけ: ツリー ⇄ フラットな一覧の切り替え
       if (active.some((s) => s.ref.group)) {
@@ -1573,10 +1620,15 @@ export class DayTimelineView extends ItemView {
       active,
       this.plugin.settings.projectGroups.map((x) => x.name)
     );
-    const hasGroups = groups.some((g) => g.name !== null);
-    // どのプロジェクトにもグループが無ければ今までどおりのフラットな一覧。
+    // どのプロジェクトにもグループが無ければ見出しなしの一覧。
     // 「フラットな一覧で表示」がオンのときも見出しを出さず、グループ順に並べたまま平らにする
-    if (!hasGroups || this.plugin.settings.projectsFlatList) {
+    const showGroupHeads =
+      groups.some((g) => g.name !== null) && !this.plugin.settings.projectsFlatList;
+    if (this.plugin.settings.projectsViewStyle === "table") {
+      this.renderProjectsTable(list, groups, showGroupHeads);
+      return;
+    }
+    if (!showGroupHeads) {
       for (const g of groups) {
         for (const sum of g.items) this.renderProjectRow(list, sum);
       }
@@ -1584,88 +1636,233 @@ export class DayTimelineView extends ItemView {
     }
     const groupIcons = this.groupIconMap();
     for (const g of groups) {
-      const groupKey = g.name ?? "";
-      const collapsed = this.collapsedGroups.has(groupKey);
-      const groupHead = list.createDiv("dt-project-group");
-      const groupChev = groupHead.createDiv("dt-project-chevron");
-      setIcon(groupChev, collapsed ? "chevron-right" : "chevron-down");
-      // グループごとの指定があればそれ、無ければ既定のアイコン（未分類は常に既定）
-      const custom = g.name !== null ? groupIcons.get(g.name) : undefined;
-      const icon = custom ?? this.plugin.settings.defaultGroupIcon.trim();
-      if (icon) {
-        const iconEl = groupHead.createSpan("dt-project-group-icon");
-        renderGroupIcon(iconEl, icon);
-      }
-      groupHead.createSpan({ cls: "dt-project-group-name", text: g.name ?? "未分類" });
-      groupHead.createSpan({ cls: "dt-project-group-count", text: String(g.items.length) });
-      groupHead.setAttr(
-        "aria-label",
-        `${g.name ?? "未分類"}: プロジェクト ${g.items.length} 件\nクリックでグループを開閉`
-      );
-      groupHead.addEventListener("click", () => {
-        if (collapsed) this.collapsedGroups.delete(groupKey);
-        else this.collapsedGroups.add(groupKey);
-        this.renderInbox();
-      });
-      if (collapsed) continue;
+      if (this.renderProjectGroupHead(list, g, groupIcons)) continue;
       const itemsEl = list.createDiv("dt-project-group-items");
       for (const sum of g.items) this.renderProjectRow(itemsEl, sum);
     }
   }
 
-  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をパネルへ描画する */
+  /** グループの見出し行（ツリー・テーブル共通）。開閉のクリックを設定し、畳まれているかを返す */
+  private renderProjectGroupHead(
+    parent: HTMLElement,
+    g: ProjectGroup,
+    groupIcons: Map<string, string>
+  ): boolean {
+    const groupKey = g.name ?? "";
+    const collapsed = this.collapsedGroups.has(groupKey);
+    const groupHead = parent.createDiv("dt-project-group");
+    const groupChev = groupHead.createDiv("dt-project-chevron");
+    setIcon(groupChev, collapsed ? "chevron-right" : "chevron-down");
+    // グループごとの指定があればそれ、無ければ既定のアイコン（未分類は常に既定）
+    const custom = g.name !== null ? groupIcons.get(g.name) : undefined;
+    const icon = custom ?? this.plugin.settings.defaultGroupIcon.trim();
+    if (icon) {
+      const iconEl = groupHead.createSpan("dt-project-group-icon");
+      renderGroupIcon(iconEl, icon);
+    }
+    groupHead.createSpan({ cls: "dt-project-group-name", text: g.name ?? "未分類" });
+    groupHead.createSpan({ cls: "dt-project-group-count", text: String(g.items.length) });
+    groupHead.setAttr(
+      "aria-label",
+      `${g.name ?? "未分類"}: プロジェクト ${g.items.length} 件\nクリックでグループを開閉`
+    );
+    groupHead.addEventListener("click", () => {
+      if (collapsed) this.collapsedGroups.delete(groupKey);
+      else this.collapsedGroups.add(groupKey);
+      this.renderInbox();
+    });
+    return collapsed;
+  }
+
+  /**
+   * プロジェクトのテーブル表示: 期日・進捗・予定・実績を列に並べ、広いサイドバーで見比べられる。
+   * 行の操作（クリックで展開・タイムラインへドラッグで子タスク作成・右クリックメニュー）はツリーと同じ。
+   * 列が収まらない幅では横にスクロールできる
+   */
+  private renderProjectsTable(
+    list: HTMLElement,
+    groups: ProjectGroup[],
+    showGroupHeads: boolean
+  ): void {
+    list.addClass("is-table");
+    const table = list.createEl("table", { cls: "dt-projects-table" });
+    const headRow = table.createEl("thead").createEl("tr");
+    headRow.createEl("th", { text: "プロジェクト", cls: "dt-ptc-name" });
+    headRow.createEl("th", { text: "期日", cls: "dt-ptc-due" });
+    headRow.createEl("th", { text: "進捗", cls: "dt-ptc-num" });
+    headRow.createEl("th", { text: "予定", cls: "dt-ptc-num" });
+    headRow.createEl("th", { text: "実績", cls: "dt-ptc-num" });
+    headRow.createEl("th", { cls: "dt-ptc-actions" });
+    const body = table.createEl("tbody");
+    const groupIcons = this.groupIconMap();
+    for (const g of groups) {
+      if (showGroupHeads) {
+        const tr = body.createEl("tr", { cls: "dt-project-group-trow" });
+        const td = tr.createEl("td", { attr: { colspan: String(PROJECT_TABLE_COLS) } });
+        if (this.renderProjectGroupHead(td, g, groupIcons)) continue;
+      }
+      for (const sum of g.items) this.renderProjectTableRow(body, sum);
+    }
+  }
+
+  /** テーブル表示のプロジェクト1件分（行 + 展開時の子タスク行） */
+  private renderProjectTableRow(body: HTMLElement, sum: ProjectSummary): void {
+    const expanded = this.expandedProjects.has(sum.ref.linktext);
+    const tr = body.createEl("tr", { cls: "dt-project-trow" });
+    tr.toggleClass("is-expanded", expanded);
+    const nameTd = tr.createEl("td", { cls: "dt-ptc-name" });
+    const nameWrap = nameTd.createDiv("dt-ptc-name-wrap");
+    const chev = nameWrap.createDiv("dt-project-chevron");
+    setIcon(chev, expanded ? "chevron-down" : "chevron-right");
+    nameWrap.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    const fields = sum.fields;
+    if (fields?.ticket) this.renderProjectTicketBadge(nameWrap, fields.ticket);
+    const dueTd = tr.createEl("td", { cls: "dt-ptc-due" });
+    if (fields?.due) {
+      const dueEl = dueTd.createSpan({ cls: "dt-project-due", text: this.projectDueLabel(fields) });
+      if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
+    }
+    const total = sum.children.length;
+    tr.createEl("td", { cls: "dt-ptc-num", text: total ? `${sum.doneCount}/${total}` : "–" });
+    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.planMin) });
+    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.actMin) });
+    const actionsWrap = tr.createEl("td", { cls: "dt-ptc-actions" }).createDiv("dt-ptc-actions-wrap");
+    this.renderProjectActions(actionsWrap, sum);
+    this.attachProjectRowBehavior(tr, chev, sum);
+
+    if (!expanded) return;
+    const detailCell = (): HTMLElement =>
+      body
+        .createEl("tr", { cls: "dt-project-detail-trow" })
+        .createEl("td", { attr: { colspan: String(PROJECT_TABLE_COLS) } });
+    if (fields?.docs.length) this.renderProjectDocs(detailCell(), sum, fields.docs);
+    const shown = this.visibleProjectChildren(sum);
+    if (!sum.children.length) {
+      detailCell().createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
+    } else if (!shown.length) {
+      detailCell().createSpan({
+        cls: "dt-tray-empty",
+        text: `完了済み ${sum.children.length} 件を非表示`,
+      });
+    }
+    for (const child of shown) this.renderProjectChildTableRow(body, child);
+  }
+
+  /** テーブル表示の子タスク1行（日付・予定・実績を親と同じ列に揃える） */
+  private renderProjectChildTableRow(body: HTMLElement, child: ProjectChild): void {
+    const t = child.task;
+    const tr = body.createEl("tr", { cls: "dt-project-child-trow" });
+    tr.toggleClass("is-done", t.done);
+    const wrap = tr.createEl("td", { cls: "dt-ptc-name" }).createDiv("dt-ptc-child");
+    this.renderChildCheckbox(wrap, child);
+    wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+    const dateTd = tr.createEl("td", { cls: "dt-ptc-due" });
+    this.renderChildDateBadge(dateTd, child);
+    tr.createEl("td", { cls: "dt-ptc-num" }); // 進捗の列（子タスクでは空）
+    const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
+    const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
+    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(plan) });
+    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(act) });
+    tr.createEl("td", { cls: "dt-ptc-actions" });
+    this.attachProjectChildBehavior(tr, child);
+  }
+
+  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をツリー表示のパネルへ描画する */
   private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
-    const key = sum.ref.linktext;
-    const expanded = this.expandedProjects.has(key);
+    const expanded = this.expandedProjects.has(sum.ref.linktext);
 
     const row = container.createDiv("dt-project-row");
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    const name = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
     if (fields?.due) {
-      const dueLabel = fields.dueDate
-        ? moment(fields.dueDate).format(
-            moment(fields.dueDate).year() === moment().year() ? "M/D" : "YYYY/M/D"
-          )
-        : fields.due;
-      const dueEl = row.createSpan({ cls: "dt-project-due", text: `期日 ${dueLabel}` });
-      if (fields.dueDate && fields.dueDate.getTime() < startOfDay(new Date()).getTime())
-        dueEl.addClass("is-overdue");
+      const dueEl = row.createSpan({
+        cls: "dt-project-due",
+        text: `期日 ${this.projectDueLabel(fields)}`,
+      });
+      if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
     }
-    if (fields?.ticket) {
-      const t = fields.ticket;
-      const badge = row.createSpan({ cls: "dt-project-ticket", text: `#${t.id}` });
-      const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
-      badge.setAttr("aria-label", `${t.tracker || "チケット"} #${t.id}` + (url ? `\n${url}` : ""));
-      if (url) {
-        badge.addClass("is-linked");
-        badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-        badge.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          window.open(url);
-        });
-      }
-    }
+    if (fields?.ticket) this.renderProjectTicketBadge(row, fields.ticket);
     const stats = row.createSpan({ cls: "dt-project-stats" });
-    // 予実の合計は行が見づらくなるため出さない（プロジェクトノートのタスク一覧・予実レポートで見られる）
+    // 予実の合計は行が見づらくなるため出さない（テーブル表示・プロジェクトノートのタスク一覧・予実レポートで見られる）
     stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
     if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
     // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
-    const openBtn = this.iconButton(row, "arrow-up-right", "プロジェクトノートを開く", () =>
+    this.renderProjectActions(row, sum);
+    this.attachProjectRowBehavior(row, chev, sum);
+
+    if (!expanded) return;
+    const childrenEl = container.createDiv("dt-project-children");
+    // プロジェクトのドキュメント（ノートの「- ドキュメント: [[...]]」行）を子タスクの上に並べる
+    if (fields?.docs.length) this.renderProjectDocs(childrenEl, sum, fields.docs);
+    const shown = this.visibleProjectChildren(sum);
+    if (!sum.children.length) {
+      childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
+    } else if (!shown.length) {
+      childrenEl.createSpan({
+        cls: "dt-tray-empty",
+        text: `完了済み ${sum.children.length} 件を非表示`,
+      });
+    }
+    for (const child of shown) {
+      const t = child.task;
+      const item = childrenEl.createDiv("dt-project-child");
+      item.toggleClass("is-done", t.done);
+      this.renderChildCheckbox(item, child);
+      this.renderChildDateBadge(item, child);
+      item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+      // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップとテーブル表示で見られる
+      this.attachProjectChildBehavior(item, child);
+    }
+  }
+
+  /** プロジェクトの期日の表示文字列（日付として読めれば M/D、年が違えば YYYY/M/D、読めなければ書かれたまま） */
+  private projectDueLabel(fields: ProjectFields): string {
+    return fields.dueDate
+      ? moment(fields.dueDate).format(
+          moment(fields.dueDate).year() === moment().year() ? "M/D" : "YYYY/M/D"
+        )
+      : fields.due;
+  }
+
+  /** プロジェクトの期日が過ぎているか */
+  private projectDueIsOverdue(fields: ProjectFields): boolean {
+    return !!fields.dueDate && fields.dueDate.getTime() < startOfDay(new Date()).getTime();
+  }
+
+  /** プロジェクトのチケットバッジ（クリックでブラウザで開く） */
+  private renderProjectTicketBadge(parent: HTMLElement, t: TicketRef): void {
+    const badge = parent.createSpan({ cls: "dt-project-ticket", text: `#${t.id}` });
+    const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
+    badge.setAttr("aria-label", `${t.tracker || "チケット"} #${t.id}` + (url ? `\n${url}` : ""));
+    if (url) {
+      badge.addClass("is-linked");
+      badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+      badge.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        window.open(url);
+      });
+    }
+  }
+
+  /** プロジェクト行の操作ボタン（ノートを開く・タスクを追加・完了にする）。ツリー・テーブル共通 */
+  private renderProjectActions(parent: HTMLElement, sum: ProjectSummary): void {
+    const key = sum.ref.linktext;
+    const openBtn = this.iconButton(parent, "arrow-up-right", "プロジェクトノートを開く", () =>
       void this.plugin.openProject(key)
     );
     openBtn.addClass("dt-project-open");
     const addBtn = this.iconButton(
-      row,
+      parent,
       "plus",
       "このプロジェクトのタスクを追加（時刻を入れなければ日付未定で登録）",
       () => this.openProjectCreateModal(key)
     );
     addBtn.addClass("dt-project-add");
-    const doneBtn = this.iconButton(row, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
+    const doneBtn = this.iconButton(parent, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
       const projects = this.plugin.projects;
       if (!projects) return;
       const run = async () => {
@@ -1691,7 +1888,11 @@ export class DayTimelineView extends ItemView {
       }
     });
     doneBtn.addClass("dt-project-done-btn");
+  }
 
+  /** プロジェクト行のふるまい（クリックで展開・ドラッグで子タスク作成・右クリックメニュー）。ツリー・テーブル共通 */
+  private attachProjectRowBehavior(row: HTMLElement, chev: HTMLElement, sum: ProjectSummary): void {
+    const key = sum.ref.linktext;
     const toggleExpand = () => {
       if (this.expandedProjects.has(key)) this.expandedProjects.delete(key);
       else this.expandedProjects.add(key);
@@ -1708,111 +1909,112 @@ export class DayTimelineView extends ItemView {
       if (this.touchDragging) return;
       this.showProjectMenu(sum, e);
     });
+  }
 
-    if (!expanded) return;
-    const childrenEl = container.createDiv("dt-project-children");
-    // プロジェクトのドキュメント（ノートの「- ドキュメント: [[...]]」行）を子タスクの上に並べる
-    if (fields?.docs.length) {
-      const docsEl = childrenEl.createDiv("dt-project-docs");
-      for (const doc of fields.docs) {
-        const chip = docsEl.createDiv("dt-project-doc");
-        const iconEl = chip.createSpan("dt-project-doc-icon");
-        setIcon(iconEl, doc.external ? "external-link" : "file-text");
-        chip.createSpan({ cls: "dt-project-doc-label", text: doc.label });
-        chip.setAttr("aria-label", `ドキュメント: ${doc.target}\nクリックで開く`);
-        chip.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.openProjectDoc(sum, doc);
-        });
-      }
+  /** プロジェクトのドキュメントのチップを並べる。ツリー・テーブル共通 */
+  private renderProjectDocs(parent: HTMLElement, sum: ProjectSummary, docs: ProjectDoc[]): void {
+    const docsEl = parent.createDiv("dt-project-docs");
+    for (const doc of docs) {
+      const chip = docsEl.createDiv("dt-project-doc");
+      const iconEl = chip.createSpan("dt-project-doc-icon");
+      setIcon(iconEl, doc.external ? "external-link" : "file-text");
+      chip.createSpan({ cls: "dt-project-doc-label", text: doc.label });
+      chip.setAttr("aria-label", `ドキュメント: ${doc.target}\nクリックで開く`);
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.openProjectDoc(sum, doc);
+      });
     }
-    // 「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない
-    const shown = this.plugin.settings.projectsHideDone
+  }
+
+  /** 展開時に見せる子タスク。「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない */
+  private visibleProjectChildren(sum: ProjectSummary): ProjectChild[] {
+    return this.plugin.settings.projectsHideDone
       ? sum.children.filter((c) => !c.task.done && !c.task.forwarded)
       : sum.children;
-    if (!sum.children.length) {
-      childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
-    } else if (!shown.length) {
-      childrenEl.createSpan({
-        cls: "dt-tray-empty",
-        text: `完了済み ${sum.children.length} 件を非表示`,
-      });
-    }
-    for (const child of shown) {
-      const t = child.task;
-      const item = childrenEl.createDiv("dt-project-child");
-      item.toggleClass("is-done", t.done);
-      const box = item.createDiv("dt-tray-check");
-      setIcon(box, iconName(t.done ? "check-square" : "square"));
-      box.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
-        else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
-      });
-      const dateEl = item.createSpan({
-        cls: "dt-project-child-date",
-        text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "未定",
-      });
-      // 日時が決まっていないものは破線のバッジで見分ける（日付ごと未定はアクセント色）
-      const scheduled = t.start !== null && t.end !== null;
-      if (child.date === null) dateEl.addClass("is-undated");
-      else if (!scheduled) dateEl.addClass("is-unscheduled");
-      item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-      // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップでだけ見られる
-      const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
-      const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
-      item.setAttr(
-        "aria-label",
-        `${t.title || "(無題)"}\n` +
-          (child.date
-            ? moment(child.date).format("M月D日 (ddd)") +
-              (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
-            : "日付は未定") +
-          (plan || act ? `\n実績 ${act ? hmm(act) : "–"} / 予定 ${plan ? hmm(plan) : "–"}` : "") +
-          (child.date
-            ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
-            : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
+  }
+
+  /** 子タスクの完了チェックボックス。ツリー・テーブル共通 */
+  private renderChildCheckbox(parent: HTMLElement, child: ProjectChild): void {
+    const t = child.task;
+    const box = parent.createDiv("dt-tray-check");
+    setIcon(box, iconName(t.done ? "check-square" : "square"));
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
+      else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
+    });
+  }
+
+  /** 子タスクの日付バッジ。日時が決まっていないものは破線のバッジで見分ける（日付ごと未定はアクセント色） */
+  private renderChildDateBadge(parent: HTMLElement, child: ProjectChild): void {
+    const t = child.task;
+    const dateEl = parent.createSpan({
+      cls: "dt-project-child-date",
+      text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "未定",
+    });
+    const scheduled = t.start !== null && t.end !== null;
+    if (child.date === null) dateEl.addClass("is-undated");
+    else if (!scheduled) dateEl.addClass("is-unscheduled");
+  }
+
+  /** 子タスク行のふるまい（ツールチップ・ドラッグ・クリック・右クリックメニュー）。ツリー・テーブル共通 */
+  private attachProjectChildBehavior(item: HTMLElement, child: ProjectChild): void {
+    const t = child.task;
+    const scheduled = t.start !== null && t.end !== null;
+    const plan = scheduled ? t.end! - t.start! : 0;
+    const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
+    item.setAttr(
+      "aria-label",
+      `${t.title || "(無題)"}\n` +
+        (child.date
+          ? moment(child.date).format("M月D日 (ddd)") +
+            (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
+          : "日付は未定") +
+        (plan || act ? `\n実績 ${act ? hmm(act) : "–"} / 予定 ${plan ? hmm(plan) : "–"}` : "") +
+        (child.date
+          ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
+          : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
+    );
+    if (child.date === null) {
+      // 日付未定: タイムラインへドラッグで日時を割り当て、クリックで編集できるようにする
+      this.attachChipDrag(
+        item,
+        ".dt-tray-check",
+        () => this.displayTitle(t),
+        (date, start, end) =>
+          void this.commitInboxToDay(t, date, { ...this.draftOf(t), start, end }),
+        () => this.openInboxEditModal(t)
       );
-      if (child.date === null) {
-        // 日付未定: タイムラインへドラッグで日時を割り当て、クリックで編集できるようにする
-        this.attachChipDrag(
-          item,
-          ".dt-tray-check",
-          () => this.displayTitle(t),
-          (date, start, end) =>
-            void this.commitInboxToDay(t, date, { ...this.draftOf(t), start, end }),
-          () => this.openInboxEditModal(t)
-        );
-        item.addEventListener("contextmenu", (e: MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (this.touchDragging) return;
-          this.showInboxTaskMenu(t, e);
-        });
-      } else {
-        const childDate = child.date;
-        this.attachChipDrag(
-          item,
-          ".dt-tray-check",
-          () => this.displayTitle(t),
-          (date, start, end) => {
-            const draft = { ...this.draftOf(t), start, end };
-            if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
-            else void this.commitMove(childDate, t, date, draft);
-          },
-          () => {
-            this.setDate(childDate);
-            // 狭い画面では移動した先が見えるよう、タイムラインへ切り替える
-            if (this.isNarrow) this.setNarrowPane("timeline");
-          }
-        );
-        item.addEventListener("contextmenu", (e: MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (this.touchDragging) return;
-          this.showTaskMenu(childDate, t, e);
-        });
-      }
+      item.addEventListener("contextmenu", (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.touchDragging) return;
+        this.showInboxTaskMenu(t, e);
+      });
+    } else {
+      const childDate = child.date;
+      this.attachChipDrag(
+        item,
+        ".dt-tray-check",
+        () => this.displayTitle(t),
+        (date, start, end) => {
+          const draft = { ...this.draftOf(t), start, end };
+          if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
+          else void this.commitMove(childDate, t, date, draft);
+        },
+        () => {
+          this.setDate(childDate);
+          // 狭い画面では移動した先が見えるよう、タイムラインへ切り替える
+          if (this.isNarrow) this.setNarrowPane("timeline");
+        }
+      );
+      item.addEventListener("contextmenu", (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.touchDragging) return;
+        this.showTaskMenu(childDate, t, e);
+      });
     }
   }
 

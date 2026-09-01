@@ -100,6 +100,11 @@ export default class DayTimelinePlugin extends Plugin {
       (v) => v.toggleProjectsFlatList()
     );
     viewCommand(
+      "timeline-projects-toggle-style",
+      "タイムスケジュール: プロジェクト一覧のツリー表示 / テーブル表示を切り替える",
+      (v) => v.toggleProjectsViewStyle()
+    );
+    viewCommand(
       "timeline-toggle-pane",
       "タイムスケジュール: タイムライン / パネルを切り替える（狭い画面）",
       (v) => v.toggleNarrowPane()
