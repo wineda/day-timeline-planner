@@ -198,10 +198,12 @@ export class DayTimelineView extends ItemView {
   private shouldScroll = true;
   private reloadDebounced: () => void;
   private syncCursorDebounced: () => void;
-  /** Ctrl+ホイールのズーム: フレームごとにまとめて反映するための適用待ちの倍率と位置 */
-  private wheelZoomFactor = 1;
-  private wheelZoomClientY = 0;
-  private wheelZoomRaf: number | null = null;
+  /** ズーム（Ctrl+ホイール・タッチのピンチ）: フレームごとにまとめて反映するための適用待ちの倍率と位置 */
+  private pendingZoomFactor = 1;
+  private pendingZoomClientY = 0;
+  private pendingZoomRaf: number | null = null;
+  /** タッチの2本指ピンチでズーム中（タップ・長押し・スワイプを抑止する） */
+  private pinchZooming = false;
   /** ホイールの1ノッチごとに設定ファイルへ書かないよう、保存はまとめて行う */
   private persistZoomDebounced: () => void;
 
@@ -652,6 +654,7 @@ export class DayTimelineView extends ItemView {
     this.scrollEl = main.createDiv("dt-scroll");
     this.attachSwipeNavigation();
     this.attachWheelZoom();
+    this.attachPinchZoom();
 
     // 狭い画面用: 右下の「＋」ボタン（Google カレンダー方式）。ツールバーの＋の代わり
     const fab = main.createEl("button", { cls: "dt-fab", attr: { "aria-label": "タスクを追加" } });
@@ -679,8 +682,8 @@ export class DayTimelineView extends ItemView {
         };
         const onMove = (ev: PointerEvent) => {
           if (ev.pointerId !== id) return;
-          // 長押しから始まったドラッグ（タスク移動・範囲作成）中はスワイプしない
-          if (this.interacting) {
+          // 長押しから始まったドラッグ（タスク移動・範囲作成）中と2本指ピンチ中はスワイプしない
+          if (this.interacting || this.pinchZooming) {
             cleanup();
             return;
           }
@@ -750,24 +753,121 @@ export class DayTimelineView extends ItemView {
         if (this.interacting) return; // ドラッグ中に縮尺が変わると座標計算が狂う
         // deltaMode は 0=px / 1=行 / 2=ページ（Chromium は px だが念のため換算する）
         const dy = ev.deltaY * (ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 300 : 1);
-        this.wheelZoomFactor *= Math.exp(-dy * WHEEL_ZOOM_INTENSITY);
-        this.wheelZoomClientY = ev.clientY;
-        // wheel は1ノッチでも連続して発火する。グリッドの作り直しは重いのでフレームごとに1回にまとめる
-        if (this.wheelZoomRaf == null) {
-          this.wheelZoomRaf = requestAnimationFrame(() => {
-            this.wheelZoomRaf = null;
-            this.applyWheelZoom();
-          });
-        }
+        this.pendingZoomFactor *= Math.exp(-dy * WHEEL_ZOOM_INTENSITY);
+        this.pendingZoomClientY = ev.clientY;
+        this.schedulePendingZoom();
       },
       { passive: false }
     );
   }
 
-  /** ためておいたホイールぶんの拡大縮小を、ポインタ位置の時刻を保ったまま反映する */
-  private applyWheelZoom(): void {
-    const factor = this.wheelZoomFactor;
-    this.wheelZoomFactor = 1;
+  /**
+   * タッチの2本指ピンチで時間軸を拡大・縮小する（モバイル向け。Google カレンダー方式）。
+   * 指の間隔の変化を倍率にし、2本指の中間点の時刻を保ったまま縮尺を変える
+   * （中間点が動けばその分だけ追従するので、ピンチしながらのスクロールも自然につながる）。
+   *
+   * 注意: ズームのたびにグリッドは作り直されるため、touchstart した要素はピンチの途中で
+   * DOM から外れる。touch イベントは外れた後もその要素にだけ届き続け、scrollEl へは
+   * バブルしなくなるので、move / end は開始時点の各タッチの target に直接付ける
+   */
+  private attachPinchZoom(): void {
+    /** ピンチ中に move / end リスナを付けた要素（終了時に外す）。SVG（アイコン）上の
+     * タッチもあり得るので HTMLElement に限らない */
+    let attachedEls: GlobalEventHandlers[] = [];
+    /** 直前のフレームでの2本指の間隔（px） */
+    let lastDist = 0;
+
+    const distOf = (ev: TouchEvent): number => {
+      const a = ev.touches[0];
+      const b = ev.touches[1];
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    };
+
+    const detach = () => {
+      for (const el of attachedEls) {
+        el.removeEventListener("touchmove", onMove);
+        el.removeEventListener("touchend", onEnd);
+        el.removeEventListener("touchcancel", onEnd);
+      }
+      attachedEls = [];
+    };
+
+    const onMove = (ev: TouchEvent) => {
+      if (!this.pinchZooming) return;
+      if (ev.touches.length < 2) return;
+      // ブラウザにスクロールを始めさせない（すでにスクロール中だと cancelable でないことがある）
+      if (ev.cancelable) ev.preventDefault();
+      ev.stopPropagation();
+      const d = distOf(ev);
+      if (lastDist > 0 && d > 0) {
+        this.pendingZoomFactor *= d / lastDist;
+        this.pendingZoomClientY = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
+        this.schedulePendingZoom();
+      }
+      lastDist = d;
+    };
+
+    const onEnd = (ev: TouchEvent) => {
+      if (!this.pinchZooming) return;
+      if (ev.touches.length >= 2) {
+        // 3本目以降の指が離れただけ。間隔を測り直して続ける（外れた指の分で跳ねないように）
+        lastDist = distOf(ev);
+        return;
+      }
+      this.pinchZooming = false;
+      detach();
+      // ピンチ後に残った指へブラウザが合成する click が、指の位置のタスクや空き時間に
+      // 当たって編集・チップ表示が誤発動しないように握りつぶす
+      this.swallowNextClick();
+    };
+
+    this.scrollEl.addEventListener(
+      "touchstart",
+      (ev: TouchEvent) => {
+        if (ev.touches.length !== 2) return; // 2本目が置かれた瞬間だけ開始
+        if (this.mode === "month" || this.interacting || this.pinchZooming) return;
+        // ev.touches は画面全体のタッチ。1本目がパネルなどタイムラインの外にあるなら
+        // ピンチにしない（パネルのスクロールを止めてしまわないように）
+        for (let i = 0; i < ev.touches.length; i++) {
+          const t = ev.touches[i].target;
+          if (!(t instanceof Node) || !this.scrollEl.contains(t)) return;
+        }
+        this.pinchZooming = true;
+        this.dismissTouchChip();
+        this.canvasTapArmed = false;
+        lastDist = distOf(ev);
+        // 2本目の指でのネイティブ動作（スクロール開始・合成 click）を止める。
+        // 1本目の touchstart は通常どおり通しているので、1本指のスクロールは妨げない
+        if (ev.cancelable) ev.preventDefault();
+        ev.stopPropagation();
+        for (let i = 0; i < ev.touches.length; i++) {
+          const t = ev.touches[i].target;
+          const el: GlobalEventHandlers =
+            t instanceof HTMLElement || t instanceof SVGElement ? t : this.scrollEl;
+          if (attachedEls.includes(el)) continue;
+          attachedEls.push(el);
+          el.addEventListener("touchmove", onMove, { passive: false });
+          el.addEventListener("touchend", onEnd);
+          el.addEventListener("touchcancel", onEnd);
+        }
+      },
+      { passive: false, capture: true }
+    );
+  }
+
+  /** ためておいたズームぶんの反映を次のフレームに予約する（グリッドの作り直しは重いのでまとめる） */
+  private schedulePendingZoom(): void {
+    if (this.pendingZoomRaf != null) return;
+    this.pendingZoomRaf = requestAnimationFrame(() => {
+      this.pendingZoomRaf = null;
+      this.applyPendingZoom();
+    });
+  }
+
+  /** ためておいたホイール・ピンチぶんの拡大縮小を、ポインタ位置の時刻を保ったまま反映する */
+  private applyPendingZoom(): void {
+    const factor = this.pendingZoomFactor;
+    this.pendingZoomFactor = 1;
     if (this.mode === "month" || !this.scrollEl?.isConnected) return;
     const s = this.plugin.settings;
     const next = clamp(this.hourHeightPx * factor, MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT);
@@ -777,7 +877,7 @@ export class DayTimelineView extends ItemView {
     s.zoomHours = 0;
     s.hourHeight = Math.round(next * 10) / 10;
     this.persistZoomDebounced();
-    this.rebuildTimeline(this.wheelZoomClientY);
+    this.rebuildTimeline(this.pendingZoomClientY);
   }
 
   /**
@@ -3160,6 +3260,9 @@ export class DayTimelineView extends ItemView {
     };
     const timer = window.setTimeout(() => {
       cleanup();
+      // 2本指ピンチが始まっていたら長押しにしない（指をあまり動かさないピンチで
+      // ドラッグが誤って始まらないように）
+      if (this.pinchZooming) return;
       navigator.vibrate?.(15);
       h.onLongPress();
     }, LONG_PRESS_MS);
