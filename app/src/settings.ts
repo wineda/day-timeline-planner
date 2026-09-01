@@ -11,6 +11,9 @@ export type ViewMode = "day" | "3day" | "week" | "month";
 /** 左サイドバーのタブ */
 export type SidebarTab = "inbox" | "projects" | "reschedule";
 
+/** プロジェクトパネルの表示形式（ツリー / テーブル） */
+export type ProjectsViewStyle = "tree" | "table";
+
 /** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
 export type PlanActualMode = "plan" | "both" | "actual";
 
@@ -278,6 +281,8 @@ export interface DayTimelineSettings {
   projectsHideDone: boolean;
   /** プロジェクトパネルでグループの見出し（階層）を出さずフラットな一覧にするか。並びはグループ順のまま */
   projectsFlatList: boolean;
+  /** プロジェクトパネルの表示形式（tree = ツリー / table = 期日・進捗・予定・実績を列に並べるテーブル） */
+  projectsViewStyle: ProjectsViewStyle;
   /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
   projectGroups: ProjectGroupSetting[];
   /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
@@ -345,6 +350,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showProjects: true,
   projectsHideDone: false,
   projectsFlatList: false,
+  projectsViewStyle: "tree",
   projectGroups: [],
   defaultGroupIcon: "folder",
   sidebarWidth: 220,
@@ -417,6 +423,7 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   delete (s as unknown as Record<string, unknown>).defaultProjectIcon;
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
   if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
+  if (s.projectsViewStyle !== "table") s.projectsViewStyle = "tree";
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -1135,6 +1142,22 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           s.projectsFlatList = v;
           await save();
         })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトの表示形式")
+      .setDesc(
+        "ツリーは1行に名前と進捗をまとめたコンパクトな表示、テーブルは期日・進捗・予定・実績を列に並べて見比べられる表示です。" +
+          "パネルの表ボタンでも切り替えられます。テーブルはサイドバーの右端をドラッグして広げると見やすくなります。"
+      )
+      .addDropdown((d) =>
+        d
+          .addOption("tree", "ツリー")
+          .addOption("table", "テーブル")
+          .setValue(s.projectsViewStyle)
+          .onChange(async (v) => {
+            s.projectsViewStyle = v === "table" ? "table" : "tree";
+            await save();
+          })
       );
     // ツリーのグループ見出しに出す既定のアイコン。プレビュー付きの入力欄
     {

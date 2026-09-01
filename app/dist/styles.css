@@ -798,6 +798,118 @@
   white-space: nowrap;
 }
 
+/* ---------- プロジェクトのテーブル表示（期日・進捗・予定・実績を列で見比べる） ---------- */
+/* リスト自体を余白なしのスクロール領域にして、表をパネルの幅いっぱいに使う */
+.dt-projects-list.is-table {
+  padding: 0 0 8px;
+  overflow: auto; /* 列が収まらない幅では横スクロール */
+}
+.dt-projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+}
+.dt-projects-table th,
+.dt-projects-table td {
+  padding: 3px 6px;
+  white-space: nowrap;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+/* 見出し行は縦スクロールしても上に貼り付く */
+.dt-projects-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+/* 名前の列に余りを全部渡し、収まらない名前は省略記号にする（max-width: 0 は table のための定石） */
+.dt-projects-table .dt-ptc-name {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-projects-table .dt-ptc-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.dt-projects-table td.dt-ptc-num {
+  color: var(--text-muted);
+}
+.dt-projects-table td.dt-ptc-due .dt-project-due {
+  border: none;
+  padding: 0;
+  font-size: 1em;
+}
+/* 名前セルの中身（チェブロン + 名前 + チケット）と子タスクセル（チェック + タイトル） */
+.dt-ptc-name-wrap,
+.dt-ptc-child {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.dt-ptc-child {
+  padding-left: 14px; /* 親の名前より一段下げて、子タスクだと分かるように */
+}
+/* プロジェクトの行: ツリーと同じくつかんでタイムラインへドラッグできる */
+.dt-project-trow {
+  cursor: grab;
+  user-select: none;
+}
+.dt-project-trow:hover > td {
+  background: var(--background-modifier-hover);
+}
+.dt-project-trow.is-dragging {
+  opacity: 0.5;
+}
+.dt-project-trow .dt-icon-btn {
+  padding: 1px;
+}
+.dt-project-trow .dt-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-ptc-actions-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+/* 子タスクの行 */
+.dt-project-child-trow {
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+}
+.dt-project-child-trow:hover > td {
+  background: var(--background-modifier-hover);
+}
+.dt-project-child-trow.is-dragging {
+  opacity: 0.6;
+}
+.dt-project-child-trow.is-done .dt-tray-title {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+.dt-project-child-trow .dt-tray-title {
+  flex: 1 1 auto;
+}
+/* グループの見出し行・展開中の詳細行（ドキュメント・空の案内）は表の線を出さない */
+.dt-project-group-trow td {
+  padding: 2px 2px 0;
+  border-bottom: none;
+}
+.dt-project-detail-trow td {
+  padding: 2px 6px 2px 20px;
+  border-bottom: none;
+}
+
 /* ---------- 再スケジュールのタブの中身（時刻を決めていないタスク） ---------- */
 .dt-reschedule {
   flex: 1 1 auto;
