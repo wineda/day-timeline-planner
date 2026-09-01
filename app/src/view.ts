@@ -1758,14 +1758,9 @@ export class DayTimelineView extends ItemView {
       if (child.date === null) dateEl.addClass("is-undated");
       else if (!scheduled) dateEl.addClass("is-unscheduled");
       item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+      // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップでだけ見られる
       const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
       const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
-      if (plan || act) {
-        item.createSpan({
-          cls: "dt-project-child-times",
-          text: `${plan ? hmm(plan) : "–"}/${act ? hmm(act) : "–"}`,
-        });
-      }
       item.setAttr(
         "aria-label",
         `${t.title || "(無題)"}\n` +
@@ -1773,6 +1768,7 @@ export class DayTimelineView extends ItemView {
             ? moment(child.date).format("M月D日 (ddd)") +
               (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
             : "日付は未定") +
+          (plan || act ? `\n実績 ${act ? hmm(act) : "–"} / 予定 ${plan ? hmm(plan) : "–"}` : "") +
           (child.date
             ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
             : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
