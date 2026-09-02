@@ -688,7 +688,7 @@
   white-space: nowrap;
   font-size: var(--font-ui-small);
 }
-/* プロジェクト名の Ctrl/Cmd + ホバーで出すプロジェクトノートのプレビュー（ページプレビューのポップアップ）。
+/* プロジェクト名の Ctrl/Cmd + クリックで出すプロジェクトノートのプレビュー（ページプレビューのポップアップ）。
    ノートのタスク一覧（表）やメモが読みやすいよう、通常のプレビュー（既定 450×400px）より一回り大きくする。
    クラスは view.ts の ProjectHoverParent がポップアップに付ける（タスクブロックのプレビューは対象外） */
 .popover.hover-popover.dt-project-preview {
@@ -763,16 +763,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.dt-project-row .dt-icon-btn {
-  padding: 1px;
-}
-.dt-project-row .dt-icon-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.dt-project-done-btn:hover {
-  color: var(--color-green);
 }
 .dt-project-children {
   margin: 0 0 4px 16px;
@@ -902,19 +892,6 @@
 }
 .dt-project-trow.is-dragging {
   opacity: 0.5;
-}
-.dt-project-trow .dt-icon-btn {
-  padding: 1px;
-}
-.dt-project-trow .dt-icon-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.dt-ptc-actions-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
 }
 /* 子タスクの行 */
 .dt-project-child-trow {

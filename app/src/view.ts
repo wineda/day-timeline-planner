@@ -70,10 +70,9 @@ import {
 
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
 
-/** プロジェクト名のホバープレビューの hover-link ソース ID。
- * タスクブロックのプレビュー（VIEW_TYPE_DAY_TIMELINE）と同じく Ctrl/Cmd + ホバーで出す。
- * 修飾キーはプラグイン側（attachProjectHoverPreview）でも判定するので、
- * ページプレビューの設定にかかわらず、修飾キーなしのホバーでは出ない */
+/** プロジェクト名のノートプレビューの hover-link ソース ID。
+ * ホバーではなく Ctrl/Cmd + クリックで出す（showProjectPreview）。表示自体はコアプラグイン
+ * 「ページプレビュー」に任せるため、hover-link のソースとして登録しておく */
 export const PROJECT_HOVER_SOURCE = "day-timeline-planner-project";
 
 /** プロジェクトノートのプレビューのポップアップに付けるクラス（styles.css で通常のプレビューより大きく表示する） */
@@ -139,8 +138,8 @@ const SIDEBAR_MIN_WIDTH = 160;
 /** サイドバーの幅の上限（px）。実際の上限はビューの幅からも決まる（maxSidebarWidth） */
 const SIDEBAR_MAX_WIDTH = 800;
 
-/** プロジェクトのテーブル表示の列数（名前・期日・進捗・予定・実績・操作） */
-const PROJECT_TABLE_COLS = 6;
+/** プロジェクトのテーブル表示の列数（名前・期日・進捗・予定・実績） */
+const PROJECT_TABLE_COLS = 5;
 
 /** タッチでこれ以上（px）動いたら「タップ・長押し」ではなくスクロール等とみなす */
 const TOUCH_SLOP = 10;
@@ -1670,12 +1669,12 @@ export class DayTimelineView extends ItemView {
         // プロジェクトがパネルに出ていない（完了済み・見つからない）ため Inbox に出ているタスク
         const link = t.project;
         const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
-        // ツールチップの代わりに、ホバーでプロジェクトノートをプレビュー表示（クリックで開く）
-        this.attachProjectHoverPreview(badge, link);
+        // クリックでノートを開く。Ctrl/Cmd + クリックならポップアップでプレビュー
         badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
         badge.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          void this.plugin.openProject(link);
+          if (ev.ctrlKey || ev.metaKey) this.showProjectPreview(badge, link, ev);
+          else void this.plugin.openProject(link);
         });
       }
       chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
@@ -1926,7 +1925,6 @@ export class DayTimelineView extends ItemView {
     headRow.createEl("th", { text: "進捗", cls: "dt-ptc-num" });
     headRow.createEl("th", { text: "予定", cls: "dt-ptc-num" });
     headRow.createEl("th", { text: "実績", cls: "dt-ptc-num" });
-    headRow.createEl("th", { cls: "dt-ptc-actions" });
     const body = table.createEl("tbody");
     const groupIcons = this.groupIconMap();
     for (const g of groups) {
@@ -1949,8 +1947,8 @@ export class DayTimelineView extends ItemView {
     const chev = nameWrap.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
     const nameEl = nameWrap.createSpan({ cls: "dt-project-name", text: sum.ref.name });
-    // 名前にマウスを乗せるとプロジェクトノートをプレビュー表示
-    this.attachProjectHoverPreview(nameEl, sum.ref.linktext);
+    // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
+    this.attachProjectNamePreview(nameEl, sum.ref.linktext);
     const fields = sum.fields;
     if (fields?.ticket) this.renderProjectTicketBadge(nameWrap, fields.ticket);
     const dueTd = tr.createEl("td", { cls: "dt-ptc-due" });
@@ -1962,8 +1960,7 @@ export class DayTimelineView extends ItemView {
     tr.createEl("td", { cls: "dt-ptc-num", text: total ? `${sum.doneCount}/${total}` : "–" });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.planMin) });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.actMin) });
-    const actionsWrap = tr.createEl("td", { cls: "dt-ptc-actions" }).createDiv("dt-ptc-actions-wrap");
-    this.renderProjectActions(actionsWrap, sum);
+    // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
     this.attachProjectRowBehavior(tr, chev, sum);
 
     if (!expanded) return;
@@ -1999,7 +1996,6 @@ export class DayTimelineView extends ItemView {
     const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(plan) });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(act) });
-    tr.createEl("td", { cls: "dt-ptc-actions" });
     this.attachProjectChildBehavior(tr, child);
   }
 
@@ -2011,8 +2007,8 @@ export class DayTimelineView extends ItemView {
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
     const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
-    // 名前にマウスを乗せるとプロジェクトノートをプレビュー表示
-    this.attachProjectHoverPreview(nameEl, sum.ref.linktext);
+    // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
+    this.attachProjectNamePreview(nameEl, sum.ref.linktext);
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
@@ -2029,7 +2025,7 @@ export class DayTimelineView extends ItemView {
     stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
     if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
     // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
-    this.renderProjectActions(row, sum);
+    // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
     this.attachProjectRowBehavior(row, chev, sum);
 
     if (!expanded) return;
@@ -2086,46 +2082,32 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** プロジェクト行の操作ボタン（ノートを開く・タスクを追加・完了にする）。ツリー・テーブル共通 */
-  private renderProjectActions(parent: HTMLElement, sum: ProjectSummary): void {
+  /** プロジェクトを完了にする（右クリックメニューから。未完了のタスクが残っていれば確認する）。パネルから消える */
+  private completeProject(sum: ProjectSummary): void {
+    const projects = this.plugin.projects;
+    if (!projects) return;
     const key = sum.ref.linktext;
-    const openBtn = this.iconButton(parent, "arrow-up-right", "プロジェクトノートを開く", () =>
-      void this.plugin.openProject(key)
-    );
-    openBtn.addClass("dt-project-open");
-    const addBtn = this.iconButton(
-      parent,
-      "plus",
-      "このプロジェクトのタスクを追加（時刻を入れなければ日付未定で登録）",
-      () => this.openProjectCreateModal(key)
-    );
-    addBtn.addClass("dt-project-add");
-    const doneBtn = this.iconButton(parent, "check-circle-2", "プロジェクトを完了にする（パネルから消えます）", () => {
-      const projects = this.plugin.projects;
-      if (!projects) return;
-      const run = async () => {
-        const ok = await projects.setDone(key, true);
-        if (!ok) {
-          new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
-          return;
-        }
-        sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
-        new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
-        this.renderInbox();
-      };
-      const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
-      if (open) {
-        new ConfirmModal(
-          this.app,
-          `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
-          "完了にする",
-          run
-        ).open();
-      } else {
-        void run();
+    const run = async () => {
+      const ok = await projects.setDone(key, true);
+      if (!ok) {
+        new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
+        return;
       }
-    });
-    doneBtn.addClass("dt-project-done-btn");
+      sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
+      new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
+      this.renderInbox();
+    };
+    const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
+    if (open) {
+      new ConfirmModal(
+        this.app,
+        `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
+        "完了にする",
+        run
+      ).open();
+    } else {
+      void run();
+    }
   }
 
   /** プロジェクト行のふるまい（クリックで展開・ドラッグで子タスク作成・右クリックメニュー）。ツリー・テーブル共通 */
@@ -2279,10 +2261,22 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-  /** プロジェクト行の右クリックメニュー（チケット・ドキュメント・グループの付け替え） */
+  /** プロジェクト行の右クリックメニュー（ノートを開く・タスクを追加・チケット・ドキュメント・グループの付け替え・完了にする） */
   private showProjectMenu(sum: ProjectSummary, e: MouseEvent): void {
     if (!this.plugin.projects) return;
+    const key = sum.ref.linktext;
     const menu = new Menu();
+    // 行に操作アイコンは出さず、ここにまとめる（Ctrl/Cmd + クリックのプレビューは名前側）
+    menu.addItem((i) =>
+      i.setTitle("プロジェクトノートを開く").setIcon("arrow-up-right").onClick(() => void this.plugin.openProject(key))
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle("このプロジェクトのタスクを追加")
+        .setIcon("plus")
+        .onClick(() => this.openProjectCreateModal(key))
+    );
+    menu.addSeparator();
     // プロジェクト自身のチケット・ドキュメント
     const fields = sum.fields;
     let hasExtras = false;
@@ -2343,6 +2337,10 @@ export class DayTimelineView extends ItemView {
         i.setTitle("グループを外す").setIcon("x").onClick(() => void this.setProjectGroup(sum, null))
       );
     }
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i.setTitle("プロジェクトを完了にする").setIcon("check-circle-2").onClick(() => this.completeProject(sum))
+    );
     menu.showAtMouseEvent(e);
   }
 
@@ -2719,12 +2717,12 @@ export class DayTimelineView extends ItemView {
     if (task.project) {
       const link = task.project;
       const badge = el.createDiv({ cls: "dt-event-project", text: projectDisplayName(link) });
-      // ツールチップの代わりに、ホバーでプロジェクトノートをプレビュー表示（クリックで開く）
-      this.attachProjectHoverPreview(badge, link);
+      // クリックでノートを開く。Ctrl/Cmd + クリックならポップアップでプレビュー
       badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
       badge.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        void this.plugin.openProject(link);
+        if (ev.ctrlKey || ev.metaKey) this.showProjectPreview(badge, link, ev);
+        else void this.plugin.openProject(link);
       });
     }
     if (task.carryFrom) this.carryBadge(el, "◀ 前日から", task.carryFrom, "持ち越し元のブロックを開く");
@@ -3142,39 +3140,36 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * プロジェクト名を Ctrl/Cmd + ホバーしたら、プロジェクトノートをページプレビューでポップアップ表示する。
-   * ノートのタスク一覧やメモがその場で読める（クリックでノートを開く動作はそのまま）。
-   * マウスを乗せただけでは出さない（名前の上を通るたびにノートが次々に出てくるのを避ける）。
-   * ページプレビュー側の設定にかかわらず、ここで Ctrl/Cmd を判定してから hover-link を投げる。
+   * プロジェクトノートをページプレビューのポップアップで表示する（Ctrl/Cmd + クリックから呼ぶ）。
+   * ノートのタスク一覧やメモがその場で読める。ホバーでは出さない（名前の上を通るたびに
+   * ノートが次々に出てくるのを避ける）。ポップアップはマウスが名前かポップアップの上にある間は残る。
+   * 表示はコアプラグイン「ページプレビュー」が担う（クリックの MouseEvent に Ctrl/Cmd が付いているので、
+   * 修飾キー付きで登録したソースの判定も通る）
    */
-  private attachProjectHoverPreview(el: HTMLElement, linktext: string): void {
-    const show = (e: MouseEvent) => {
-      this.app.workspace.trigger("hover-link", {
-        event: e,
-        source: PROJECT_HOVER_SOURCE,
-        hoverParent: this.projectHoverParent,
-        targetEl: el,
-        linktext,
-      });
-    };
-    // 修飾キーなしで乗せたときは「押されたら出す」待ちにする。
-    // 乗せてから Ctrl/Cmd を押した場合も、押したまま少しマウスを動かせば出る
-    let waitingForMod = false;
-    el.addEventListener("mouseover", (e: MouseEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        waitingForMod = false;
-        show(e);
-      } else {
-        waitingForMod = true;
-      }
+  private showProjectPreview(targetEl: HTMLElement, linktext: string, e: MouseEvent): void {
+    this.app.workspace.trigger("hover-link", {
+      event: e,
+      source: PROJECT_HOVER_SOURCE,
+      hoverParent: this.projectHoverParent,
+      targetEl,
+      linktext,
     });
-    el.addEventListener("mousemove", (e: MouseEvent) => {
-      if (!waitingForMod || !(e.ctrlKey || e.metaKey)) return;
-      waitingForMod = false;
-      show(e);
+  }
+
+  /**
+   * パネルのプロジェクト名: Ctrl/Cmd + クリックでノートをプレビュー表示する。
+   * 素のクリックは行に任せる（展開 / 閉じる）。修飾キー付きのときは行側のポインタ処理
+   * （ドラッグ開始・離したときの展開）を始めないよう、pointerdown をここで止める
+   */
+  private attachProjectNamePreview(el: HTMLElement, linktext: string): void {
+    const isMod = (ev: MouseEvent) => ev.ctrlKey || ev.metaKey;
+    el.addEventListener("pointerdown", (ev: PointerEvent) => {
+      if (isMod(ev)) ev.stopPropagation();
     });
-    el.addEventListener("mouseleave", () => {
-      waitingForMod = false;
+    el.addEventListener("click", (ev: MouseEvent) => {
+      if (!isMod(ev)) return;
+      ev.stopPropagation();
+      this.showProjectPreview(el, linktext, ev);
     });
   }
 
