@@ -781,6 +781,11 @@
 .dt-project-child:hover {
   background: var(--background-modifier-hover);
 }
+/* クリックして選択中の子タスク（タイムラインの対応するブロックと同じアクセント色で結び付ける） */
+.dt-project-child.is-selected {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
 .dt-project-child.is-done .dt-tray-title {
   text-decoration: line-through;
   color: var(--text-faint);
@@ -950,6 +955,13 @@
 }
 .dt-project-child-trow:hover > td {
   background: var(--background-modifier-hover);
+}
+/* クリックして選択中の子タスクの行（ツリー表示の .dt-project-child.is-selected と同じ印） */
+.dt-project-child-trow.is-selected > td {
+  background: var(--background-modifier-hover);
+}
+.dt-project-child-trow.is-selected > td:first-child {
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
 }
 .dt-project-child-trow.is-dragging {
   opacity: 0.6;
@@ -1720,7 +1732,9 @@
   border: 1px dotted var(--background-modifier-border);
   cursor: default;
 }
-.dt-month-item.is-active-in-note {
+/* エディタのカーソルが乗っているタスク / パネルでクリックして選んだタスク */
+.dt-month-item.is-active-in-note,
+.dt-month-item.is-selected {
   box-shadow:
     0 0 0 2px var(--background-primary),
     0 0 0 4px var(--interactive-accent);
@@ -1788,12 +1802,31 @@
 .dt-event.is-done .dt-event-title {
   text-decoration: line-through;
 }
-/* エディタのカーソルが乗っているタスク */
-.dt-event.is-active-in-note {
+/* エディタのカーソルが乗っているタスク / パネル（プロジェクト一覧）でクリックして選んだタスク */
+.dt-event.is-active-in-note,
+.dt-event.is-selected {
   box-shadow:
     0 0 0 2px var(--background-primary),
     0 0 0 4px var(--interactive-accent);
   z-index: 4;
+}
+/* パネルで選んだ直後: 輪を2回またたかせて、どのブロックかを目で追えるようにする */
+.dt-event.is-just-selected,
+.dt-month-item.is-just-selected {
+  animation: dt-selected-pulse 0.7s ease-out 2;
+}
+@keyframes dt-selected-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--background-primary),
+      0 0 0 4px var(--interactive-accent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--background-primary),
+      0 0 0 8px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  }
 }
 
 .dt-event-time {

@@ -218,9 +218,17 @@ export class DayTimelineView extends ItemView {
   /** タイムライン ⇄ パネルの切替セグメント（狭い画面だけ）。両方のアイコンを並べ、表示中の面を強調する */
   private paneTimelineBtnEl!: HTMLElement;
   private panePanelBtnEl!: HTMLElement;
-  /** "日付キー|タスクの key" → タイムライン上の要素（エディタ連動のハイライトに使う） */
+  /** "日付キー|タスクの key" → タイムライン上の要素（エディタ連動・パネルからの選択のハイライトに使う） */
   private taskEls = new Map<string, HTMLElement>();
   private activeTaskKey: string | null = null;
+  /**
+   * パネル（プロジェクト一覧）でクリックして選んだタスク（"日付キー|タスクの key"）。
+   * タイムラインの対応するブロックとパネルの行を強調する。エディタ連動（activeTaskKey）とは別に持ち、
+   * カーソル移動で消えないようにする。別のタスクを選ぶか Esc で解除
+   */
+  private selectedTaskKey: string | null = null;
+  /** 選んだブロックをまだ画面内へスクロールしていない（表示範囲が変わって読み込みを待っているときなど） */
+  private pendingReveal = false;
   /** プロジェクト名のプレビューの hover-link の親（ポップアップを大きく表示するためのクラス付け用） */
   private readonly projectHoverParent = new ProjectHoverParent();
 
@@ -261,6 +269,12 @@ export class DayTimelineView extends ItemView {
     });
     this.scope.register([], "ArrowRight", () => {
       this.goToNext();
+      return false;
+    });
+    // Esc: パネルで選んだタスクの強調を解除（選んでいなければ何もしない）
+    this.scope.register([], "Escape", () => {
+      if (!this.selectedTaskKey) return;
+      this.clearSelectedTask();
       return false;
     });
   }
@@ -1326,6 +1340,9 @@ export class DayTimelineView extends ItemView {
     this.renderInbox();
     this.renderEvents();
     if (this.shouldScroll) this.scrollToInitial();
+    // パネルで選んだタスクの日へ移動してきた場合は、読み込み後にそのブロックまでスクロールする
+    this.revealSelectedTask();
+    this.pendingReveal = false; // 時刻の無いタスクなどブロックが描かれないときは、ここで諦める
   }
 
   private setDate(d: Date): void {
@@ -2270,6 +2287,8 @@ export class DayTimelineView extends ItemView {
       });
     } else {
       const childDate = child.date;
+      // 選択中のタスクの行には印を付ける（パネルを描き直しても残る）
+      item.toggleClass("is-selected", this.taskElKey(childDate, t) === this.selectedTaskKey);
       this.attachChipDrag(
         item,
         ".dt-tray-check",
@@ -2280,9 +2299,13 @@ export class DayTimelineView extends ItemView {
           else void this.commitMove(childDate, t, date, draft);
         },
         () => {
+          // その日へ移動し、タイムラインの対応するブロックを強調して画面内へスクロールする。
+          // 表示範囲の外の日なら読み込みを待って reload の最後で反映する
+          this.selectTask(childDate, t, item);
           this.setDate(childDate);
           // 狭い画面では移動した先が見えるよう、タイムラインへ切り替える
           if (this.isNarrow) this.setNarrowPane("timeline");
+          this.revealSelectedTask();
         }
       );
       item.addEventListener("contextmenu", (e: MouseEvent) => {
@@ -3045,8 +3068,7 @@ export class DayTimelineView extends ItemView {
     el.toggleClass("is-forwarded", task.forwarded);
     el.toggleClass("is-short", h < 34);
     el.toggleClass("is-tiny", h < 18);
-    const elKey = `${col.key}|${task.key}`;
-    el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
+    this.registerTaskEl(`${col.key}|${task.key}`, el);
     this.applyTagColor(el, task);
     el.setAttr(
       "aria-label",
@@ -3057,7 +3079,6 @@ export class DayTimelineView extends ItemView {
         (task.doneCondition ? `\n完了条件: ${task.doneCondition}` : "") +
         (task.preview ? `\n${task.preview}` : "")
     );
-    this.taskEls.set(elKey, el);
 
     // タイトル → 時刻の順。本文や完了条件は文字として出さない（ツールチップで見られる）
     const titleEl = el.createDiv("dt-event-title");
@@ -3140,10 +3161,7 @@ export class DayTimelineView extends ItemView {
           : "\n予定なし（未スケジュール）")
     );
     const elKey = `${col.key}|${task.key}`;
-    if (!this.taskEls.has(elKey)) {
-      el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
-      this.taskEls.set(elKey, el);
-    }
+    if (!this.taskEls.has(elKey)) this.registerTaskEl(elKey, el);
 
     const titleEl = el.createDiv("dt-event-title");
     const ownerName = this.ownerName(task);
@@ -3394,9 +3412,7 @@ export class DayTimelineView extends ItemView {
             (task.title || "(無題)") +
             (task.preview ? `\n${task.preview}` : "")
         );
-        const elKey = `${key}|${task.key}`;
-        item.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
-        this.taskEls.set(elKey, item);
+        this.registerTaskEl(`${key}|${task.key}`, item);
         item.addEventListener("click", (e) => {
           e.stopPropagation();
           if (e.ctrlKey || e.metaKey) void this.openTaskInNote(cell.date, task);
@@ -3511,6 +3527,83 @@ export class DayTimelineView extends ItemView {
     if (key === this.activeTaskKey) return;
     this.activeTaskKey = key;
     for (const [k, el] of this.taskEls) el.toggleClass("is-active-in-note", k === key);
+  }
+
+  // ---------- パネルからの選択（プロジェクト一覧のタスク → タイムラインのブロック） ----------
+
+  /** taskEls / activeTaskKey / selectedTaskKey の鍵（"日付キー|タスクの key"） */
+  private taskElKey(date: Date, task: Task): string {
+    return `${dateKey(date)}|${task.key}`;
+  }
+
+  /** タイムライン上のタスク要素を鍵で登録し、エディタ連動・パネルからの選択のハイライトを反映する */
+  private registerTaskEl(elKey: string, el: HTMLElement): void {
+    el.toggleClass("is-active-in-note", elKey === this.activeTaskKey);
+    el.toggleClass("is-selected", elKey === this.selectedTaskKey);
+    this.taskEls.set(elKey, el);
+  }
+
+  /**
+   * パネルでクリックしたタスクを選択中にする。タイムラインの対応するブロック（描画済みのもの）と
+   * パネルの行に is-selected を付け、ブロックへのスクロールを予約する（revealSelectedTask で実行）。
+   * rowEl はクリックしたパネルの行（描き直さずにその場で印を付け替える）
+   */
+  private selectTask(date: Date, task: Task, rowEl?: HTMLElement): void {
+    const key = this.taskElKey(date, task);
+    this.selectedTaskKey = key;
+    this.pendingReveal = true;
+    for (const [k, el] of this.taskEls) el.toggleClass("is-selected", k === key);
+    this.inboxEl
+      ?.querySelectorAll<HTMLElement>(".dt-project-child.is-selected, .dt-project-child-trow.is-selected")
+      .forEach((el) => el.removeClass("is-selected"));
+    rowEl?.addClass("is-selected");
+  }
+
+  /** パネルで選んだタスクの強調を解除する */
+  private clearSelectedTask(): void {
+    this.selectedTaskKey = null;
+    this.pendingReveal = false;
+    for (const el of this.taskEls.values()) el.removeClass("is-selected");
+    this.inboxEl
+      ?.querySelectorAll<HTMLElement>(".dt-project-child.is-selected, .dt-project-child-trow.is-selected")
+      .forEach((el) => el.removeClass("is-selected"));
+  }
+
+  /**
+   * 選択中のタスクのブロックが描画されていれば、タイムラインをスクロールして画面内に入れ、
+   * 輪をまたたかせて目を引く。まだ描かれていなければ何もしない（reload の最後で改めて呼ばれる）
+   */
+  private revealSelectedTask(): void {
+    if (!this.pendingReveal || !this.selectedTaskKey) return;
+    const el = this.taskEls.get(this.selectedTaskKey);
+    if (!el) return;
+    this.pendingReveal = false;
+    this.scrollIntoTimeline(el);
+    el.addClass("is-just-selected");
+    el.addEventListener("animationend", () => el.removeClass("is-just-selected"), { once: true });
+  }
+
+  /**
+   * タイムラインの要素が縦方向に見えるようスクロールする（すでに全体が見えていれば動かさない）。
+   * 週・3日表示の固定ヘッダー（曜日・日付）の下に隠れないよう、その高さを上の余白に足す
+   */
+  private scrollIntoTimeline(el: HTMLElement): void {
+    const sc = this.scrollEl;
+    if (!sc || sc.clientHeight === 0) return; // まだ表示されていない
+    const rect = el.getBoundingClientRect();
+    const scRect = sc.getBoundingClientRect();
+    const headerH = this.mode === "month" ? 0 : (this.headersEl?.offsetHeight ?? 0);
+    const margin = 16;
+    const top = rect.top - scRect.top + sc.scrollTop; // スクロール領域の中での位置
+    const bottom = top + rect.height;
+    const viewTop = sc.scrollTop + headerH;
+    const viewBottom = sc.scrollTop + sc.clientHeight;
+    if (top >= viewTop + margin && bottom <= viewBottom - margin) return;
+    const room = sc.clientHeight - headerH;
+    // ブロックが見える範囲の上から 1/3 あたりに来るように（高すぎるブロックは上端を合わせる）
+    const target =
+      rect.height + margin * 2 >= room ? top - headerH - margin : top - headerH - (room - rect.height) / 3;
+    sc.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
   }
 
   /**
