@@ -193,8 +193,13 @@ export class DayTimelineView extends ItemView {
   private bannerEl!: HTMLElement;
   private inboxEl!: HTMLElement;
   private inboxTasks: Task[] = [];
-  /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用のキャッシュ） */
+  /** 表示範囲の外（今日から過去 RESCHEDULE_LOOKBACK_DAYS 日以内）のノートのタスク（日付キー → その日）。
+   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき・連続達成・今週のグラフ）に使う */
+  private pastDays = new Map<string, { date: Date; tasks: Task[] }>();
+  /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用。pastDays から作る） */
   private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
+  /** サイドバーの下の「本日のサマリー」の器。出していないときは null */
+  private summaryEl: HTMLElement | null = null;
   /** プロジェクトの集計（パネル用のキャッシュ） */
   private projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
@@ -1247,9 +1252,9 @@ export class DayTimelineView extends ItemView {
         }
       }
     }
-    // 表示範囲の外でも、再スケジュール欄が見ている過去のノートなら読み直す
+    // 表示範囲の外でも、再スケジュール欄・本日のサマリーが見ている過去のノートなら読み直す
     const blockStore = this.plugin.blockStore();
-    if (blockStore && this.plugin.settings.showUnscheduledTray) {
+    if (blockStore && this.needsPastDays()) {
       const d = blockStore.dateFromPath(path);
       if (d) {
         const today = startOfDay(new Date());
@@ -1310,11 +1315,12 @@ export class DayTimelineView extends ItemView {
     );
     this.data = new Map(loaded);
     try {
-      this.pastUnscheduled = await this.loadPastUnscheduled();
+      this.pastDays = await this.loadPastDays();
     } catch (e) {
       console.error(e);
-      this.pastUnscheduled = [];
+      this.pastDays = new Map();
     }
+    this.pastUnscheduled = this.pastUnscheduledFrom(this.pastDays);
     this.renderHeader();
     this.renderBanner();
     this.renderInbox();
@@ -1414,6 +1420,9 @@ export class DayTimelineView extends ItemView {
 
   /** ツールバーの「実績を計測中」チップ（main の startTaskTracking からも呼ばれる） */
   renderTracking(): void {
+    // 本日のサマリーも同じタイミング（計測の開始・終了、30 秒ごと）で描き直す。
+    // 「いま / 次」のタスクと計測ボタンの状態が時刻・計測状態で変わるため
+    this.renderSummary();
     if (!this.trackingEl) return;
     const tr = this.plugin.settings.tracking;
     this.trackingEl.toggleClass("is-visible", !!tr);
@@ -1512,7 +1521,10 @@ export class DayTimelineView extends ItemView {
     const showProjects = !!this.plugin.projects && s.showProjects;
     const reschedule = this.rescheduleGroups();
     const showReschedule = reschedule.length > 0;
-    const visible = showInbox || showProjects || showReschedule;
+    // 本日のサマリーはタブの下に常に出す（タブが1つも無くても、これだけでパネルを出す）
+    const showSummary = s.showTodaySummary && !!this.plugin.blockStore();
+    const visible = showInbox || showProjects || showReschedule || showSummary;
+    this.summaryEl = null;
     this.inboxEl.toggleClass("is-visible", visible);
     // 狭い画面の切替ボタンは、パネルに出すものがあるときだけ出す
     this.paneEl.toggleClass("is-available", visible);
@@ -1537,8 +1549,9 @@ export class DayTimelineView extends ItemView {
         count: reschedule.reduce((n, g) => n + g.tasks.length, 0),
       });
     // 選んでいたタブが出ていないとき（再スケジュールが空になった等）は先頭のタブへ。
-    // 設定は書き換えないので、また出てきたら選んでいたタブに戻る
-    const active = tabs.find((t) => t.id === s.sidebarTab) ?? tabs[0];
+    // 設定は書き換えないので、また出てきたら選んでいたタブに戻る。
+    // タブが1つも無い（Inbox・プロジェクトを切っていて取り残しも無い）ときは null で、サマリーだけを出す
+    const active = tabs.find((t) => t.id === s.sidebarTab) ?? tabs[0] ?? null;
 
     // 狭い画面でパネルを全面表示しているときは、畳まず幅も固定しない
     const narrowPanel = this.isNarrow && this.narrowPane === "panel";
@@ -1572,13 +1585,19 @@ export class DayTimelineView extends ItemView {
       );
       toggle.addClass("dt-inbox-toggle");
     }
-    const label = head.createSpan({ cls: "dt-inbox-label", text: active.label });
+    const label = head.createSpan({ cls: "dt-inbox-label", text: active?.label ?? "本日のサマリー" });
     if (!narrowPanel) label.onclick = doToggle;
-    head.createSpan({ cls: "dt-inbox-count", text: String(active.count) });
+    if (active) head.createSpan({ cls: "dt-inbox-count", text: String(active.count) });
     // 狭い画面ではツールバーと同じ「左に切替と見出し、右に操作」の並びにそろえる
     if (narrowPanel) head.createDiv("dt-inbox-spacer");
     // 表示中のタブの操作ボタンだけをヘッダーに出す
-    if (active.id === "inbox") {
+    if (!active) {
+      // サマリーだけのとき: 今日のノートを開くボタン
+      const openBtn = this.iconButton(head, "file-text", "今日のノートを開く", () =>
+        void this.openNote(startOfDay(new Date()))
+      );
+      openBtn.addClass("dt-inbox-open");
+    } else if (active.id === "inbox") {
       const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
         this.plugin.openInboxAddModal()
       );
@@ -1618,7 +1637,7 @@ export class DayTimelineView extends ItemView {
       const today = startOfDay(new Date());
       for (const tab of tabs) {
         const el = bar.createDiv({ cls: "dt-panel-tab", text: tab.label });
-        el.toggleClass("is-active", tab.id === active.id);
+        el.toggleClass("is-active", tab.id === active?.id);
         const tips = [`${tab.label}: ${tab.count} 件`];
         // 過去の取り残しは、別のタブを見ていても気付けるよう赤い点を出す
         if (tab.id === "reschedule" && reschedule.some((g) => g.date < today)) {
@@ -1635,9 +1654,17 @@ export class DayTimelineView extends ItemView {
       }
     }
 
-    if (active.id === "inbox") this.renderInboxList();
+    if (!active) {
+      /* サマリーだけ */
+    } else if (active.id === "inbox") this.renderInboxList();
     else if (active.id === "projects") this.renderProjects(activeProjects);
     else this.renderReschedule(reschedule);
+
+    // タブの中身の下に「本日のサマリー」。どのタブを見ていても今日の進み具合が見えるよう、タブの外に置く
+    if (showSummary) {
+      this.summaryEl = this.inboxEl.createDiv("dt-summary");
+      this.renderSummary();
+    }
   }
 
   /** Inbox タブの中身（日付を決めていないタスクの一覧） */
@@ -2516,32 +2543,350 @@ export class DayTimelineView extends ItemView {
     return [...this.pastUnscheduled, ...visible];
   }
 
-  /**
-   * 表示範囲の外に取り残された時刻なしタスクを読む（再スケジュール欄用）。
-   * 今日から過去 RESCHEDULE_LOOKBACK_DAYS 日のノートを見る。表示中の日は通常の
-   * 読み込みが拾うので除外。完了・持ち越し済み [>] は「片付いた」ものなので出さない
-   */
-  private async loadPastUnscheduled(): Promise<{ date: Date; tasks: Task[] }[]> {
+  /** 表示範囲の外の過去のノートを読む必要があるか（再スケジュール欄の取り残し・本日のサマリー） */
+  private needsPastDays(): boolean {
     const s = this.plugin.settings;
+    if (!this.plugin.blockStore()) return false;
+    return (this.isTimeline() && s.showUnscheduledTray) || s.showTodaySummary;
+  }
+
+  /**
+   * 表示範囲の外のノートを読む（再スケジュール欄の取り残し・本日のサマリー用）。
+   * 今日から過去 RESCHEDULE_LOOKBACK_DAYS 日のノートを見る。表示中の日は通常の
+   * 読み込みが拾うので除外。古い日付から順に入る
+   */
+  private async loadPastDays(): Promise<Map<string, { date: Date; tasks: Task[] }>> {
+    const out = new Map<string, { date: Date; tasks: Task[] }>();
     const store = this.plugin.blockStore();
-    if (!store || !this.isTimeline() || !s.showUnscheduledTray) return [];
+    if (!store || !this.needsPastDays()) return out;
     const visible = new Set(this.visibleDays().map(dateKey));
     const today = startOfDay(new Date());
-    const out: { date: Date; tasks: Task[] }[] = [];
     for (let i = RESCHEDULE_LOOKBACK_DAYS; i >= 0; i--) {
       const date = addDays(today, -i);
-      if (visible.has(dateKey(date))) continue;
+      const key = dateKey(date);
+      if (visible.has(key)) continue;
       if (!store.getFile(date)) continue; // ノートの無い日は読まない
       try {
-        const tasks = (await store.load(date)).tasks.filter(
-          (t) => !isScheduled(t) && !t.done && !t.forwarded
-        );
-        if (tasks.length) out.push({ date, tasks });
+        out.set(key, { date, tasks: (await store.load(date)).tasks });
       } catch (e) {
         console.error(e);
       }
     }
     return out;
+  }
+
+  /** 表示範囲の外に取り残された時刻なしタスク（再スケジュール欄用）。
+   * 完了・持ち越し済み [>] は「片付いた」ものなので出さない */
+  private pastUnscheduledFrom(
+    past: Map<string, { date: Date; tasks: Task[] }>
+  ): { date: Date; tasks: Task[] }[] {
+    const s = this.plugin.settings;
+    if (!this.isTimeline() || !s.showUnscheduledTray) return [];
+    const out: { date: Date; tasks: Task[] }[] = [];
+    for (const { date, tasks: all } of past.values()) {
+      const tasks = all.filter((t) => !isScheduled(t) && !t.done && !t.forwarded);
+      if (tasks.length) out.push({ date, tasks });
+    }
+    return out;
+  }
+
+  // ---------- 本日のサマリー（サイドバーの下） ----------
+
+  /** その日のタスク。表示範囲内なら読み込み済みのデータ、範囲外なら過去のノートのキャッシュから。
+   * どちらにも無い（ノートが無い・過去 30 日より前で読んでいない）なら null */
+  private tasksOn(date: Date): Task[] | null {
+    const key = dateKey(date);
+    const d = this.data.get(key);
+    if (d) return d.tasks;
+    return this.pastDays.get(key)?.tasks ?? null;
+  }
+
+  /**
+   * 連続達成: 達成率が閾値以上の日が何日続いているか。
+   * 今日は達成していれば数え、まだ届いていなくても途切れとは見なさない（まだ途中なので）。
+   * タスクの無い日（休日など）は数えず飛ばす。読んでいる範囲（過去 30 日）で打ち切る
+   */
+  private summaryStreak(threshold: number): number {
+    if (threshold <= 0) return 0;
+    const today = startOfDay(new Date());
+    let n = 0;
+    for (let i = 0; i <= RESCHEDULE_LOOKBACK_DAYS; i++) {
+      const tasks = this.tasksOn(addDays(today, -i));
+      const ratio = tasks ? dayStats(tasks).ratio : null;
+      if (ratio === null) continue;
+      if (ratio >= threshold) n++;
+      else if (i > 0) break;
+    }
+    return n;
+  }
+
+  /**
+   * サイドバーの下の「本日のサマリー」。renderInbox で器（summaryEl）を作り、
+   * 30 秒ごとの更新と計測の開始・終了（renderTracking）でも描き直す。
+   * 見出しのクリックで1行に畳める（記憶される）
+   */
+  private renderSummary(): void {
+    const el = this.summaryEl;
+    if (!el) return;
+    el.empty();
+    const s = this.plugin.settings;
+    const today = startOfDay(new Date());
+    const all = this.tasksOn(today) ?? [];
+    const st = dayStats(all);
+    const collapsed = s.summaryCollapsed;
+    const complete = st.total > 0 && st.done === st.total;
+    el.toggleClass("is-collapsed", collapsed);
+    el.toggleClass("is-complete", complete);
+
+    // 見出し: 「本日 9/2 (水)」。右端は達成の一言（畳んだときは数字だけ）
+    const head = el.createDiv("dt-summary-head");
+    head.setAttr("aria-label", collapsed ? "クリックで開く" : "クリックで畳む");
+    head.createSpan({ cls: "dt-summary-title", text: "本日" });
+    head.createSpan({
+      cls: "dt-summary-date",
+      text: `${today.getMonth() + 1}/${today.getDate()} (${WEEKDAY_JA[today.getDay()]})`,
+    });
+    const pct = st.ratio === null ? 0 : Math.round(st.ratio * 100);
+    head.createSpan({
+      cls: "dt-summary-brief",
+      text: collapsed
+        ? st.total
+          ? `${st.done}/${st.total} 件・${pct}%`
+          : "タスクなし"
+        : summaryMessage(st),
+    });
+    const chevron = head.createSpan("dt-summary-chevron");
+    setIcon(chevron, collapsed ? "chevron-up" : "chevron-down");
+    head.addEventListener("click", () => {
+      s.summaryCollapsed = !s.summaryCollapsed;
+      void this.plugin.persistSettings();
+      this.renderSummary();
+    });
+    if (collapsed) return;
+
+    const body = el.createDiv("dt-summary-body");
+    if (!st.total) {
+      body.createDiv({
+        cls: "dt-summary-empty",
+        text: "今日のタスクはまだありません。タイムラインの空き時間をクリックすると追加できます",
+      });
+    } else {
+      // 件数と時間の2本のメーター。件数だけだと短いタスクを片付けたくなるので、
+      // 予定時間ベース（完了したタスクの予定時間 / 今日の予定時間）も並べる
+      this.summaryMeter(
+        body,
+        "件数",
+        st.done / st.total,
+        `${st.done}/${st.total}`,
+        `完了 ${st.done} 件 / 全 ${st.total} 件（持ち越し済み [>] のタスクは数えません）`
+      );
+      if (st.plan > 0) {
+        this.summaryMeter(
+          body,
+          "時間",
+          st.donePlan / st.plan,
+          `${hmm(st.donePlan)}/${hmm(st.plan)}`,
+          `完了したタスクの予定時間 ${hmm(st.donePlan)} / 今日の予定時間の合計 ${hmm(st.plan)}`
+        );
+      }
+      // 残量（件数・予定時間）と実績の合計。「%」より「あと 3 件・2:55」のほうが見通しが立つ
+      const remain = st.total - st.done;
+      const remainPlan = st.plan - st.donePlan;
+      const parts: string[] = [];
+      if (remain > 0) parts.push(`あと ${remain} 件` + (remainPlan > 0 ? `・${hmm(remainPlan)}` : ""));
+      if (st.actual > 0) parts.push(`実績 ${hmm(st.actual)}`);
+      if (parts.length) {
+        const line = body.createDiv({ cls: "dt-summary-line", text: parts.join("　") });
+        line.setAttr(
+          "aria-label",
+          [
+            remain > 0 ? `残り ${remain} 件（予定時間 ${hmm(remainPlan)}）` : "",
+            st.actual > 0 ? `今日の実績の合計 ${hmm(st.actual)}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+      }
+    }
+    this.renderSummaryNext(body, today, all);
+    this.renderSummaryWeek(body, today);
+    // 記録の埋まり具合: 15 分以上の完了タスクで「結果」「ふりかえり」のどちらかが空のもの
+    //（完了時のポップアップと同じ条件）。達成率とは切り離し、色を付けずに出す
+    const unfilled = all.filter(
+      (t) =>
+        !t.owner &&
+        t.done &&
+        !t.forwarded &&
+        isScheduled(t) &&
+        t.end - t.start >= 15 &&
+        (!t.result.trim() || !t.retrospective.trim())
+    );
+    if (unfilled.length) {
+      const note = body.createDiv({
+        cls: "dt-summary-note",
+        text: `結果・ふりかえりの未記入 ${unfilled.length} 件`,
+      });
+      note.setAttr(
+        "aria-label",
+        [...unfilled.map((t) => "・" + this.displayTitle(t)), "クリックで先頭のタスクを編集"].join("\n")
+      );
+      note.addEventListener("click", () => this.openEditModal(today, unfilled[0]));
+    }
+  }
+
+  /** サマリーのメーター1本（ラベル・バー・値・%） */
+  private summaryMeter(parent: HTMLElement, label: string, ratio: number, value: string, tip: string): void {
+    const row = parent.createDiv("dt-summary-meter");
+    row.setAttr("aria-label", tip);
+    const pct = Math.round(clamp(ratio, 0, 1) * 100);
+    row.toggleClass("is-complete", pct >= 100);
+    row.createSpan({ cls: "dt-summary-meter-label", text: label });
+    const fill = row.createDiv("dt-summary-bar").createDiv();
+    fill.style.width = `${pct}%`;
+    row.createSpan({ cls: "dt-summary-meter-value", text: value });
+    row.createSpan({ cls: "dt-summary-meter-pct", text: `${pct}%` });
+  }
+
+  /**
+   * 「いま / 次にやる1件」の行。現在時刻にかかっている未完了タスク → これから始まるタスク →
+   * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
+   * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
+   */
+  private renderSummaryNext(parent: HTMLElement, today: Date, all: Task[]): void {
+    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded);
+    if (!undone.length) return;
+    const now = nowMinutes();
+    const scheduled = undone.filter(isScheduled).sort((a, b) => a.start - b.start || a.end - b.end);
+    let task: Task;
+    let label: string;
+    let kind: string;
+    const current = scheduled.find((t) => t.start <= now && now < t.end);
+    const upcoming = scheduled.find((t) => t.start > now);
+    if (current) {
+      task = current;
+      label = "いま";
+      kind = "now";
+    } else if (upcoming) {
+      task = upcoming;
+      label = "次";
+      kind = "next";
+    } else if (scheduled.length) {
+      task = scheduled[0];
+      label = "未了";
+      kind = "overdue";
+    } else {
+      task = undone[0];
+      label = "未定";
+      kind = "unscheduled";
+    }
+    const t = task;
+    const row = parent.createDiv("dt-summary-next");
+    row.addClass(`is-${kind}`);
+    const box = row.createDiv("dt-tray-check");
+    setIcon(box, iconName("square"));
+    box.setAttr("aria-label", "完了にする");
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void this.commitUpdate(today, t, { ...this.draftOf(t), done: true });
+    });
+    row.createSpan({ cls: "dt-summary-next-label", text: label });
+    if (isScheduled(t)) row.createSpan({ cls: "dt-summary-next-time", text: minutesToHHMM(t.start) });
+    row.createSpan({ cls: "dt-summary-next-title", text: this.displayTitle(t) });
+    if (isScheduled(t)) row.createSpan({ cls: "dt-summary-next-dur", text: hmm(t.end - t.start) });
+    // 実績の計測（ストップウォッチ）の開始 / 終了。右クリックメニューと同じ操作
+    if (this.plugin.blockStoreFor(t.owner)) {
+      const tr = this.plugin.settings.tracking;
+      const isTracking =
+        !!tr && !!t.blockId && tr.blockId === t.blockId && (tr.owner ?? null) === (t.owner ?? null);
+      const btn = this.iconButton(
+        row,
+        isTracking ? "stop-circle" : "play",
+        isTracking ? "計測を終了して実績に記録" : "実績の計測を開始",
+        () => {
+          if (isTracking) void this.plugin.stopTaskTracking(true);
+          else void this.plugin.startTaskTracking(today, t);
+        }
+      );
+      btn.addClass("dt-summary-next-play");
+      btn.toggleClass("is-tracking", isTracking);
+      btn.addEventListener("click", (e) => e.stopPropagation());
+    }
+    const kindTip = {
+      now: "いま取りかかる時間のタスク",
+      next: "次に始まるタスク",
+      overdue: "予定の時刻を過ぎて残っているタスク",
+      unscheduled: "時刻を決めていないタスク",
+    }[kind];
+    row.setAttr(
+      "aria-label",
+      [
+        t.title || "(無題)",
+        isScheduled(t) ? `${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}` : "",
+        kindTip,
+        t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
+        "クリックで編集、右クリックでメニュー",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    row.addEventListener("click", () => this.openEditModal(today, t));
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showTaskMenu(today, t, e);
+    });
+  }
+
+  /** 連続達成の日数と、今週 7 日ぶんの達成率の小さな棒グラフ */
+  private renderSummaryWeek(parent: HTMLElement, today: Date): void {
+    const s = this.plugin.settings;
+    const threshold = s.summaryStreakPercent / 100;
+    const foot = parent.createDiv("dt-summary-foot");
+    if (s.summaryStreakPercent > 0) {
+      const streak = this.summaryStreak(threshold);
+      const el = foot.createSpan("dt-summary-streak");
+      el.toggleClass("is-active", streak > 0);
+      setIcon(el.createSpan("dt-summary-streak-icon"), "flame");
+      el.createSpan({ text: streak > 0 ? `${streak}日連続` : "連続 0日" });
+      el.setAttr(
+        "aria-label",
+        `達成率 ${s.summaryStreakPercent}% 以上の日が` +
+          (streak > 0 ? ` ${streak} 日続いています` : "まだ続いていません") +
+          "\n（タスクの無い日は数えません。今日はまだ途中なので、届いていなくても途切れません。設定で閾値を変えられます）"
+      );
+    }
+    const week = foot.createDiv("dt-summary-week");
+    week.setAttr("aria-label", "今週の達成率");
+    const first = startOfWeek(today, s.weekStart);
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(first, i);
+      const bar = week.createDiv("dt-summary-week-day");
+      const fill = bar.createDiv();
+      const future = date > today;
+      const st = future ? null : (() => {
+        const tasks = this.tasksOn(date);
+        return tasks ? dayStats(tasks) : null;
+      })();
+      const ratio = st?.ratio ?? null;
+      bar.toggleClass("is-today", isSameDay(date, today));
+      bar.toggleClass("is-future", future);
+      bar.toggleClass("is-empty", !future && ratio === null);
+      if (ratio !== null) {
+        fill.style.height = `${Math.round(clamp(ratio, 0, 1) * 100)}%`;
+        bar.toggleClass("is-hit", threshold > 0 && ratio >= threshold);
+      }
+      const label = `${date.getMonth() + 1}/${date.getDate()} (${WEEKDAY_JA[date.getDay()]})`;
+      bar.setAttr(
+        "aria-label",
+        future
+          ? label
+          : ratio === null || !st
+            ? `${label}: タスクなし`
+            : `${label}: ${Math.round(ratio * 100)}%（${st.done}/${st.total} 件）`
+      );
+      // 過去の日をクリックでその日へ
+      if (!future) bar.addEventListener("click", () => this.showDate(date));
+    }
   }
 
   /** 再スケジュールのタブの中身: 時刻を決めていないタスクを日付順に縦に一覧。
@@ -4708,6 +5053,56 @@ function hmm(min: number): string {
 /** 分を "6.5" のような小数1桁の時間表示に（日ヘッダーの予実合計用）。"9.0" は "9" に詰める */
 function hoursDecimal(min: number): string {
   return (min / 60).toFixed(1).replace(/\.0$/, "");
+}
+
+/** 1日の消化度（本日のサマリー・連続達成・今週のグラフ用） */
+interface DayStats {
+  /** 数える対象の件数（自分のタスク。持ち越し済み [>] は除く） */
+  total: number;
+  done: number;
+  /** 予定時間の合計と、そのうち完了したタスクぶん（分。時刻のあるタスクだけ） */
+  plan: number;
+  donePlan: number;
+  /** 実績の合計（分） */
+  actual: number;
+  /** 達成率 0〜1。予定時間があれば時間ベース、無ければ件数ベース。タスクが無ければ null */
+  ratio: number | null;
+}
+
+/**
+ * その日のタスクから消化度を出す。メンバーの予定は他の人のものなので数えない。
+ * 持ち越し [>] にしたタスクは「今日やる分」から外す（分母から消えるので、整理した分だけ達成率が上がる）
+ */
+function dayStats(tasks: Task[]): DayStats {
+  let total = 0;
+  let done = 0;
+  let plan = 0;
+  let donePlan = 0;
+  let actual = 0;
+  for (const t of tasks) {
+    if (t.owner || t.forwarded) continue;
+    total++;
+    const p = isScheduled(t) ? t.end - t.start : 0;
+    plan += p;
+    if (t.done) {
+      done++;
+      donePlan += p;
+    }
+    actual += t.actual.reduce((m, r) => m + (r.end - r.start), 0);
+  }
+  const ratio = plan > 0 ? donePlan / plan : total > 0 ? done / total : null;
+  return { total, done, plan, donePlan, actual, ratio };
+}
+
+/** 進み具合に応じた一言（本日のサマリーの見出しの右端）。控えめに */
+function summaryMessage(st: DayStats): string {
+  if (!st.total) return "";
+  if (st.done === st.total) return "おつかれさま！全部終わりました";
+  if (st.done === 0) return "まずは 1 件";
+  const r = st.ratio ?? 0;
+  if (r >= 0.8) return "あと少し";
+  if (r >= 0.5) return "折り返し";
+  return "いい調子";
 }
 
 /**

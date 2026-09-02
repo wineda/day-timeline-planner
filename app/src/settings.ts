@@ -291,6 +291,13 @@ export interface DayTimelineSettings {
   sidebarWidth: number;
   /** 左サイドバーで表示中のタブ（Inbox / プロジェクト / 再スケジュール）。記憶される */
   sidebarTab: SidebarTab;
+  /** 左サイドバーの下に「本日のサマリー」（消化タスク / 全タスク・達成率・次のタスク・連続達成）を出すか。
+   * タスクブロック形式のときだけ使える */
+  showTodaySummary: boolean;
+  /** 本日のサマリーを見出しの1行に畳んでいるか（見出しのクリックで切替。記憶される） */
+  summaryCollapsed: boolean;
+  /** 連続達成（ストリーク）に数える1日の達成率（%）。予定時間ベース（予定の無い日は件数ベース）。0 なら連続達成を出さない */
+  summaryStreakPercent: number;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
@@ -355,6 +362,9 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   defaultGroupIcon: "folder",
   sidebarWidth: 220,
   sidebarTab: "inbox",
+  showTodaySummary: true,
+  summaryCollapsed: false,
+  summaryStreakPercent: 80,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -424,6 +434,11 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
   if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
   if (s.projectsViewStyle !== "table") s.projectsViewStyle = "tree";
+  if (typeof s.showTodaySummary !== "boolean") s.showTodaySummary = DEFAULT_SETTINGS.showTodaySummary;
+  if (typeof s.summaryCollapsed !== "boolean") s.summaryCollapsed = false;
+  s.summaryStreakPercent = Number.isFinite(s.summaryStreakPercent)
+    ? Math.min(100, Math.max(0, Math.round(s.summaryStreakPercent)))
+    : DEFAULT_SETTINGS.summaryStreakPercent;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -1118,6 +1133,34 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           s.showProjects = v;
           await save();
         })
+      );
+    new Setting(containerEl)
+      .setName("本日のサマリーを表示")
+      .setDesc(
+        "サイドバーの下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスク・連続達成日数を表示します。" +
+          "見出しのクリックで1行に畳めます。タスクブロック形式のときだけ使えます。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.showTodaySummary).onChange(async (v) => {
+          s.showTodaySummary = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("連続達成に数える達成率")
+      .setDesc(
+        "本日のサマリーの「連続達成」に数える1日の達成率（予定時間のうち完了したタスクぶんの割合。予定の無い日は件数）。" +
+          "100% にすると1日崩れただけで途切れるので、少し緩めがおすすめです。0 にすると連続達成を出しません。"
+      )
+      .addSlider((sl) =>
+        sl
+          .setLimits(0, 100, 5)
+          .setValue(s.summaryStreakPercent)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            s.summaryStreakPercent = v;
+            await save();
+          })
       );
     new Setting(containerEl)
       .setName("プロジェクトの完了済みタスクを隠す")
