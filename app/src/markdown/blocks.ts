@@ -99,6 +99,10 @@ export interface TaskBlock {
   due: string;
   /** 期限の行番号（無ければ null） */
   dueLine: number | null;
+  /** 次アクション = 次にやること（本文中の「- 次アクション: …」行）。無ければ "" */
+  nextAction: string;
+  /** 次アクションの行番号（無ければ null） */
+  nextActionLine: number | null;
   /** 登録日（本文中の「- 登録日: YYYY-MM-DD」行。Inbox の滞留日数の判定用）。無ければ "" */
   registered: string;
   /** 登録日の行番号（無ければ null） */
@@ -214,6 +218,8 @@ export interface MetaSource {
   ownerName?: string;
   /** 期限（新規ブロックを組み立てるときだけ使う） */
   due?: string;
+  /** 次アクション（新規ブロックを組み立てるときだけ使う） */
+  nextAction?: string;
   /** 登録日（新規ブロックを組み立てるときだけ使う） */
   registered?: string;
   /** 実績（新規ブロックを組み立てるときだけ使う） */
@@ -346,6 +352,35 @@ export function renderOthersLine(text: string): string {
   return "- 他者: " + text.trim();
 }
 
+/** 他者の1件（「相手 / 内容」）を相手と内容に分ける。区切りが無ければ全体を内容として扱う */
+export function splitOtherEntry(value: string): { who: string; what: string } {
+  const v = value.trim();
+  const m = /^(.*?)\s+\/\s+(.*)$/.exec(v);
+  if (m) return { who: m[1].trim(), what: m[2].trim() };
+  return { who: "", what: v };
+}
+
+/** 相手と内容から他者の1件を組み立てる（片方だけならその値。両方空なら ""） */
+export function joinOtherEntry(who: string, what: string): string {
+  const a = who.trim();
+  const b = what.trim();
+  if (a && b) return `${a} / ${b}`;
+  return a || b;
+}
+
+/** 次アクションの行（例: "- 次アクション: 恒久対応案をシン会議に持ち込む"）。未完了事項の次の一手 */
+const NEXT_ACTION_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?次アクション(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 次アクションの行なら中身を返す（空でも ""）。違えば null */
+export function parseNextActionLine(line: string): string | null {
+  const m = NEXT_ACTION_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderNextActionLine(text: string): string {
+  return "- 次アクション: " + text.trim();
+}
+
 /** 回答の行（例: "- 回答: 済" / "- 回答: 未"）。質問に回答が付いたかの記録 */
 const ANSWER_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?回答(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 
@@ -370,6 +405,28 @@ export function parseStatusLine(line: string): string | null {
 
 export function renderStatusLine(text: string): string {
   return "- 状態: " + text.trim();
+}
+
+/**
+ * 状態の値（Rules/Timeline記録ルール.md・Work共通ルール.md の「状態」）。
+ * 中断だけは「中断(理由)」のように理由を付けられる
+ */
+export const STATUS_KINDS = ["未着手", "進行中", "中断", "回答待ち", "期限未定"] as const;
+
+/** 状態の値を「種類」と「中断理由」に分ける（「中断(理由)」以外は種類 = 値そのもの） */
+export function parseStatusValue(value: string): { kind: string; reason: string } {
+  const v = value.trim();
+  const m = /^中断\s*[(（](.*)[)）]\s*$/.exec(v);
+  if (m) return { kind: "中断", reason: m[1].trim() };
+  return { kind: v, reason: "" };
+}
+
+/** 種類と中断理由から状態の値を組み立てる（種類が空なら ""） */
+export function buildStatusValue(kind: string, reason: string): string {
+  const k = kind.trim();
+  if (!k) return "";
+  const r = reason.trim();
+  return k === "中断" && r ? `中断(${r})` : k;
 }
 
 /** 状態の値から中断理由を取り出す（「中断(理由)」形式でなければ値をそのまま返す） */
@@ -760,6 +817,8 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
     let ownerNameLine: number | null = null;
     let due = "";
     let dueLine: number | null = null;
+    let nextAction = "";
+    let nextActionLine: number | null = null;
     let registered = "";
     let registeredLine: number | null = null;
     let actual: ActualRange[] = [];
@@ -898,6 +957,14 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           continue;
         }
       }
+      if (nextActionLine === null) {
+        const na = parseNextActionLine(lines[k]);
+        if (na !== null) {
+          nextAction = na;
+          nextActionLine = k;
+          continue;
+        }
+      }
       if (retrospectiveLine === null) {
         const rt = parseRetrospectiveLine(lines[k]);
         if (rt !== null) {
@@ -920,6 +987,7 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       k === statusLine ||
       k === ownerNameLine ||
       k === dueLine ||
+      k === nextActionLine ||
       k === registeredLine ||
       k === actualLine ||
       k === projectLine ||
@@ -1000,6 +1068,8 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       ownerNameLine,
       due,
       dueLine,
+      nextAction,
+      nextActionLine,
       registered,
       registeredLine,
       actual,
@@ -1082,6 +1152,7 @@ export function renderTaskBlock(
   if (t.answer && t.answer.trim()) out.push(renderAnswerLine(t.answer));
   if (t.status && t.status.trim()) out.push(renderStatusLine(t.status));
   if (t.ownerName && t.ownerName.trim()) out.push(renderOwnerNameLine(t.ownerName));
+  if (t.nextAction && t.nextAction.trim()) out.push(renderNextActionLine(t.nextAction));
   if (t.retrospective && t.retrospective.trim()) out.push(renderRetrospectiveLine(t.retrospective));
   const body = trimBlankLines(t.body ?? []);
   if (body.length) out.push("", ...body);

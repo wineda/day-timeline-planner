@@ -57,6 +57,8 @@ export interface Task {
   ownerName: string;
   /** 期限（「- 期限: YYYY-MM-DD」行。旧表記「期日:」も読む。無ければ ""） */
   due: string;
+  /** 次アクション = 未完了事項の次の一手（「- 次アクション: …」行。無ければ ""） */
+  nextAction: string;
   /** 登録日（Inbox に入れた日。ブロック形式のみ。無ければ ""） */
   registered: string;
   /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
@@ -138,6 +140,8 @@ export interface TaskDraft {
   ownerName?: string;
   /** 期限。undefined = 変更しない / "" = 消す */
   due?: string;
+  /** 次アクション。undefined = 変更しない / "" = 消す */
+  nextAction?: string;
   /** 登録日。undefined = 変更しない / "" = 消す */
   registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */

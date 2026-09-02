@@ -26,6 +26,7 @@ import {
   renderDueLine,
   renderHeadingLine,
   renderJudgmentLine,
+  renderNextActionLine,
   renderOthersLine,
   renderOwnerNameLine,
   renderRegisteredLine,
@@ -85,6 +86,8 @@ export interface TaskPatch {
   ownerName?: string;
   /** 期限。undefined = 変更しない / "" = 消す */
   due?: string;
+  /** 次アクション。undefined = 変更しない / "" = 消す */
+  nextAction?: string;
   /** 登録日。undefined = 変更しない / "" = 消す */
   registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
@@ -120,6 +123,7 @@ export interface NewTaskInput {
   status?: string;
   ownerName?: string;
   due?: string;
+  nextAction?: string;
   registered?: string;
   actual?: ActualRange[];
   project?: string | null;
@@ -169,6 +173,7 @@ export function insertTask(content: string, draft: NewTaskInput, opts: InsertOpt
     status: draft.status,
     ownerName: draft.ownerName,
     due: draft.due,
+    nextAction: draft.nextAction,
     registered: draft.registered,
     actual: draft.actual,
     project: draft.project,
@@ -324,6 +329,7 @@ export function updateTask(
   patchLine(patch.answer, t.answerLine, renderAnswerLine, afterSteps, 0.2);
   patchLine(patch.status, t.statusLine, renderStatusLine, afterSteps, 0.15);
   patchLine(patch.ownerName, t.ownerNameLine, renderOwnerNameLine, afterSteps, 0.1);
+  patchLine(patch.nextAction, t.nextActionLine, renderNextActionLine, afterSteps, 0.05);
   // 期限: メタ行直下の特別な行（登録日の下）に置く。既存の「期日:」行も「期限:」に書き換わる（出力の統一）
   patchLine(patch.due, t.dueLine, renderDueLine, afterMeta, 2.35);
   // 他者: 唯一の複数行フィールド。既存の行を前から順に書き換え、余りは消し、足りなければ最後の行の下に足す

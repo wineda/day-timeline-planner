@@ -2228,6 +2228,277 @@
 .dt-modal .dt-tag-setting .setting-item-control {
   flex-wrap: wrap;
   justify-content: flex-start;
+  flex-direction: column;
+  align-items: stretch;
+}
+/* タグ欄の「文言一覧」リンク */
+.dt-modal .dt-tag-ph-link {
+  margin-left: 8px;
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--text-accent);
+}
+/* サブタグの段（親タグを選ぶと出る） */
+.dt-modal .dt-tag-subs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+.dt-modal .dt-tag-subs.is-hidden,
+.dt-modal .dt-tag-hint.is-hidden,
+.dt-modal .dt-status-reason.is-hidden,
+.dt-modal .dt-modal-pane.is-hidden {
+  display: none;
+}
+.dt-modal .dt-tag-subs-lead {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.dt-modal .dt-tag-hint {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+/* 「記録 / 作業メモ」タブ */
+.dt-modal .dt-modal-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+}
+.dt-modal .dt-modal-tab {
+  height: auto;
+  min-height: 0;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.dt-modal .dt-modal-tab.is-active {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+}
+.dt-modal .dt-modal-tab-sub {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-muted);
+}
+.dt-modal .dt-modal-tab-badge {
+  font-size: var(--font-ui-smaller);
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-l);
+  padding: 0 7px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dt-modal .dt-modal-tab-badge:empty {
+  display: none;
+}
+.dt-modal .dt-memo-lead {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 8px 0 4px;
+  line-height: 1.6;
+}
+/* ラベル横の小さな補足（判断: PLとして / 他者: 相手のボール） */
+.dt-modal .dt-field-note {
+  margin-left: 6px;
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-muted);
+}
+/* 欄の下の注意（記録チェックで指摘される条件） */
+.dt-modal .setting-item-description.dt-desc-warn {
+  color: var(--color-orange, #d9a21b);
+}
+/* 状態: 中断のときだけ出る理由欄 */
+.dt-modal .dt-status-setting .setting-item-control {
+  flex-wrap: wrap;
+}
+.dt-modal .dt-status-reason {
+  margin-top: 6px;
+  flex-basis: 100%;
+}
+/* 他者: 相手 + 内容の行 */
+.dt-modal .dt-others-setting .setting-item-control {
+  justify-content: flex-start;
+}
+.dt-modal .dt-others {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.dt-modal .dt-others-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 28px;
+  gap: 6px;
+  align-items: center;
+}
+.dt-modal .dt-others-row input {
+  width: 100%;
+}
+.dt-modal .dt-others-del {
+  height: auto;
+  min-height: 0;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dt-modal .dt-others-del:hover {
+  color: var(--color-red, #e06c75);
+}
+.dt-modal .dt-others-add {
+  align-self: flex-start;
+  height: auto;
+  min-height: 0;
+  padding: 3px 9px;
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+/* 未完了セット（Owner・期限・完了条件・次アクション） */
+.dt-modal .dt-open-set {
+  margin: 8px 0 2px;
+  padding: 8px 12px 2px;
+  border: 1px dashed var(--background-modifier-border-hover);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+.dt-modal .dt-open-set-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.dt-modal .dt-open-set-title {
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+/* 「その他 N」チップ（候補以外の欄をまとめて畳む） */
+.dt-modal .dt-add-field-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-style: solid;
+}
+.dt-modal .dt-add-field-more.is-open {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.dt-modal .dt-add-field-more-icon svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+.dt-modal .dt-add-field-more.is-open .dt-add-field-more-icon svg {
+  transform: rotate(180deg);
+}
+.dt-modal .dt-add-field-more-count {
+  font-size: 0.85em;
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-l);
+  padding: 0 6px;
+}
+.dt-modal .dt-add-field-more-box {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+/* 完了ポップアップ: チェック済みのステップから結果の下書き */
+.dt-retro-from-steps {
+  height: auto;
+  min-height: 0;
+  margin-top: 4px;
+  padding: 2px 9px;
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+/* タグ別の文言一覧 */
+.dt-ph-modal .dt-ph-group {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+.dt-ph-modal .dt-ph-group.is-current {
+  border-color: var(--interactive-accent);
+}
+.dt-ph-modal summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.dt-ph-modal .dt-ph-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--background-modifier-border);
+}
+.dt-ph-modal .dt-ph-current {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-accent);
+}
+.dt-ph-modal .dt-ph-list {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 2px 8px;
+  font-size: var(--font-ui-smaller);
+  margin: 6px 0 2px;
+}
+.dt-ph-modal .dt-ph-list dt {
+  color: var(--text-muted);
+}
+.dt-ph-modal .dt-ph-list dd {
+  margin: 0;
+}
+.dt-ph-modal .dt-ph-list dd.is-inherited {
+  color: var(--text-muted);
+}
+/* 設定: タグの説明・文言の入力欄 */
+.dt-tag-color-row .dt-tag-hint-input {
+  min-width: 220px;
+}
+.dt-tag-schema-ph-row .dt-schema-ph {
+  width: 100%;
+  min-width: 320px;
+  font-size: var(--font-ui-smaller);
 }
 
 /* ---------- スマホ（Obsidian の .is-phone）のダイアログ調整 ----------

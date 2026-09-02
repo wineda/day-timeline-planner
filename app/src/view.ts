@@ -23,6 +23,8 @@ import {
   RetrospectiveModal,
   TaskModal,
   formatActualRanges,
+  type OtherActual,
+  type RetroExtraField,
 } from "./modal";
 import { subtractActualRanges, type ActualRange, type TicketRef } from "./markdown/blocks";
 import {
@@ -42,6 +44,9 @@ import { DropdownMenu, type MenuLike } from "./dropdown";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import {
   colorForTags,
+  normalizeFieldLabel,
+  placeholderFor,
+  schemaForTags,
   ticketUrl,
   MAX_HOUR_HEIGHT,
   MIN_HOUR_HEIGHT,
@@ -66,6 +71,7 @@ import {
   startOfDay,
   startOfWeek,
   stripTags,
+  extractTags,
 } from "./util";
 
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
@@ -2746,17 +2752,28 @@ export class DayTimelineView extends ItemView {
     }
     this.renderSummaryNext(body, today, all);
     this.renderSummaryWeek(body, today);
-    // 記録の埋まり具合: 15 分以上の完了タスクで「結果」「ふりかえり」のどちらかが空のもの
+    // 記録の埋まり具合: 完了タスクで、タグの必須欄（結果など）が空のもの、または 15 分以上でふりかえりが空のもの
     //（完了時のポップアップと同じ条件）。達成率とは切り離し、色を付けずに出す
-    const unfilled = all.filter(
-      (t) =>
-        !t.owner &&
-        t.done &&
-        !t.forwarded &&
-        isScheduled(t) &&
-        t.end - t.start >= 15 &&
-        (!t.result.trim() || !t.retrospective.trim())
-    );
+    const schema = this.plugin.settings.tagFieldSchema;
+    const unfilled = all.filter((t) => {
+      if (t.owner || !t.done || t.forwarded) return false;
+      const def = schemaForTags(schema, t.tags);
+      const required = def ? def.required.map(normalizeFieldLabel) : ["結果"];
+      if (def && !def.required.length) return false; // #私用 など、記録の要らないタグ
+      const values: Record<string, string> = {
+        結果: t.result,
+        原因: t.cause,
+        判断: t.judgment,
+        残: t.remaining,
+        回答: t.answer,
+        完了条件: t.doneCondition,
+        Owner: t.ownerName,
+        次アクション: t.nextAction,
+        期限: t.due,
+      };
+      if (required.some((l) => l in values && !values[l].trim())) return true;
+      return isScheduled(t) && t.end - t.start >= 15 && !t.retrospective.trim();
+    });
     if (unfilled.length) {
       const note = body.createDiv({
         cls: "dt-summary-note",
@@ -4450,6 +4467,7 @@ export class DayTimelineView extends ItemView {
       trackers: s.trackers,
       owners: this.ownerChoices(),
       initialOwner: null,
+      otherActuals: this.otherActualsFor(date, null),
       ...this.projectOptions(),
       onSubmit: (data, dateSel) => this.commitCreate(dateSel ?? date, data),
       onClose,
@@ -4535,6 +4553,7 @@ export class DayTimelineView extends ItemView {
       trackers: this.plugin.settings.trackers,
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
+      otherActuals: this.otherActualsFor(date, task.owner ?? null, task.key),
       ...this.projectOptions(),
       onAutoSave: async (data) => {
         // 持ち主・日付の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
@@ -4601,11 +4620,22 @@ export class DayTimelineView extends ItemView {
       status: task.status,
       ownerName: task.ownerName,
       due: task.due,
+      nextAction: task.nextAction,
       actual: task.actual,
       project: task.project,
       details: task.details,
       ticket: task.ticket,
     };
+  }
+
+  /**
+   * 編集ダイアログに渡す「同じ日の他のタスクの実績」（実績の重複を保存前に注意するため）。
+   * 同じ持ち主のタスクだけを見る（メンバーの予定と自分の予定は別のノートなので重なってよい）
+   */
+  private otherActualsFor(date: Date, owner: string | null, exceptKey?: string): OtherActual[] {
+    return (this.data.get(dateKey(date))?.tasks ?? [])
+      .filter((t) => t.key !== exceptKey && (t.owner ?? null) === (owner ?? null) && t.actual.length)
+      .map((t) => ({ title: stripTags(t.title) || "(無題)", tags: t.tags, ranges: t.actual }));
   }
 
   /** 編集・追加ダイアログに渡すプロジェクトまわりの共通オプション */
@@ -4801,35 +4831,81 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * 15分以上のタスクを完了にしたとき、結果かふりかえりが空なら入力を促す。
-   * 実績の確認・修正欄も一緒に出す。ポップアップを出したら true
+   * 完了にしたとき、選んだタグで必須の欄（結果。障害なら原因・判断、質問なら回答 …）が空なら、
+   * その欄だけを聞くポップアップを出す（Rules/Work記録チェック担当ルール.md: 完了 [x] に結果が無いと 🔴）。
+   * 15分以上のタスクはふりかえりが空でも出す。実績の確認・修正欄も一緒に出す。ポップアップを出したら true
    */
   private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): boolean {
     if (!this.plugin.blockStore()) return false; // ブロック形式のみ
     if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
     const start = data.start ?? task.start;
     const end = data.end ?? task.end;
-    if (start === null || end === null || end - start < 15) return false;
-    const retro = data.retrospective !== undefined ? data.retrospective : task.retrospective;
-    const result = data.result !== undefined ? data.result : task.result;
-    if (retro && retro.trim() && result && result.trim()) return false; // 両方書いてあれば促さない
+    const duration = start !== null && end !== null ? end - start : 0;
+    const merged = { ...this.draftOf(task), ...data };
+    const title = data.title ?? task.title;
+    const tags = extractTags(title);
+    const schema = this.plugin.settings.tagFieldSchema;
+    const def = schemaForTags(schema, tags);
+    // 選んだタグの必須欄のうち空のもの（結果は先頭に。定義の無いタグは結果だけ）
+    const required = def ? def.required.map(normalizeFieldLabel) : ["結果"];
+    const valueOf: Record<string, () => string> = {
+      結果: () => merged.result ?? "",
+      原因: () => merged.cause ?? "",
+      判断: () => merged.judgment ?? "",
+      残: () => merged.remaining ?? "",
+      回答: () => merged.answer ?? "",
+      完了条件: () => merged.doneCondition ?? "",
+      Owner: () => merged.ownerName ?? "",
+      次アクション: () => merged.nextAction ?? "",
+      期限: () => merged.due ?? "",
+    };
+    const keyOf: Record<string, string> = {
+      原因: "cause",
+      判断: "judgment",
+      残: "remaining",
+      回答: "answer",
+      完了条件: "doneCondition",
+      Owner: "ownerName",
+      次アクション: "nextAction",
+      期限: "due",
+    };
+    const missing = required.filter((l) => valueOf[l] && !valueOf[l]().trim());
+    const retro = merged.retrospective ?? "";
+    const needRetro = duration >= 15 && !retro.trim() && (!def || def.required.length > 0);
+    if (!missing.length && !needRetro) return false;
+    const tag = tags.find((t) => schemaForTags(schema, [t])) ?? tags[0] ?? "";
+    const phField = (f: string) => placeholderFor(schema, tag, f as never);
+    const extraFields: RetroExtraField[] = missing
+      .filter((l) => l !== "結果" && keyOf[l])
+      .map((l) => ({
+        key: keyOf[l],
+        label: l,
+        kind: l === "回答" ? "answer" : "text",
+        placeholder: l === "期限" ? "YYYY-MM-DD" : phField(l),
+      }));
     const recorded = data.actual !== undefined ? data.actual : task.actual;
+    const result = merged.result ?? "";
     new RetrospectiveModal(this.app, {
-      taskTitle: stripTags(data.title || task.title),
-      durationLabel: formatDuration(end - start),
+      taskTitle: stripTags(title),
+      durationLabel: duration ? formatDuration(duration) : "時刻なし",
       actual: recorded,
       result,
-      onSave: async (text, actual, resultText) => {
+      resultPlaceholder: phField("結果"),
+      retroPlaceholder: phField("ふりかえり"),
+      extraFields,
+      doneSteps: (merged.steps ?? []).filter((st) => st.done).map((st) => st.text),
+      onSave: async (text, actual, resultText, extras) => {
         try {
           const patch: TaskDraft = { ...data };
           if (text) patch.retrospective = text;
           if (resultText.trim() !== (result ?? "").trim()) patch.result = resultText;
           if (actual !== undefined) patch.actual = actual;
+          for (const [k, v] of Object.entries(extras)) (patch as unknown as Record<string, string>)[k] = v;
           const ok = await this.storeOf(task).update(date, task, patch);
-          if (!ok) new Notice("ふりかえりを保存できませんでした。ノートが変更された可能性があります。");
+          if (!ok) new Notice("完了の記録を保存できませんでした。ノートが変更された可能性があります。");
         } catch (e) {
           console.error(e);
-          new Notice("ふりかえりを保存できませんでした: " + String(e));
+          new Notice("完了の記録を保存できませんでした: " + String(e));
         }
         await this.reload();
       },
@@ -4935,6 +5011,10 @@ export class DayTimelineView extends ItemView {
         steps: remaining,
         ticket: task.ticket ?? undefined,
         project: task.project ?? undefined,
+        // 未完了セット（Owner・期限・次アクション）も続きのブロックへ引き継ぐ（翌日に追えるように）
+        ownerName: task.ownerName || undefined,
+        due: task.due || undefined,
+        nextAction: task.nextAction || undefined,
         carryFrom: fromLink,
       }, newId);
 
