@@ -52,9 +52,9 @@ export default class DayTimelinePlugin extends Plugin {
     this.registerView(VIEW_TYPE_DAY_TIMELINE, (leaf) => new DayTimelineView(leaf, this));
     this.registerView(VIEW_TYPE_RECURRING, (leaf) => new RecurringManagerView(leaf, this));
 
-    // プロジェクト名の Ctrl/Cmd + ホバーでノートをページプレビュー表示するための登録。
-    // defaultMod: true = 修飾キー付きのホバーで出す（ビュー側でも Ctrl/Cmd を判定してから
-    // hover-link を投げるので、ページプレビューの設定で修飾キーなしにしても出ない）
+    // プロジェクト名の Ctrl/Cmd + クリックでノートをページプレビュー表示するための登録。
+    // ビュー側が Ctrl/Cmd + クリックのときだけ hover-link を投げる（ホバーでは投げない）ので、
+    // defaultMod: true にしておけばページプレビュー側の修飾キー判定もそのまま通る
     this.registerHoverLinkSource(PROJECT_HOVER_SOURCE, {
       display: "タイムスケジュール: プロジェクト名",
       defaultMod: true,
