@@ -38,6 +38,7 @@ import {
 } from "./project";
 import { newBlockId } from "./markdown/id";
 import { iconName } from "./icons";
+import { DropdownMenu, type MenuLike } from "./dropdown";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import {
   colorForTags,
@@ -326,6 +327,7 @@ export class DayTimelineView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    DropdownMenu.closeAll();
     this.contentEl.empty();
   }
 
@@ -590,12 +592,23 @@ export class DayTimelineView extends ItemView {
     const main = body.createDiv("dt-main");
 
     // ツールバーはタイムラインの直上に1行だけ（TickTick 風のシンプルなヘッダー）。
-    // 左は「9月」の月タイトル、右は操作のまとまり。狭い画面でも折り返さないよう、
-    // 常時出すのは「タイトル・今日・面の切替・モード・⋮」に絞り、
+    // 左は面の切替と「9月」の月タイトル、右は操作のまとまり。狭い画面でも折り返さないよう、
+    // 常時出すのは「面の切替・タイトル・今日・モード・⋮」に絞り、
     // ズーム・予実・メンバーを含む設定系はすべて ⋮ メニューにまとめる
     const bar = main.createDiv("dt-toolbar");
 
-    // 左端: 月タイトル（クリックで日付ピッカー）。詳しい日付は下の列ヘッダーが持つので、
+    // 左端: 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替。
+    // 1つのトグルだと「いまどちらか・押すとどうなるか」が分かりにくかったので、
+    // 両方のアイコンを並べて表示中の面を色で強調する（枠は持たせない）。
+    // パネル側のヘッダーにも同じものを同じ左端に出し、面を行き来してもアイコンの位置が
+    // 動かないようにする（右側のアイコン群に混ぜると、パネル側は並ぶ操作が違うのでずれる）
+    this.paneEl = bar.createDiv("dt-pane");
+    const seg = this.buildPaneSegmentButtons(this.paneEl);
+    this.paneTimelineBtnEl = seg.timeline;
+    this.panePanelBtnEl = seg.panel;
+    this.renderPaneToggle();
+
+    // 月タイトル（クリックで日付ピッカー）。詳しい日付は下の列ヘッダーが持つので、
     // ここは大きな見出しとしてだけ使う
     const dateWrap = bar.createDiv("dt-date");
     this.dateLabelEl = dateWrap.createEl("button", {
@@ -637,14 +650,14 @@ export class DayTimelineView extends ItemView {
     this.trackingEl.onclick = () => void this.plugin.stopTaskTracking(true);
     this.trackingEl.addEventListener("contextmenu", (e: MouseEvent) => {
       e.preventDefault();
-      const menu = new Menu();
-      menu.addItem((i) =>
-        i.setTitle("計測を終了して実績に記録").setIcon("square").onClick(() => void this.plugin.stopTaskTracking(true))
-      );
-      menu.addItem((i) =>
-        i.setTitle("記録せずにやめる").setIcon("x").onClick(() => void this.plugin.stopTaskTracking(false))
-      );
-      menu.showAtMouseEvent(e);
+      this.openHeaderMenu(this.trackingEl, e, (menu) => {
+        menu.addItem((i) =>
+          i.setTitle("計測を終了して実績に記録").setIcon("square").onClick(() => void this.plugin.stopTaskTracking(true))
+        );
+        menu.addItem((i) =>
+          i.setTitle("記録せずにやめる").setIcon("x").onClick(() => void this.plugin.stopTaskTracking(false))
+        );
+      });
     });
     this.renderTracking();
     // タイマーは動作中だけチップを出す（開始は ⋮ メニューの「タイマー…」から）
@@ -652,15 +665,6 @@ export class DayTimelineView extends ItemView {
     this.timerEl.onclick = () => this.plugin.openTimerModal();
     this.renderTimer();
     this.register(this.plugin.timer.onChange(() => this.renderTimer()));
-
-    // 狭い画面（スマホなど）だけに出す、タイムライン ⇄ パネル（Inbox・プロジェクト）の切替。
-    // 1つのトグルだと「いまどちらか・押すとどうなるか」が分かりにくかったので、
-    // 両方のアイコンを並べて表示中の面を色で強調する（右側のアイコン群の一部として、枠は持たせない）
-    this.paneEl = bar.createDiv("dt-pane");
-    const seg = this.buildPaneSegmentButtons(this.paneEl);
-    this.paneTimelineBtnEl = seg.timeline;
-    this.panePanelBtnEl = seg.panel;
-    this.renderPaneToggle();
 
     const modeWrap = bar.createDiv("dt-mode");
     for (const [mode, label] of VIEW_MODES) {
@@ -671,21 +675,21 @@ export class DayTimelineView extends ItemView {
 
     // 狭い画面ではセグメント（4個ぶんの幅）が1行に収まらないので、アイコン1つの
     // メニューに畳む（TickTick 風。選択中の単位はメニュー内のチェックで分かる）。
-    // どちらを出すかは CSS（.dt-view.is-narrow）で切り替える
+    // どちらを出すかは CSS（.dt-view.is-narrow）で切り替える。
+    // メニューはボタンの真下に出す（スマホでも画面下のシートにはしない）
     this.modeMenuBtnEl = bar.createEl("button", {
       cls: "dt-mode-menu-btn",
       attr: { "aria-label": "表示の単位を選ぶ（日・3日・週・月）" },
     });
     setIcon(this.modeMenuBtnEl, iconName("columns"));
     this.modeMenuBtnEl.onclick = () => {
-      const menu = new Menu();
-      for (const [mode, , label] of VIEW_MODES) {
-        menu.addItem((i) =>
-          i.setTitle(label).setChecked(mode === this.mode).onClick(() => this.setViewMode(mode))
-        );
-      }
-      const r = this.modeMenuBtnEl.getBoundingClientRect();
-      menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
+      this.openHeaderMenu(this.modeMenuBtnEl, null, (menu) => {
+        for (const [mode, , label] of VIEW_MODES) {
+          menu.addItem((i) =>
+            i.setTitle(label).setChecked(mode === this.mode).onClick(() => this.setViewMode(mode))
+          );
+        }
+      });
     };
 
     const addBtn = this.iconButton(bar, "plus", "タスクを追加", () => this.openCreateModal(this.date));
@@ -927,7 +931,7 @@ export class DayTimelineView extends ItemView {
    * ⋮ メニューの「表示」まわり: ズーム・予定/実績・メンバーの表示切替。
    * 項目を1つでも足したら true（呼び出し側で区切り線を入れるかの判断に使う）
    */
-  private buildViewMenu(menu: Menu): boolean {
+  private buildViewMenu(menu: MenuLike): boolean {
     const s = this.plugin.settings;
     let empty = true;
     if (this.isTimeline()) {
@@ -993,7 +997,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /** ツールバーの ⋮ メニュー: 表示オプション・ノート・タイマー・定期タスク */
-  private buildMoreMenu(menu: Menu): void {
+  private buildMoreMenu(menu: MenuLike): void {
     // メニューの入口が「表示 ▾」と ⋮ の2つに割れていると、どちらに何があるか覚えられない。
     // 1行に収めるためもあり、表示オプションはこの先頭にまとめる
     if (this.buildViewMenu(menu)) menu.addSeparator();
@@ -1039,26 +1043,19 @@ export class DayTimelineView extends ItemView {
    * ケバブメニューのボタン（⋮）。アイコンをいくつも並べる代わりに、
    * まとめて1つのメニューから選べるようにする。
    * クリックはその場所に、キーボード（Enter / Space）ではボタンの真下にメニューを出す
+   * （スマホではどちらもボタンの真下のドロップダウン。openHeaderMenu を参照）
    */
   private menuButton(
     parent: HTMLElement,
     label: string,
-    build: (menu: Menu) => void
+    build: (menu: MenuLike) => void
   ): HTMLElement {
     const btn = parent.createDiv({
       cls: "clickable-icon dt-icon-btn dt-kebab-btn",
       attr: { "aria-label": label, role: "button", tabindex: "0" },
     });
     setIcon(btn, iconName("more-vertical"));
-    const open = (e: MouseEvent | null) => {
-      const menu = new Menu();
-      build(menu);
-      if (e) menu.showAtMouseEvent(e);
-      else {
-        const r = btn.getBoundingClientRect();
-        menu.showAtPosition({ x: r.left, y: r.bottom });
-      }
-    };
+    const open = (e: MouseEvent | null) => this.openHeaderMenu(btn, e, build);
     btn.addEventListener("click", (e: MouseEvent) => open(e));
     btn.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -1067,6 +1064,33 @@ export class DayTimelineView extends ItemView {
       }
     });
     return btn;
+  }
+
+  /**
+   * ヘッダー（ツールバー・パネルの見出し）のボタンから開くメニュー。
+   * スマホでは Obsidian の Menu が画面下のシートとして出るため、上端のボタンを押してから
+   * 指を画面の下端まで運ぶことになり、選択肢が遠かった。スマホだけはボタンの真下に付く
+   * ドロップダウン（DropdownMenu）で出す。それ以外は従来どおり Obsidian の Menu を
+   * クリック位置（e があるとき）かボタンの真下に出す
+   */
+  private openHeaderMenu(
+    anchor: HTMLElement,
+    e: MouseEvent | null,
+    build: (menu: MenuLike) => void
+  ): void {
+    if (Platform.isPhone) {
+      const menu = new DropdownMenu();
+      build(menu);
+      menu.showAtElement(anchor);
+      return;
+    }
+    const menu = new Menu();
+    build(menu);
+    if (e) menu.showAtMouseEvent(e);
+    else {
+      const r = anchor.getBoundingClientRect();
+      menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
+    }
   }
 
   /** 表示中の日付に合わせて、時間軸と日ごとの列（月表示ならカレンダーのマス）を作る */
@@ -1531,7 +1555,8 @@ export class DayTimelineView extends ItemView {
     const head = this.inboxEl.createDiv("dt-inbox-head");
     if (narrowPanel) {
       // パネルを全面表示中はツールバー（タイムライン⇄パネルの切替ごと）が隠れているので、
-      // 同じ切替セグメントをここに出す（パネル側がアクティブ）
+      // 同じ切替セグメントをツールバーと同じ左端に出す（パネル側がアクティブ）。
+      // 位置・大きさをそろえておくと、面を行き来しても指を動かさずに押せる
       const seg = head.createDiv("dt-pane");
       seg.addClass("is-available", "dt-inbox-toggle");
       const btns = this.buildPaneSegmentButtons(seg);
@@ -1550,6 +1575,8 @@ export class DayTimelineView extends ItemView {
     const label = head.createSpan({ cls: "dt-inbox-label", text: active.label });
     if (!narrowPanel) label.onclick = doToggle;
     head.createSpan({ cls: "dt-inbox-count", text: String(active.count) });
+    // 狭い画面ではツールバーと同じ「左に切替と見出し、右に操作」の並びにそろえる
+    if (narrowPanel) head.createDiv("dt-inbox-spacer");
     // 表示中のタブの操作ボタンだけをヘッダーに出す
     if (active.id === "inbox") {
       const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
@@ -1747,7 +1774,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /** プロジェクトのパネルのヘッダー（⋮）から開くメニュー。active は進行中のプロジェクト */
-  private buildProjectsMenu(menu: Menu, active: ProjectSummary[]): void {
+  private buildProjectsMenu(menu: MenuLike, active: ProjectSummary[]): void {
     menu.addItem((i) =>
       i
         .setTitle("新しいプロジェクトを作成…")
