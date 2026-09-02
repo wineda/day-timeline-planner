@@ -888,7 +888,7 @@
   width: 76px;
   min-width: 76px;
 }
-/* 消化率のバー（プロジェクト行 = タスクの完了数・子タスク行 = ステップの完了数） */
+/* タスクのステップの消化率（バー + %）。プロジェクトの行は今までどおり件数だけ出す */
 .dt-progress {
   display: flex;
   align-items: center;
@@ -911,6 +911,9 @@
 }
 .dt-progress-text {
   flex: 0 0 auto;
+  /* 「100%」でも幅が変わらないようにして、行どうしでバーの左端・右端を揃える */
+  min-width: 3em;
+  text-align: right;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;

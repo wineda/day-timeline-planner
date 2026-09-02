@@ -1957,10 +1957,10 @@ export class DayTimelineView extends ItemView {
       if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
     }
     const total = sum.children.length;
-    const progTd = tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" });
-    this.renderStepProgressBar(progTd, sum.doneCount, total, {
-      label: total ? `タスク ${sum.doneCount}/${total} 完了` : "タスクなし",
-      empty: "–",
+    // プロジェクトの行は今までどおり件数だけ（バーはタスクの行にだけ出す）
+    tr.createEl("td", {
+      cls: "dt-ptc-num dt-ptc-progress",
+      text: total ? `${sum.doneCount}/${total}` : "–",
     });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.planMin) });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.actMin) });
@@ -1995,15 +1995,8 @@ export class DayTimelineView extends ItemView {
     wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
     const dateTd = tr.createEl("td", { cls: "dt-ptc-due" });
     this.renderChildDateBadge(dateTd, child);
-    // 進捗の列: ステップが記録されたタスクだけ、消化率をバーで見せる（無ければ空のまま）
-    const progTd = tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" });
-    const sp = stepProgress(t);
-    if (sp) {
-      this.renderStepProgressBar(progTd, sp.done, sp.total, {
-        label: `ステップ ${sp.done}/${sp.total} 完了`,
-        empty: "",
-      });
-    }
+    // 進捗の列: ステップが記録されたタスクだけ、消化率をバーと % で見せる（無ければ空のまま）
+    this.renderStepProgressBar(tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" }), t);
     const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
     const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(plan) });
@@ -2066,28 +2059,19 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * テーブル表示の「進捗」セル: 消化率のバー + 「2/5」の数字。
-   * プロジェクトの行は子タスクの完了数、子タスクの行はステップの完了数を渡す。
-   * total が 0 なら opts.empty をそのまま出す（バーは出さない）
+   * テーブル表示の「進捗」セル: タスクのステップの消化率をバーと % で出す。
+   * ステップが記録されていないタスクは空のまま（件数は出さない）
    */
-  private renderStepProgressBar(
-    td: HTMLElement,
-    done: number,
-    total: number,
-    opts: { label: string; empty: string }
-  ): void {
-    if (total <= 0) {
-      if (opts.empty) td.setText(opts.empty);
-      td.setAttr("aria-label", opts.label);
-      return;
-    }
-    const pct = Math.round((done / total) * 100);
+  private renderStepProgressBar(td: HTMLElement, t: Task): void {
+    const sp = stepProgress(t);
+    if (!sp) return;
+    const pct = Math.round(sp.ratio * 100);
     const wrap = td.createDiv("dt-progress");
-    wrap.toggleClass("is-complete", done >= total);
+    wrap.toggleClass("is-complete", sp.done >= sp.total);
     const bar = wrap.createDiv("dt-progress-bar");
     bar.createDiv("dt-progress-fill").style.width = `${pct}%`;
-    wrap.createSpan({ cls: "dt-progress-text", text: `${done}/${total}` });
-    td.setAttr("aria-label", `${opts.label}（${pct}%）`);
+    wrap.createSpan({ cls: "dt-progress-text", text: `${pct}%` });
+    td.setAttr("aria-label", `ステップ ${sp.done}/${sp.total} 完了（${pct}%）`);
   }
 
   /** プロジェクトの期日の表示文字列（日付として読めれば M/D、年が違えば YYYY/M/D、読めなければ書かれたまま） */
