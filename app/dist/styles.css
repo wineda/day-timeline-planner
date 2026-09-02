@@ -882,6 +882,46 @@
 .dt-ptc-child {
   padding-left: 14px; /* 親の名前より一段下げて、子タスクだと分かるように */
 }
+/* 「進捗」の列: バーの長さを行どうしで見比べられるよう、幅を固定する */
+.dt-projects-table th.dt-ptc-progress,
+.dt-projects-table td.dt-ptc-progress {
+  width: 76px;
+  min-width: 76px;
+}
+/* 消化率のバー（プロジェクト行 = タスクの完了数・子タスク行 = ステップの完了数） */
+.dt-progress {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.dt-progress-bar {
+  flex: 1 1 auto;
+  min-width: 20px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.dt-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  transition: width 120ms ease;
+}
+.dt-progress-text {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+/* 全部終わったものは緑にして、ひと目で片付いたと分かるように */
+.dt-progress.is-complete .dt-progress-fill {
+  background: var(--color-green, #4caf50);
+}
+.dt-progress.is-complete .dt-progress-text {
+  color: var(--color-green, #4caf50);
+}
 /* プロジェクトの行: ツリーと同じくつかんでタイムラインへドラッグできる */
 .dt-project-trow {
   cursor: grab;

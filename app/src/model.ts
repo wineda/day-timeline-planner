@@ -88,6 +88,24 @@ export function isScheduled(t: Task): t is ScheduledTask {
   return t.start !== null && t.end !== null;
 }
 
+/** ステップの消化度（完了数・件数・割合 0〜1） */
+export interface StepProgress {
+  done: number;
+  total: number;
+  ratio: number;
+}
+
+/**
+ * タスクのステップの消化度。中身が空の行は数えない。
+ * ステップが1件も無ければ null（＝進捗バーを出さない）
+ */
+export function stepProgress(t: Task): StepProgress | null {
+  const steps = (t.steps ?? []).filter((st) => st.text.trim());
+  if (!steps.length) return null;
+  const done = steps.filter((st) => st.done).length;
+  return { done, total: steps.length, ratio: done / steps.length };
+}
+
 /** 追加・編集フォームの内容 */
 export interface TaskDraft {
   title: string;
