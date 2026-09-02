@@ -1000,6 +1000,258 @@
   align-self: center;
 }
 
+/* ---------- 本日のサマリー（サイドバーのタブの下に常に出す） ---------- */
+.dt-summary {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* 見出し「本日 9/2 (水) … 折り返し ⌄」。クリックで畳む / 開く */
+.dt-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px 4px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dt-summary-head:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-summary-title {
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.dt-summary-date {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-brief {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92em;
+}
+.dt-summary.is-complete .dt-summary-brief {
+  color: var(--color-green);
+  font-weight: 600;
+}
+.dt-summary-chevron {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.dt-summary-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 7px;
+}
+.dt-summary-empty {
+  white-space: normal;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+/* 件数・時間のメーター: ラベル | バー | 値 | % */
+.dt-summary-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dt-summary-meter-label {
+  flex: 0 0 2.2em;
+  color: var(--text-faint);
+}
+.dt-summary-bar {
+  flex: 1 1 auto;
+  min-width: 24px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.dt-summary-bar > div {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--interactive-accent);
+  transition: width 0.3s ease;
+}
+.dt-summary-meter.is-complete .dt-summary-bar > div {
+  background: var(--color-green);
+}
+.dt-summary-meter-value {
+  flex: 0 0 auto;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.dt-summary-meter-pct {
+  flex: 0 0 2.8em;
+  text-align: right;
+  white-space: nowrap;
+}
+.dt-summary-meter.is-complete .dt-summary-meter-pct {
+  color: var(--color-green);
+  font-weight: 600;
+}
+.dt-summary-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* いま / 次にやる1件 */
+.dt-summary-next {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 4px 6px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  cursor: pointer;
+}
+.dt-summary-next:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-summary-next-label {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: var(--radius-l);
+  font-size: 0.85em;
+  line-height: 1.5;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dt-summary-next.is-now .dt-summary-next-label {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.dt-summary-next.is-overdue .dt-summary-next-label {
+  background: var(--color-red);
+  color: #fff;
+}
+.dt-summary-next.is-unscheduled .dt-summary-next-label {
+  background: transparent;
+  border: 1px dashed var(--color-orange);
+  color: var(--color-orange);
+  line-height: 1.3;
+}
+.dt-summary-next-time {
+  flex: 0 0 auto;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.dt-summary-next-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-normal);
+}
+.dt-summary-next-dur {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-next-play {
+  flex: 0 0 auto;
+  padding: 2px;
+}
+.dt-summary-next-play svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-summary-next-play.is-tracking {
+  color: var(--color-red);
+}
+
+/* 連続達成と今週の棒グラフ */
+.dt-summary-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.dt-summary-streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-streak.is-active {
+  color: var(--color-orange);
+  font-weight: 600;
+}
+.dt-summary-streak-icon {
+  display: flex;
+}
+.dt-summary-streak-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.dt-summary-week {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+  margin-left: auto;
+}
+.dt-summary-week-day {
+  position: relative;
+  width: 8px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+  cursor: pointer;
+}
+.dt-summary-week-day > div {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+.dt-summary-week-day.is-hit > div {
+  background: var(--interactive-accent);
+}
+.dt-summary-week-day.is-today {
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+.dt-summary-week-day.is-future {
+  opacity: 0.4;
+  cursor: default;
+}
+.dt-summary-week-day.is-empty {
+  opacity: 0.6;
+}
+.dt-summary-note {
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.dt-summary-note:hover {
+  color: var(--text-muted);
+  text-decoration: underline;
+}
+
 .dt-tray-color {
   flex: 0 0 auto;
   width: 8px;
