@@ -790,7 +790,8 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* 日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
+/* 本日・日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
+.dt-project-child-date.is-today,
 .dt-project-child-date.is-undated,
 .dt-project-child-date.is-unscheduled {
   border: 1px solid var(--text-faint);
@@ -798,6 +799,12 @@
   padding: 0 4px;
   font-size: 0.9em;
   line-height: 1.5;
+}
+/* 今日のタスクは青のバッジ（未定・遅れと色で見分けられるように） */
+.dt-project-child-date.is-today {
+  color: var(--color-blue, #4a7fd0);
+  border-color: color-mix(in srgb, var(--color-blue, #4a7fd0) 60%, transparent);
+  font-weight: 600;
 }
 /* 日付ごと未定はアクセント色で一段目立たせる */
 .dt-project-child-date.is-undated {

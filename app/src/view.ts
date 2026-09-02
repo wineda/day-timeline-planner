@@ -1956,12 +1956,9 @@ export class DayTimelineView extends ItemView {
       const dueEl = dueTd.createSpan({ cls: "dt-project-due", text: this.projectDueLabel(fields) });
       if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
     }
-    const total = sum.children.length;
-    // プロジェクトの行は今までどおり件数だけ（バーはタスクの行にだけ出す）
-    tr.createEl("td", {
-      cls: "dt-ptc-num dt-ptc-progress",
-      text: total ? `${sum.doneCount}/${total}` : "–",
-    });
+    // 進捗の列はタスクの行だけに出す（プロジェクトの件数は行が見づらくなるため出さない。
+    // 件数はツリー表示・プロジェクトノートのタスク一覧で見られる）
+    tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.planMin) });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.actMin) });
     // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
@@ -2187,16 +2184,25 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-  /** 子タスクの日付バッジ。日時が決まっていないものは破線のバッジで見分ける（日付ごと未定はアクセント色） */
+  /**
+   * 子タスクの日付バッジ。今日のタスクは「本日」、日付未定は「未定」のバッジにする。
+   * 日時が決まっていないものは枠付きのバッジで見分ける（日付ごと未定はアクセント色・時刻未定はオレンジ）
+   */
   private renderChildDateBadge(parent: HTMLElement, child: ProjectChild): void {
     const t = child.task;
+    const today = !!child.date && isToday(child.date);
     const dateEl = parent.createSpan({
       cls: "dt-project-child-date",
-      text: child.date ? `${child.date.getMonth() + 1}/${child.date.getDate()}` : "未定",
+      text: child.date
+        ? today
+          ? "本日"
+          : `${child.date.getMonth() + 1}/${child.date.getDate()}`
+        : "未定",
     });
     const scheduled = t.start !== null && t.end !== null;
     if (child.date === null) dateEl.addClass("is-undated");
-    else if (!scheduled) dateEl.addClass("is-unscheduled");
+    else if (!scheduled) dateEl.addClass("is-unscheduled"); // 時刻未定（＝遅れ）は今日でもオレンジのまま
+    else if (today) dateEl.addClass("is-today");
   }
 
   /** 子タスク行のふるまい（ツールチップ・ドラッグ・クリック・右クリックメニュー）。ツリー・テーブル共通 */
