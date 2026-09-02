@@ -15,7 +15,7 @@ import {
   type HoverPopover,
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
-import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled } from "./model";
+import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled, stepProgress } from "./model";
 import {
   ConfirmModal,
   PromptModal,
@@ -1922,7 +1922,7 @@ export class DayTimelineView extends ItemView {
     const headRow = table.createEl("thead").createEl("tr");
     headRow.createEl("th", { text: "プロジェクト", cls: "dt-ptc-name" });
     headRow.createEl("th", { text: "期日", cls: "dt-ptc-due" });
-    headRow.createEl("th", { text: "進捗", cls: "dt-ptc-num" });
+    headRow.createEl("th", { text: "進捗", cls: "dt-ptc-num dt-ptc-progress" });
     headRow.createEl("th", { text: "予定", cls: "dt-ptc-num" });
     headRow.createEl("th", { text: "実績", cls: "dt-ptc-num" });
     const body = table.createEl("tbody");
@@ -1957,7 +1957,11 @@ export class DayTimelineView extends ItemView {
       if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
     }
     const total = sum.children.length;
-    tr.createEl("td", { cls: "dt-ptc-num", text: total ? `${sum.doneCount}/${total}` : "–" });
+    const progTd = tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" });
+    this.renderStepProgressBar(progTd, sum.doneCount, total, {
+      label: total ? `タスク ${sum.doneCount}/${total} 完了` : "タスクなし",
+      empty: "–",
+    });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.planMin) });
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.actMin) });
     // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
@@ -1991,7 +1995,15 @@ export class DayTimelineView extends ItemView {
     wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
     const dateTd = tr.createEl("td", { cls: "dt-ptc-due" });
     this.renderChildDateBadge(dateTd, child);
-    tr.createEl("td", { cls: "dt-ptc-num" }); // 進捗の列（子タスクでは空）
+    // 進捗の列: ステップが記録されたタスクだけ、消化率をバーで見せる（無ければ空のまま）
+    const progTd = tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" });
+    const sp = stepProgress(t);
+    if (sp) {
+      this.renderStepProgressBar(progTd, sp.done, sp.total, {
+        label: `ステップ ${sp.done}/${sp.total} 完了`,
+        empty: "",
+      });
+    }
     const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
     const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
     tr.createEl("td", { cls: "dt-ptc-num", text: hmm(plan) });
@@ -2051,6 +2063,31 @@ export class DayTimelineView extends ItemView {
       // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップとテーブル表示で見られる
       this.attachProjectChildBehavior(item, child);
     }
+  }
+
+  /**
+   * テーブル表示の「進捗」セル: 消化率のバー + 「2/5」の数字。
+   * プロジェクトの行は子タスクの完了数、子タスクの行はステップの完了数を渡す。
+   * total が 0 なら opts.empty をそのまま出す（バーは出さない）
+   */
+  private renderStepProgressBar(
+    td: HTMLElement,
+    done: number,
+    total: number,
+    opts: { label: string; empty: string }
+  ): void {
+    if (total <= 0) {
+      if (opts.empty) td.setText(opts.empty);
+      td.setAttr("aria-label", opts.label);
+      return;
+    }
+    const pct = Math.round((done / total) * 100);
+    const wrap = td.createDiv("dt-progress");
+    wrap.toggleClass("is-complete", done >= total);
+    const bar = wrap.createDiv("dt-progress-bar");
+    bar.createDiv("dt-progress-fill").style.width = `${pct}%`;
+    wrap.createSpan({ cls: "dt-progress-text", text: `${done}/${total}` });
+    td.setAttr("aria-label", `${opts.label}（${pct}%）`);
   }
 
   /** プロジェクトの期日の表示文字列（日付として読めれば M/D、年が違えば YYYY/M/D、読めなければ書かれたまま） */
@@ -2184,6 +2221,7 @@ export class DayTimelineView extends ItemView {
     const scheduled = t.start !== null && t.end !== null;
     const plan = scheduled ? t.end! - t.start! : 0;
     const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
+    const sp = stepProgress(t);
     item.setAttr(
       "aria-label",
       `${t.title || "(無題)"}\n` +
@@ -2192,6 +2230,7 @@ export class DayTimelineView extends ItemView {
             (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
           : "日付は未定") +
         (plan || act ? `\n実績 ${act ? hmm(act) : "–"} / 予定 ${plan ? hmm(plan) : "–"}` : "") +
+        (sp ? `\nステップ ${sp.done}/${sp.total}（${Math.round(sp.ratio * 100)}%）` : "") +
         (child.date
           ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
           : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
