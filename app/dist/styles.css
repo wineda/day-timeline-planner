@@ -1076,6 +1076,7 @@
   color: var(--text-faint);
 }
 .dt-summary-bar {
+  display: flex;
   flex: 1 1 auto;
   min-width: 24px;
   height: 8px;
@@ -1083,14 +1084,28 @@
   background: var(--background-modifier-border);
   overflow: hidden;
 }
-.dt-summary-bar > div {
+/* タスクごとの区切り。幅は flex-grow（件数なら 1、時間なら予定の分）に比例。
+   2つ目からの左端の細い線がタスクの境目（サイドバーの背景色で抜く） */
+.dt-summary-seg {
+  flex: 1 0 0;
+  min-width: 0;
   height: 100%;
-  border-radius: 4px;
-  background: var(--interactive-accent);
-  transition: width 0.3s ease;
+  box-sizing: border-box;
+  background: var(--background-modifier-border);
 }
-.dt-summary-meter.is-complete .dt-summary-bar > div {
+.dt-summary-seg + .dt-summary-seg {
+  border-left: 1px solid var(--background-secondary);
+}
+.dt-summary-seg.is-done {
+  background: var(--interactive-accent);
+}
+.dt-summary-meter.is-complete .dt-summary-seg.is-done {
   background: var(--color-green);
+}
+/* 区切りが多すぎるときの1本の棒 */
+.dt-summary-seg.is-plain {
+  border-radius: 4px;
+  transition: flex-basis 0.3s ease;
 }
 .dt-summary-meter-value {
   flex: 0 0 auto;

@@ -141,6 +141,9 @@ const SIDEBAR_MAX_WIDTH = 800;
 /** プロジェクトのテーブル表示の列数（名前・期日・進捗・予定・実績） */
 const PROJECT_TABLE_COLS = 5;
 
+/** 本日のサマリーのバーをタスクごとに区切る上限。これより多いと区切り線だけになるので1本の棒にする */
+const MAX_SUMMARY_SEGMENTS = 40;
+
 /** タッチでこれ以上（px）動いたら「タップ・長押し」ではなくスクロール等とみなす */
 const TOUCH_SLOP = 10;
 /** タッチの長押し（ここからドラッグ）と判定するまでの時間（ms）。
@@ -2672,11 +2675,21 @@ export class DayTimelineView extends ItemView {
       });
     } else {
       // 件数と時間の2本のメーター。件数だけだと短いタスクを片付けたくなるので、
-      // 予定時間ベース（完了したタスクの予定時間 / 今日の予定時間）も並べる
+      // 予定時間ベース（完了したタスクの予定時間 / 今日の予定時間）も並べる。
+      // バーはタスクごとに区切る（件数は等分、時間は予定の長さに比例）ので、1つのタスクの大きさが見える
+      const own = all
+        .filter((t) => !t.owner && !t.forwarded)
+        .sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity));
+      const segTip = (t: Task) =>
+        [
+          this.displayTitle(t),
+          (isScheduled(t) ? `${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}（${hmm(t.end - t.start)}）` : "時刻未定") +
+            (t.done ? " · 完了" : ""),
+        ].join("\n");
       this.summaryMeter(
         body,
         "件数",
-        st.done / st.total,
+        own.map((t) => ({ weight: 1, done: t.done, tip: segTip(t) })),
         `${st.done}/${st.total}`,
         `完了 ${st.done} 件 / 全 ${st.total} 件（持ち越し済み [>] のタスクは数えません）`
       );
@@ -2684,7 +2697,7 @@ export class DayTimelineView extends ItemView {
         this.summaryMeter(
           body,
           "時間",
-          st.donePlan / st.plan,
+          own.filter(isScheduled).map((t) => ({ weight: t.end - t.start, done: t.done, tip: segTip(t) })),
           `${hmm(st.donePlan)}/${hmm(st.plan)}`,
           `完了したタスクの予定時間 ${hmm(st.donePlan)} / 今日の予定時間の合計 ${hmm(st.plan)}`
         );
@@ -2734,15 +2747,40 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** サマリーのメーター1本（ラベル・バー・値・%） */
-  private summaryMeter(parent: HTMLElement, label: string, ratio: number, value: string, tip: string): void {
+  /**
+   * サマリーのメーター1本（ラベル・バー・値・%）。
+   * バーはタスクごとの区切り（縦線）入りで、幅は weight に比例（件数なら 1、時間なら予定の分）。
+   * 完了したタスクを左に寄せて塗るので、塗りの境目が完了 / 未完了の境目と一致し、
+   * 残りの区切りで「大きいタスクがいくつ残っているか」も見える。区切りにマウスを乗せるとそのタスク名
+   */
+  private summaryMeter(
+    parent: HTMLElement,
+    label: string,
+    segments: { weight: number; done: boolean; tip: string }[],
+    value: string,
+    tip: string
+  ): void {
+    const total = segments.reduce((n, sg) => n + sg.weight, 0);
+    const done = segments.reduce((n, sg) => n + (sg.done ? sg.weight : 0), 0);
+    const pct = total > 0 ? Math.round(clamp(done / total, 0, 1) * 100) : 0;
     const row = parent.createDiv("dt-summary-meter");
     row.setAttr("aria-label", tip);
-    const pct = Math.round(clamp(ratio, 0, 1) * 100);
-    row.toggleClass("is-complete", pct >= 100);
+    row.toggleClass("is-complete", total > 0 && pct >= 100);
     row.createSpan({ cls: "dt-summary-meter-label", text: label });
-    const fill = row.createDiv("dt-summary-bar").createDiv();
-    fill.style.width = `${pct}%`;
+    const bar = row.createDiv("dt-summary-bar");
+    const ordered = [...segments.filter((sg) => sg.done), ...segments.filter((sg) => !sg.done)];
+    if (ordered.length <= MAX_SUMMARY_SEGMENTS) {
+      for (const sg of ordered) {
+        const seg = bar.createDiv("dt-summary-seg");
+        seg.style.flexGrow = String(sg.weight);
+        seg.toggleClass("is-done", sg.done);
+        seg.setAttr("aria-label", sg.tip);
+      }
+    } else {
+      // 区切りが多すぎると線だけになるので、1本の棒として塗る
+      const fill = bar.createDiv("dt-summary-seg is-done is-plain");
+      fill.style.flex = `0 0 ${pct}%`;
+    }
     row.createSpan({ cls: "dt-summary-meter-value", text: value });
     row.createSpan({ cls: "dt-summary-meter-pct", text: `${pct}%` });
   }
