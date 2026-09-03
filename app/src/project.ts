@@ -303,6 +303,11 @@ export interface ProjectSummary {
   done?: boolean;
   /** プロジェクト自身の期日・チケット・ドキュメント（ノートから読む） */
   fields?: ProjectFields;
+  /**
+   * プロジェクトに属さないタスク 1 件を「1 件 1 体」として扱う仮の集計（ノートは無い）。
+   * パネルには出さず、ボス戦の演出とペットにだけ使う
+   */
+  solo?: boolean;
 }
 
 export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSummary {

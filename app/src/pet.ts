@@ -17,6 +17,8 @@ export interface PetInfo {
   taskTitle: string;
   /** 「計測中」「いま」「次」「未了」「未定」 */
   label: string;
+  /** プロジェクトに属さないタスクを 1 件 1 体として出しているか（プロジェクトノートは無い） */
+  solo?: boolean;
 }
 
 export interface PetPosition {
@@ -62,11 +64,16 @@ export class PetWidget {
     const bubble = this.bubbleEl!;
     bubble.empty();
     bubble.createDiv({ cls: "dt-pet-bubble-label", text: `${info.label}: ${info.taskTitle}` });
+    // 単独タスクはプロジェクト名がタスク名と同じなので、HP だけを出す
+    const hpText = `HP ${hmm(info.hp.remain)} / ${hmm(info.hp.total)}`;
     bubble.createDiv({
       cls: "dt-pet-bubble-project",
-      text: `${info.projectName} · HP ${hmm(info.hp.remain)} / ${hmm(info.hp.total)}`,
+      text: info.solo ? `${info.monster.rank} · ${hpText}` : `${info.projectName} · ${hpText}`,
     });
-    el.setAttr("aria-label", `${info.label}: ${info.taskTitle}（${info.projectName}）`);
+    el.setAttr(
+      "aria-label",
+      info.solo ? `${info.label}: ${info.taskTitle}` : `${info.label}: ${info.taskTitle}（${info.projectName}）`
+    );
     this.place();
   }
 
@@ -139,9 +146,12 @@ export class PetWidget {
       e.preventDefault();
       const menu = new Menu();
       menu.addItem((i) => i.setTitle("タスクを編集").setIcon("pencil").onClick(() => this.handlers.onClick()));
-      menu.addItem((i) =>
-        i.setTitle("プロジェクトノートを開く").setIcon("folder-open").onClick(() => this.handlers.onOpenProject())
-      );
+      // 単独タスク（1 件 1 体）にはプロジェクトノートが無い
+      if (!this.info?.solo) {
+        menu.addItem((i) =>
+          i.setTitle("プロジェクトノートを開く").setIcon("folder-open").onClick(() => this.handlers.onOpenProject())
+        );
+      }
       menu.addSeparator();
       menu.addItem((i) => i.setTitle("ペットを隠す（設定で戻せます）").setIcon("eye-off").onClick(() => this.handlers.onHide()));
       menu.showAtMouseEvent(e);
