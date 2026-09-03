@@ -131,6 +131,27 @@ interface DayColumn {
   canvasEl: HTMLElement;
   eventsEl: HTMLElement;
   nowEl: HTMLElement | null;
+  /** この列が属する段（2週間表示では今週・来週の2段。それ以外の表示は1段だけ） */
+  row: TimelineRow;
+}
+
+/**
+ * タイムラインの1段（曜日ヘッダー + 時間軸 + 日の列）。
+ * 2週間表示では週ごとに1段を上下に重ね、他の表示では1段だけ作る。
+ * 段ごとにヘッダー（sticky）と時間軸を持つので、列幅・文字の大きさは週表示と同じまま
+ */
+interface TimelineRow {
+  /** 段の入れ物。sticky なヘッダーはこの中で止まり、次の段に押し出される */
+  el: HTMLElement;
+  headersEl: HTMLElement;
+  /** 2週間表示の段の見出し（「今週 8/30〜9/5」と週の予実合計）。他の表示では null */
+  weekLabelEl: HTMLElement | null;
+  labelsEl: HTMLElement;
+  daysEl: HTMLElement;
+  columns: DayColumn[];
+  /** 現在時刻: 全列をまたぐ細い線と、時刻の目盛りに出す「17:58」（今日がこの段にあるときだけ） */
+  nowLineEl: HTMLElement | null;
+  nowLabelEl: HTMLElement | null;
 }
 
 /** 1日分の読み込み結果 */
@@ -182,6 +203,7 @@ const VIEW_MODES: [ViewMode, string, string][] = [
   ["day", "日", "日表示"],
   ["3day", "3日", "3日表示"],
   ["week", "週", "週表示"],
+  ["2week", "2週", "2週間表示"],
   ["month", "月", "月表示"],
 ];
 
@@ -229,12 +251,13 @@ export class DayTimelineView extends ItemView {
   /** パネルで畳んでいるプロジェクトグループ（"" = 未分類） */
   private collapsedGroups = new Set<string>();
   private scrollEl!: HTMLElement;
-  private headersEl!: HTMLElement;
-  private labelsEl!: HTMLElement;
-  private daysEl!: HTMLElement;
-  /** 現在時刻の線: 全列をまたぐ細い線と、左の時刻の目盛りに出す「17:58」のラベル（今日が表示範囲にあるときだけ） */
-  private nowLineEl: HTMLElement | null = null;
-  private nowLabelEl: HTMLElement | null = null;
+  /** タイムラインの段（2週間表示では今週・来週の2段、他は1段）。columns は全段の列を通した一覧 */
+  private rows: TimelineRow[] = [];
+  /**
+   * 2週間表示の上段の週の始まり。基準日がこの2週間の中にある間は動かさない
+   * （下段の日を日付ピッカーや日報から選んでも、段が入れ替わらないように）
+   */
+  private twoWeekAnchor: Date | null = null;
   /** 幅が狭い（スマホなど）とき true。タイムラインとパネルを切り替えて片方だけ表示する */
   private isNarrow = false;
   /** 狭い画面で表示中の面 */
@@ -386,7 +409,7 @@ export class DayTimelineView extends ItemView {
   /** タイムラインの高さの変化に追従する（ビューのリサイズ・隠れていたタイムラインの再表示時） */
   private remeasureTimeline(): void {
     // ズーム指定（4h/8h/12h）はビューの高さから縮尺を決めるので、高さが変わったら作り直す
-    if (this.mode !== "month" && this.plugin.settings.zoomHours && this.scrollEl) {
+    if (this.mode !== "month" && this.usesAutoScale() && this.scrollEl) {
       const h = this.computeHourHeight();
       if (Math.abs(h - this.hourHeightPx) > 0.5) this.rebuildTimeline();
     }
@@ -473,6 +496,7 @@ export class DayTimelineView extends ItemView {
     this.mode = this.defaultViewMode(); // 設定画面で「既定の表示」を変えたときも追従する
     if (this.mode !== prevMode) this.alignThreeDayToToday();
     this.buildGrid();
+    this.remeasureTimeline(); // ヘッダーの高さが確定してから、ビューの高さに合わせた縮尺を取り直す
     this.shouldScroll = true;
     void this.reload();
   }
@@ -494,6 +518,14 @@ export class DayTimelineView extends ItemView {
         return addDays(this.date, 3 * dir);
       case "week":
         return addDays(this.date, 7 * dir);
+      case "2week": {
+        // 2週間ぶん進める。基準日が下段にあっても、上段の週を基準に曜日を保ったまま送る
+        const start = this.twoWeekStart();
+        const offset = Math.round(
+          (this.date.getTime() - startOfWeek(this.date, this.plugin.settings.weekStart).getTime()) / 86_400_000
+        );
+        return addDays(start, 14 * dir + offset);
+      }
       case "month": {
         const d = new Date(this.date.getFullYear(), this.date.getMonth() + dir, 1);
         const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
@@ -556,19 +588,20 @@ export class DayTimelineView extends ItemView {
     void this.plugin.persistSettings();
     this.alignThreeDayToToday();
     this.buildGrid();
+    this.remeasureTimeline(); // ヘッダーの高さが確定してから、ビューの高さに合わせた縮尺を取り直す
     this.shouldScroll = true;
     void this.reload();
   }
 
-  /** 日 → 3日 → 週 → 月 → 日 … と切り替える */
+  /** 日 → 3日 → 週 → 2週 → 月 → 日 … と切り替える */
   toggleViewMode(): void {
-    const order: ViewMode[] = ["day", "3day", "week", "month"];
+    const order: ViewMode[] = ["day", "3day", "week", "2week", "month"];
     this.setViewMode(order[(order.indexOf(this.mode) + 1) % order.length]);
   }
 
   // ---------- 表示している日 ----------
 
-  /** 表示中の日付（日: 1日 / 3日: 基準日から3日 / 週: 7日 / 月: カレンダーの 6 週分） */
+  /** 表示中の日付（日: 1日 / 3日: 基準日から3日 / 週: 7日 / 2週: 14日 / 月: カレンダーの 6 週分） */
   private visibleDays(): Date[] {
     const ws = this.plugin.settings.weekStart;
     switch (this.mode) {
@@ -580,6 +613,10 @@ export class DayTimelineView extends ItemView {
         const first = startOfWeek(this.date, ws);
         return Array.from({ length: 7 }, (_v, i) => addDays(first, i));
       }
+      case "2week": {
+        const first = this.twoWeekStart();
+        return Array.from({ length: 14 }, (_v, i) => addDays(first, i));
+      }
       case "month": {
         const first = startOfWeek(new Date(this.date.getFullYear(), this.date.getMonth(), 1), ws);
         return Array.from({ length: 42 }, (_v, i) => addDays(first, i));
@@ -587,9 +624,27 @@ export class DayTimelineView extends ItemView {
     }
   }
 
+  /**
+   * 2週間表示の上段の週の始まり。基準日が今の2週間に入っていればそのまま、
+   * 外れていれば基準日の週を上段にし直す
+   */
+  private twoWeekStart(): Date {
+    const a = this.twoWeekAnchor;
+    if (a && this.date >= a && this.date < addDays(a, 14)) return a;
+    const start = startOfWeek(this.date, this.plugin.settings.weekStart);
+    this.twoWeekAnchor = start;
+    return start;
+  }
+
   /** タイムライン（時間軸）を出すモードか */
   private isTimeline(): boolean {
     return this.mode !== "month";
+  }
+
+  /** 縮尺をビューの高さから決めるモードか（4h/8h/12h のズーム、または 2週間表示の「2段を1画面に」） */
+  private usesAutoScale(): boolean {
+    const s = this.plugin.settings;
+    return s.zoomHours > 0 || (this.mode === "2week" && s.twoWeekFit);
   }
 
   /** 表示ONのメンバー（ブロック形式のときだけ） */
@@ -724,7 +779,7 @@ export class DayTimelineView extends ItemView {
     // メニューはボタンの真下に出す（スマホでも画面下のシートにはしない）
     this.modeMenuBtnEl = bar.createEl("button", {
       cls: "dt-mode-menu-btn",
-      attr: { "aria-label": "表示の単位を選ぶ（日・3日・週・月）" },
+      attr: { "aria-label": "表示の単位を選ぶ（日・3日・週・2週・月）" },
     });
     setIcon(this.modeMenuBtnEl, iconName("columns"));
     this.modeMenuBtnEl.onclick = () => {
@@ -967,6 +1022,7 @@ export class DayTimelineView extends ItemView {
     // 手動ズームに入ったら「一度に表示する時間」(4h/8h/12h) は外し、「1時間の高さ」として記憶する。
     // 0.1px 単位に丸めるのは、トラックパッドの細かい delta でも値が進む（整数に丸めると止まる）ようにするため
     s.zoomHours = 0;
+    if (this.mode === "2week") s.twoWeekFit = false; // 手で縮尺を変えたら「2段を1画面に」も外す
     s.hourHeight = Math.round(next * 10) / 10;
     this.persistZoomDebounced();
     this.rebuildTimeline(this.pendingZoomClientY);
@@ -983,6 +1039,13 @@ export class DayTimelineView extends ItemView {
       empty = false;
       // 一度に表示する時間の幅（30分単位で作業する日は 4時間 に寄せる、など）
       menu.addItem((i) => i.setTitle("一度に表示する時間").setDisabled(true));
+      // 2週間表示だけ: 今週・来週の2段が1画面に収まる縮尺（既定）。下の項目を選ぶと外れる
+      const fit = this.mode === "2week" && s.twoWeekFit;
+      if (this.mode === "2week") {
+        menu.addItem((i) =>
+          i.setTitle("2段（今週・来週）を1画面に収める").setChecked(fit).onClick(() => this.setTwoWeekFit(true))
+        );
+      }
       const zooms: [number, string][] = [
         [4, "4時間（細かい作業向け）"],
         [8, "8時間"],
@@ -991,7 +1054,7 @@ export class DayTimelineView extends ItemView {
       ];
       for (const [hours, label] of zooms) {
         menu.addItem((i) =>
-          i.setTitle(label).setChecked(s.zoomHours === hours).onClick(() => this.setZoom(hours))
+          i.setTitle(label).setChecked(!fit && s.zoomHours === hours).onClick(() => this.setZoom(hours))
         );
       }
       // 予定 / 予実 / 実績 の切替（ブロック形式のみ）
@@ -1144,41 +1207,71 @@ export class DayTimelineView extends ItemView {
     this.hourHeightPx = this.computeHourHeight(); // scrollEl を空にする前（レイアウトが生きているうち）に測る
     this.scrollEl.empty();
     this.columns = [];
+    this.rows = [];
     this.monthCells.clear();
     this.taskEls.clear();
 
     this.contentEl.toggleClass("is-week", this.mode === "week");
+    this.contentEl.toggleClass("is-2week", this.mode === "2week");
     this.contentEl.toggleClass("is-3day", this.mode === "3day");
     this.contentEl.toggleClass("is-day", this.mode === "day");
     this.contentEl.toggleClass("is-month", this.mode === "month");
-    this.contentEl.toggleClass("is-multi-day", this.mode === "week" || this.mode === "3day");
+    this.contentEl.toggleClass(
+      "is-multi-day",
+      this.mode === "week" || this.mode === "3day" || this.mode === "2week"
+    );
 
     if (this.mode === "month") {
       this.buildMonthGrid();
       return;
     }
 
-    // 曜日・日付のヘッダー（スクロールしても上に残る）
-    this.headersEl = this.scrollEl.createDiv("dt-day-headers");
-    this.headersEl.createDiv("dt-day-headers-spacer");
-    const headerCells = this.headersEl.createDiv("dt-day-headers-cells");
-
-    const grid = this.scrollEl.createDiv("dt-grid");
-    this.labelsEl = grid.createDiv("dt-labels");
-    this.daysEl = grid.createDiv("dt-days");
-
     const height = (s.endHour - s.startHour) * this.hourHeightPx;
-    this.labelsEl.style.height = height + "px";
+    const days = this.visibleDays();
+    // 2週間表示は 7 日ずつの段に分けて上下に重ねる（上段が基準日の週、下段がその翌週）。
+    // 列幅を週表示と同じに保つための作り。他の表示は 1 段だけ
+    const perRow = this.mode === "2week" ? 7 : days.length;
+    for (let i = 0; i < days.length; i += perRow) {
+      this.buildRow(days.slice(i, i + perRow), height);
+    }
+    this.renderDayHeaders();
+  }
+
+  /** 1段ぶん（曜日ヘッダー + 時間軸 + 日の列）を scrollEl の末尾に作る */
+  private buildRow(dates: Date[], height: number): void {
+    const s = this.plugin.settings;
+    const rowEl = this.scrollEl.createDiv("dt-row");
+
+    // 曜日・日付のヘッダー（スクロールしても段の上に残る）。2週間表示では段の見出しをその上に足す
+    const headersEl = rowEl.createDiv("dt-day-headers");
+    const weekLabelEl = this.mode === "2week" ? headersEl.createDiv("dt-week-label") : null;
+    headersEl.createDiv("dt-day-headers-spacer");
+    const headerCells = headersEl.createDiv("dt-day-headers-cells");
+
+    const grid = rowEl.createDiv("dt-grid");
+    const labelsEl = grid.createDiv("dt-labels");
+    const daysEl = grid.createDiv("dt-days");
+    labelsEl.style.height = height + "px";
 
     for (let h = s.startHour; h <= s.endHour; h++) {
       const top = (h - s.startHour) * this.hourHeightPx;
-      const label = this.labelsEl.createDiv({ cls: "dt-hour-label", text: `${h}:00` });
+      const label = labelsEl.createDiv({ cls: "dt-hour-label", text: `${h}:00` });
       label.style.top = top + "px";
     }
 
-    for (const date of this.visibleDays()) {
+    const row: TimelineRow = {
+      el: rowEl,
+      headersEl,
+      weekLabelEl,
+      labelsEl,
+      daysEl,
+      columns: [],
+      nowLineEl: null,
+      nowLabelEl: null,
+    };
+    for (const date of dates) {
       const headerEl = headerCells.createDiv("dt-day-header");
-      const canvasEl = this.daysEl.createDiv("dt-canvas");
+      const canvasEl = daysEl.createDiv("dt-canvas");
       canvasEl.style.height = height + "px";
       canvasEl.setAttr("data-date", dateKey(date));
 
@@ -1192,12 +1285,13 @@ export class DayTimelineView extends ItemView {
         }
       }
       const eventsEl = canvasEl.createDiv("dt-events");
-      const col: DayColumn = { date, key: dateKey(date), headerEl, canvasEl, eventsEl, nowEl: null };
+      const col: DayColumn = { date, key: dateKey(date), headerEl, canvasEl, eventsEl, nowEl: null, row };
       canvasEl.addEventListener("pointerdown", (e) => this.onCanvasPointerDown(e, col));
       canvasEl.addEventListener("click", (e) => this.onCanvasClick(e, col));
+      row.columns.push(col);
       this.columns.push(col);
     }
-    this.renderDayHeaders();
+    this.rows.push(row);
   }
 
   /** 月表示のカレンダー（曜日ヘッダー + 6 週 × 7 日のマス） */
@@ -1286,6 +1380,33 @@ export class DayTimelineView extends ItemView {
           }
         });
       }
+    }
+    this.renderWeekLabels();
+  }
+
+  /**
+   * 2週間表示の段の見出し: 「今週」「来週」などの呼び名と日付の範囲。
+   * 週の予実合計は renderDayTotals が末尾の入れ物（dt-week-label-total）に入れる。
+   * 日をまたいだときも呼び名を付け替えられるよう、renderDayHeaders から毎回描き直す
+   */
+  private renderWeekLabels(): void {
+    const thisWeek = startOfWeek(startOfDay(new Date()), this.plugin.settings.weekStart);
+    for (const row of this.rows) {
+      if (!row.weekLabelEl || !row.columns.length) continue;
+      const first = row.columns[0].date;
+      const last = row.columns[row.columns.length - 1].date;
+      const diff = Math.round((first.getTime() - thisWeek.getTime()) / (7 * 86_400_000));
+      const rel =
+        diff === 0 ? "今週" : diff === 1 ? "来週" : diff === -1 ? "先週" : diff === 2 ? "再来週" : "";
+      const prevTotal = row.weekLabelEl.querySelector<HTMLElement>(".dt-week-label-total")?.textContent ?? "";
+      row.weekLabelEl.empty();
+      row.weekLabelEl.toggleClass("is-current", diff === 0);
+      if (rel) row.weekLabelEl.createSpan({ cls: "dt-week-label-rel", text: rel });
+      row.weekLabelEl.createSpan({
+        cls: "dt-week-label-range",
+        text: `${moment(first).format("M/D")}〜${moment(last).format("M/D")}`,
+      });
+      row.weekLabelEl.createSpan({ cls: "dt-week-label-total", text: prevTotal });
     }
   }
 
@@ -1401,6 +1522,12 @@ export class DayTimelineView extends ItemView {
           startOfWeek(this.date, this.plugin.settings.weekStart)
         );
         break;
+      case "2week": {
+        // 今の2週間の中なら段はそのまま（下段の日を選んでも上下が入れ替わらない）
+        const a = this.twoWeekStart();
+        sameRange = next >= a && next < addDays(a, 14);
+        break;
+      }
       case "month":
         sameRange =
           next.getFullYear() === this.date.getFullYear() && next.getMonth() === this.date.getMonth();
@@ -2609,7 +2736,7 @@ export class DayTimelineView extends ItemView {
       this.startDrag(chip, e, {
         onMove: (_dy, ev) => {
           chip.addClass("is-dragging");
-          const over = this.overGrid(ev) ? this.columnAtX(ev.clientX) : null;
+          const over = this.overGrid(ev) ? this.columnAt(ev.clientX, ev.clientY) : null;
           if (!over) {
             dropStart = null;
             dropCol = null;
@@ -2623,7 +2750,7 @@ export class DayTimelineView extends ItemView {
             dropCol = over;
           }
           dropStart = clamp(
-            this.snapFloor(this.clientYToMinutes(ev.clientY)),
+            this.snapFloor(this.clientYToMinutes(ev.clientY, over.row)),
             dayStart,
             Math.max(dayStart, dayEnd - duration)
           );
@@ -3538,53 +3665,64 @@ export class DayTimelineView extends ItemView {
     const show = this.mode !== "month" && !!this.plugin.blockStore();
     let rangePlan = 0;
     let rangeAct = 0;
-    if (show) {
-      for (const col of this.columns) {
-        let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
-        const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
-        const plan = tasks.reduce((n, t) => n + (isScheduled(t) ? t.end - t.start : 0), 0);
-        const act = tasks.reduce((n, t) => n + t.actual.reduce((m, r) => m + (r.end - r.start), 0), 0);
-        rangePlan += plan;
-        rangeAct += act;
-        if (!plan && !act) {
-          el?.remove();
-          continue;
-        }
-        if (!el) el = col.headerEl.createDiv("dt-day-total");
-        el.empty();
-        // 「実績/予定」（小数1桁の時間）と差異を1つのピルにまとめる。列が広ければ1行、
-        // 狭ければ差異が自然に2行目へ折り返す。下端の極小バーが予定に対する実績の割合
-        const nums = el.createSpan("dt-day-total-nums");
-        nums.createSpan({ cls: "dt-day-total-act", text: hoursDecimal(act) });
-        nums.createSpan({ text: `/${hoursDecimal(plan)}` });
-        el.setAttr("aria-label", `実績 ${hmm(act)} / 予定 ${hmm(plan)}`);
-        if (plan && act) {
-          const diff = act - plan;
-          const d = el.createSpan({
-            cls: "dt-day-total-diff",
-            text: `${diff >= 0 ? "+" : "-"}${hoursDecimal(Math.abs(diff))}`,
-          });
-          d.toggleClass("is-over", diff > 0);
-        }
-        if (plan) {
-          const fill = el.createDiv("dt-day-total-bar").createDiv();
-          fill.style.width = `${Math.min(100, Math.round((act / plan) * 100))}%`;
-          fill.toggleClass("is-over", act > plan);
+    for (const row of this.rows) {
+      let rowPlan = 0;
+      let rowAct = 0;
+      if (show) {
+        for (const col of row.columns) {
+          let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
+          const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
+          const plan = tasks.reduce((n, t) => n + (isScheduled(t) ? t.end - t.start : 0), 0);
+          const act = tasks.reduce((n, t) => n + t.actual.reduce((m, r) => m + (r.end - r.start), 0), 0);
+          rowPlan += plan;
+          rowAct += act;
+          // 実績（小数1桁の時間）と予定との差異を「14.1 +1.6」の1行だけで出す。
+          // 予定の時間そのものは幅を取るので出さず、マウスを乗せたときの内訳（aria-label）で
+          // 分かるようにする。実績がまだ無い日（これからの日）は何も出さない
+          if (!act) {
+            el?.remove();
+            continue;
+          }
+          if (!el) el = col.headerEl.createDiv("dt-day-total");
+          el.empty();
+          el.setAttr("aria-label", `実績 ${hmm(act)} / 予定 ${hmm(plan)}`);
+          el.createSpan({ cls: "dt-day-total-act", text: hoursDecimal(act) });
+          if (plan) {
+            const diff = act - plan;
+            const d = el.createSpan({
+              cls: "dt-day-total-diff",
+              text: `${diff >= 0 ? "+" : "-"}${hoursDecimal(Math.abs(diff))}`,
+            });
+            d.toggleClass("is-over", diff > 0);
+          }
         }
       }
+      rangePlan += rowPlan;
+      rangeAct += rowAct;
+      // 2週間表示: 段の見出しの右端にその週の合計
+      const totalEl = row.weekLabelEl?.querySelector<HTMLElement>(".dt-week-label-total");
+      if (totalEl) totalEl.setText(show && (rowPlan || rowAct) ? this.formatRangeTotal(rowPlan, rowAct) : "");
     }
-    // 週・3日表示のヘッダーに範囲合計
+    // 週・2週・3日表示のヘッダーに範囲合計
     if (this.rangeTotalEl) {
       let text = "";
-      if (show && (this.mode === "week" || this.mode === "3day") && (rangePlan || rangeAct)) {
-        const diff = rangeAct - rangePlan;
-        text =
-          `${this.mode === "week" ? "週" : "計"}: 予 ${hmm(rangePlan)}・実 ${hmm(rangeAct)}` +
-          (rangePlan && rangeAct ? `（${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))}）` : "");
+      const multi = this.mode === "week" || this.mode === "3day" || this.mode === "2week";
+      if (show && multi && (rangePlan || rangeAct)) {
+        const label = this.mode === "week" ? "週" : this.mode === "2week" ? "2週" : "計";
+        text = `${label}: ${this.formatRangeTotal(rangePlan, rangeAct)}`;
       }
       this.rangeTotalEl.setText(text);
       this.rangeTotalEl.toggleClass("is-visible", !!text);
     }
+  }
+
+  /** 範囲の予実合計の文言: 「予 32:00・実 33:15（+1:15）」（差異は両方あるときだけ） */
+  private formatRangeTotal(plan: number, act: number): string {
+    const diff = act - plan;
+    return (
+      `予 ${hmm(plan)}・実 ${hmm(act)}` +
+      (plan && act ? `（${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))}）` : "")
+    );
   }
 
   /** 月表示: 各マスにその日のタスクを並べる */
@@ -3702,7 +3840,6 @@ export class DayTimelineView extends ItemView {
     const dayEnd = s.endHour * 60;
     const m = nowMinutes();
     const inRange = s.showCurrentTime && m >= dayStart && m <= dayEnd;
-    let hasToday = false;
     for (const col of this.columns) {
       const show = inRange && isToday(col.date);
       if (!show) {
@@ -3710,38 +3847,41 @@ export class DayTimelineView extends ItemView {
         col.nowEl = null;
         continue;
       }
-      hasToday = true;
       if (!col.nowEl || !col.nowEl.isConnected) {
         col.nowEl = col.canvasEl.createDiv("dt-now");
       }
       col.nowEl.style.top = this.minutesToPx(m) + "px";
     }
 
-    const showAll = hasToday && this.mode !== "month" && !!this.daysEl?.isConnected;
-    if (!showAll) {
-      this.nowLineEl?.remove();
-      this.nowLineEl = null;
-      this.nowLabelEl?.remove();
-      this.nowLabelEl = null;
-      this.labelsEl?.querySelectorAll<HTMLElement>(".dt-hour-label.is-near-now").forEach((el) =>
-        el.removeClass("is-near-now")
-      );
-      return;
-    }
+    // 全列をまたぐ線と目盛りのラベルは段ごと。今日がある段（2週間表示なら今週の段）にだけ出す
     const top = this.minutesToPx(m);
-    if (!this.nowLineEl || !this.nowLineEl.isConnected) {
-      this.nowLineEl = this.daysEl.createDiv("dt-now-line");
-    }
-    this.nowLineEl.style.top = top + "px";
-    if (!this.nowLabelEl || !this.nowLabelEl.isConnected) {
-      this.nowLabelEl = this.labelsEl.createDiv("dt-now-label");
-    }
-    this.nowLabelEl.setText(minutesToHHMM(m));
-    this.nowLabelEl.style.top = top + "px";
-    // 現在時刻のラベルと重なる時刻の目盛り（前後 12px 以内）は隠す
-    for (const el of Array.from(this.labelsEl.querySelectorAll<HTMLElement>(".dt-hour-label"))) {
-      const labelTop = parseFloat(el.style.top) || 0;
-      el.toggleClass("is-near-now", Math.abs(labelTop - top) < 12);
+    for (const row of this.rows) {
+      const showAll =
+        inRange && this.mode !== "month" && row.daysEl.isConnected && row.columns.some((c) => isToday(c.date));
+      if (!showAll) {
+        row.nowLineEl?.remove();
+        row.nowLineEl = null;
+        row.nowLabelEl?.remove();
+        row.nowLabelEl = null;
+        row.labelsEl.querySelectorAll<HTMLElement>(".dt-hour-label.is-near-now").forEach((el) =>
+          el.removeClass("is-near-now")
+        );
+        continue;
+      }
+      if (!row.nowLineEl || !row.nowLineEl.isConnected) {
+        row.nowLineEl = row.daysEl.createDiv("dt-now-line");
+      }
+      row.nowLineEl.style.top = top + "px";
+      if (!row.nowLabelEl || !row.nowLabelEl.isConnected) {
+        row.nowLabelEl = row.labelsEl.createDiv("dt-now-label");
+      }
+      row.nowLabelEl.setText(minutesToHHMM(m));
+      row.nowLabelEl.style.top = top + "px";
+      // 現在時刻のラベルと重なる時刻の目盛り（前後 12px 以内）は隠す
+      for (const el of Array.from(row.labelsEl.querySelectorAll<HTMLElement>(".dt-hour-label"))) {
+        const labelTop = parseFloat(el.style.top) || 0;
+        el.toggleClass("is-near-now", Math.abs(labelTop - top) < 12);
+      }
     }
   }
 
@@ -3753,6 +3893,12 @@ export class DayTimelineView extends ItemView {
       return;
     }
     const s = this.plugin.settings;
+    if (this.mode === "2week" && s.twoWeekFit) {
+      // 2段が1画面に収まる縮尺のときは、上段の先頭から（両方の週が見える位置）
+      this.scrollEl.scrollTop = 0;
+      this.shouldScroll = false;
+      return;
+    }
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
     const hasToday = this.columns.some((c) => isToday(c.date));
@@ -3762,8 +3908,17 @@ export class DayTimelineView extends ItemView {
       target = Math.min(...scheduled.map((t) => t.start)) - 30;
     }
     target = clamp(target, dayStart, dayEnd);
-    this.scrollEl.scrollTop = Math.max(0, this.minutesToPx(target));
+    // 2週間表示で今日が下段にあるときは、その段の中の時刻へ
+    const row = this.rows.find((r) => r.columns.some((c) => isToday(c.date))) ?? this.rows[0];
+    this.scrollEl.scrollTop = Math.max(0, this.rowOffset(row) + this.minutesToPx(target));
     this.shouldScroll = false;
+  }
+
+  /** 段の時間軸の上端が、最初の段の上端からどれだけ下にあるか（px）。1段だけなら 0 */
+  private rowOffset(row: TimelineRow | undefined): number {
+    const first = this.rows[0];
+    if (!row || !first || row === first) return 0;
+    return row.daysEl.getBoundingClientRect().top - first.daysEl.getBoundingClientRect().top;
   }
 
   // ---------- エディタ連動 ----------
@@ -3862,7 +4017,7 @@ export class DayTimelineView extends ItemView {
     if (!sc || sc.clientHeight === 0) return; // まだ表示されていない
     const rect = el.getBoundingClientRect();
     const scRect = sc.getBoundingClientRect();
-    const headerH = this.mode === "month" ? 0 : (this.headersEl?.offsetHeight ?? 0);
+    const headerH = this.mode === "month" ? 0 : (this.rows[0]?.headersEl.offsetHeight ?? 0);
     const margin = 16;
     const top = rect.top - scRect.top + sc.scrollTop; // スクロール領域の中での位置
     const bottom = top + rect.height;
@@ -4096,12 +4251,27 @@ export class DayTimelineView extends ItemView {
     return (px / this.hourHeightPx) * 60;
   }
 
-  /** 1時間あたりの高さ。ズーム指定があればビューの高さから逆算する */
+  /**
+   * 1時間あたりの高さ。ズーム指定（4h/8h/12h）があればビューの高さから逆算する。
+   * 2週間表示の「2段を1画面に」は、表示時間帯の全体 × 2段がビューに収まる高さ
+   */
   private computeHourHeight(): number {
     const s = this.plugin.settings;
+    // 直前のレイアウトのヘッダーが今のモードと同じ作り（2週間表示なら段の見出し付き）で、
+    // 表示されている（日表示ではヘッダーが無く 0 になる）ときだけ実測を使う
+    const first = this.rows[0];
+    const sameKind = !!first && (this.mode === "2week") === !!first.weekLabelEl;
+    const measured = sameKind && first.headersEl.isConnected ? first.headersEl.offsetHeight : 0;
+    const headerH = measured > 0 ? measured : this.mode === "2week" ? 52 : 30;
+    const viewH = this.scrollEl?.clientHeight ?? 0;
+    if (this.mode === "2week" && s.twoWeekFit) {
+      // 段ごとにヘッダーとグリッドの上下の余白（dt-grid の padding 12 + 24px）、段の間に区切り線（2px）がある
+      const avail = viewH - 2 * (headerH + 36) - 2;
+      if (avail < 100) return s.hourHeight; // まだレイアウトされていない
+      return clamp(avail / 2 / (s.endHour - s.startHour), MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT);
+    }
     if (!s.zoomHours) return s.hourHeight;
-    const headerH = this.headersEl?.isConnected ? this.headersEl.offsetHeight : 30;
-    const avail = (this.scrollEl?.clientHeight ?? 0) - headerH;
+    const avail = viewH - headerH;
     if (avail < 100) return s.hourHeight; // まだレイアウトされていない
     return Math.max(avail / s.zoomHours, 24);
   }
@@ -4113,15 +4283,18 @@ export class DayTimelineView extends ItemView {
   private rebuildTimeline(anchorClientY?: number): void {
     if (this.mode === "month" || !this.scrollEl) return;
     const s = this.plugin.settings;
-    const anchor =
-      anchorClientY != null
-        ? this.clientYToMinutes(anchorClientY)
-        : s.startHour * 60 + this.pxToMinutes(this.scrollEl.scrollTop);
+    // ポインタのある段（2週間表示）を覚えておき、作り直した後も同じ段で合わせる
+    const anchorRow = anchorClientY != null ? this.rowAt(anchorClientY) : null;
+    const rowIdx = anchorRow ? this.rows.indexOf(anchorRow) : 0;
+    const anchor = anchorRow
+      ? this.clientYToMinutes(anchorClientY!, anchorRow)
+      : s.startHour * 60 + this.pxToMinutes(this.scrollEl.scrollTop);
     this.buildGrid();
     this.renderEvents();
-    if (anchorClientY != null) {
+    const rebuiltRow = this.rows[rowIdx];
+    if (anchorRow && anchorClientY != null && rebuiltRow) {
       // 作り直しで scrollTop は 0 に戻っている。アンカーの時刻がポインタ位置に来る量だけずらす
-      const rect = this.daysEl.getBoundingClientRect();
+      const rect = rebuiltRow.daysEl.getBoundingClientRect();
       this.scrollEl.scrollTop += rect.top + this.minutesToPx(anchor) - anchorClientY;
     } else if (!this.shouldScroll) {
       this.scrollEl.scrollTop = Math.max(0, this.minutesToPx(anchor));
@@ -4130,10 +4303,21 @@ export class DayTimelineView extends ItemView {
 
   private setZoom(hours: number): void {
     const s = this.plugin.settings;
-    if (s.zoomHours === hours) return;
+    const fit = this.mode === "2week" && s.twoWeekFit;
+    if (s.zoomHours === hours && !fit) return;
     s.zoomHours = hours;
+    if (this.mode === "2week") s.twoWeekFit = false; // 明示的にズームを選んだら「2段を1画面に」は外す
     void this.plugin.persistSettings();
     this.renderHeader();
+    this.rebuildTimeline();
+  }
+
+  /** 2週間表示の「2段を1画面に収める」を切り替える */
+  private setTwoWeekFit(on: boolean): void {
+    const s = this.plugin.settings;
+    if (s.twoWeekFit === on) return;
+    s.twoWeekFit = on;
+    void this.plugin.persistSettings();
     this.rebuildTimeline();
   }
 
@@ -4152,19 +4336,42 @@ export class DayTimelineView extends ItemView {
     return this.plugin.blockStore() ? this.plugin.settings.paMode : "plan";
   }
 
-  private clientYToMinutes(clientY: number): number {
+  /** 画面の Y 座標を、その段の時間軸での時刻（分）にする */
+  private clientYToMinutes(clientY: number, row: TimelineRow): number {
     const s = this.plugin.settings;
-    const rect = this.daysEl.getBoundingClientRect();
+    const rect = row.daysEl.getBoundingClientRect();
     const min = s.startHour * 60 + this.pxToMinutes(clientY - rect.top);
     return clamp(min, s.startHour * 60, s.endHour * 60);
   }
 
-  /** ポインタの X 座標から、どの日の列の上にいるかを返す（列の外なら一番近い列） */
-  private columnAtX(clientX: number): DayColumn | null {
-    if (!this.columns.length) return null;
+  /** ポインタの Y 座標から、どの段の上にいるかを返す（段の外なら一番近い段。1段だけならその段） */
+  private rowAt(clientY: number): TimelineRow | null {
+    if (!this.rows.length) return null;
+    if (this.rows.length === 1) return this.rows[0];
+    let best: TimelineRow | null = null;
+    let bestDist = Infinity;
+    for (const row of this.rows) {
+      const r = row.daysEl.getBoundingClientRect();
+      if (clientY >= r.top && clientY <= r.bottom) return row;
+      const d = clientY < r.top ? r.top - clientY : clientY - r.bottom;
+      if (d < bestDist) {
+        bestDist = d;
+        best = row;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * ポインタの位置から、どの日の列の上にいるかを返す（列の外なら一番近い列）。
+   * 2週間表示では先に Y 座標で段を選び、その段の中で X 座標から列を選ぶ
+   */
+  private columnAt(clientX: number, clientY: number): DayColumn | null {
+    const row = this.rowAt(clientY);
+    if (!row) return null;
     let best: DayColumn | null = null;
     let bestDist = Infinity;
-    for (const col of this.columns) {
+    for (const col of row.columns) {
       const r = col.canvasEl.getBoundingClientRect();
       if (clientX >= r.left && clientX <= r.right) return col;
       const d = clientX < r.left ? r.left - clientX : clientX - r.right;
@@ -4176,9 +4383,12 @@ export class DayTimelineView extends ItemView {
     return best;
   }
 
+  /** ポインタがどれかの段の日の列の上にあるか */
   private overGrid(ev: PointerEvent): boolean {
-    const r = this.daysEl.getBoundingClientRect();
-    return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+    return this.rows.some((row) => {
+      const r = row.daysEl.getBoundingClientRect();
+      return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+    });
   }
 
   private snapFloor(min: number): number {
@@ -4363,7 +4573,7 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
-    const start = clamp(this.snapFloor(this.clientYToMinutes(clientY)), dayStart, dayEnd - s.snapMinutes);
+    const start = clamp(this.snapFloor(this.clientYToMinutes(clientY, col.row)), dayStart, dayEnd - s.snapMinutes);
     const end = Math.min(start + s.defaultDurationMinutes, dayEnd);
     const el = col.eventsEl.createDiv("dt-ghost dt-touch-chip");
     el.style.top = this.minutesToPx(start) + "px";
@@ -4388,7 +4598,7 @@ export class DayTimelineView extends ItemView {
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
     const snap = s.snapMinutes;
-    const anchor = clamp(this.snapFloor(this.clientYToMinutes(e.clientY)), dayStart, dayEnd - snap);
+    const anchor = clamp(this.snapFloor(this.clientYToMinutes(e.clientY, col.row)), dayStart, dayEnd - snap);
     const defaultRange = (): [number, number] => [
       anchor,
       Math.min(anchor + s.defaultDurationMinutes, dayEnd),
@@ -4405,7 +4615,7 @@ export class DayTimelineView extends ItemView {
 
     this.startDrag(col.canvasEl, e, {
       onMove: (_dy, ev) => {
-        const cur = clamp(this.snapFloor(this.clientYToMinutes(ev.clientY)), dayStart, dayEnd - snap);
+        const cur = clamp(this.snapFloor(this.clientYToMinutes(ev.clientY, col.row)), dayStart, dayEnd - snap);
         if (cur === anchor) range = defaultRange();
         else if (cur > anchor) range = [anchor, cur + snap];
         else range = [cur, anchor + snap];
@@ -4467,30 +4677,33 @@ export class DayTimelineView extends ItemView {
     const beginMove = (e: PointerEvent, viaLongPress: boolean) => {
       const toNote = e.ctrlKey || e.metaKey;
       const dur = task.end - task.start;
+      // 掴んだ位置がブロックの上端から何分か（別の段へ運ぶとき、その段の時間軸で上端を出すのに使う）
+      const grabOffset = this.clientYToMinutes(e.clientY, col.row) - task.start;
       let newStart = task.start;
       let targetCol: DayColumn = col;
       this.startDrag(el, e, {
         onMove: (dy, ev) => {
-          newStart = clamp(
-            this.snapRound(task.start + this.pxToMinutes(dy)),
-            dayStart,
-            Math.max(dayStart, dayEnd - dur)
-          );
+          const over = this.columns.length > 1 ? (this.columnAt(ev.clientX, ev.clientY) ?? col) : col;
+          // 同じ段ならポインタの移動量から。別の段（2週間表示の今週 ⇄ 来週）なら、
+          // その段の時間軸でのポインタ位置から時刻を出す（段の間の距離を足し込まない）
+          const raw =
+            over.row === col.row
+              ? task.start + this.pxToMinutes(dy)
+              : this.clientYToMinutes(ev.clientY, over.row) - grabOffset;
+          newStart = clamp(this.snapRound(raw), dayStart, Math.max(dayStart, dayEnd - dur));
           el.addClass("is-dragging");
           el.style.top = this.minutesToPx(newStart) + "px";
           timeEl.setText(`${minutesToHHMM(newStart)} - ${minutesToHHMM(newStart + dur)}`);
-          if (this.columns.length > 1) {
-            const over = this.columnAtX(ev.clientX) ?? col;
-            if (over !== targetCol) {
-              targetCol = over;
-              // 要素は元の列に置いたまま、横にずらして別の日の列の上に見せる
-              // （DOM を移すとポインタキャプチャが外れる環境があるため）
-              const dx =
-                targetCol.canvasEl.getBoundingClientRect().left -
-                col.canvasEl.getBoundingClientRect().left;
-              el.style.transform = dx ? `translateX(${dx}px)` : "";
-              el.toggleClass("is-moving-day", targetCol !== col);
-            }
+          if (over !== targetCol) {
+            targetCol = over;
+            // 要素は元の列に置いたまま、ずらして別の日の列（別の段）の上に見せる
+            // （DOM を移すとポインタキャプチャが外れる環境があるため）
+            const from = col.canvasEl.getBoundingClientRect();
+            const to = targetCol.canvasEl.getBoundingClientRect();
+            const dx = to.left - from.left;
+            const dyRow = to.top - from.top;
+            el.style.transform = dx || dyRow ? `translate(${dx}px, ${dyRow}px)` : "";
+            el.toggleClass("is-moving-day", targetCol !== col);
           }
         },
         onEnd: (moved, ev) => {
