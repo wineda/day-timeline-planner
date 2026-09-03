@@ -1084,8 +1084,9 @@
   gap: 6px;
 }
 .dt-summary-meter-label {
-  flex: 0 0 2.2em;
+  flex: 0 0 3.6em;
   color: var(--text-faint);
+  white-space: nowrap;
 }
 .dt-summary-bar {
   display: flex;
@@ -1142,6 +1143,7 @@
 /* いま / 次にやる1件 */
 .dt-summary-next {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   padding: 4px 4px 4px 6px;
@@ -1198,6 +1200,36 @@
 .dt-summary-next-play {
   flex: 0 0 auto;
   padding: 2px;
+}
+/* いまのタスクのステップ（2行目）: 小さなバー + 2/4 + 次のステップ */
+.dt-summary-next-steps {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 1px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+.dt-summary-next-steps .dt-summary-bar {
+  flex: 0 0 48px;
+  height: 5px;
+}
+.dt-summary-next-steps-count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.dt-summary-next-steps-sep {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.dt-summary-next-steps-next {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dt-summary-next-play svg {
   width: 14px;

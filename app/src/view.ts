@@ -2667,6 +2667,9 @@ export class DayTimelineView extends ItemView {
     const today = startOfDay(new Date());
     const all = this.tasksOn(today) ?? [];
     const st = dayStats(all);
+    // ステップの消化（今日の自分のタスクに書かれた「- [ ] …」の合計）。タスク数だけだと
+    // 「1タスクの中でどこまで進んだか」が見えないので、タスクと並べて出す
+    const steps = stepStats(all);
     const collapsed = s.summaryCollapsed;
     const complete = st.total > 0 && st.done === st.total;
     el.toggleClass("is-collapsed", collapsed);
@@ -2685,7 +2688,9 @@ export class DayTimelineView extends ItemView {
       cls: "dt-summary-brief",
       text: collapsed
         ? st.total
-          ? `${st.done}/${st.total} 件・${pct}%`
+          ? `タスク ${st.done}/${st.total}` +
+            (steps.total ? ` · ステップ ${steps.done}/${steps.total}` : "") +
+            `・${pct}%`
           : "タスクなし"
         : summaryMessage(st),
     });
@@ -2719,11 +2724,25 @@ export class DayTimelineView extends ItemView {
         ].join("\n");
       this.summaryMeter(
         body,
-        "件数",
+        "タスク",
         own.map((t) => ({ weight: 1, done: t.done, tip: segTip(t) })),
         `${st.done}/${st.total}`,
-        `完了 ${st.done} 件 / 全 ${st.total} 件（持ち越し済み [>] のタスクは数えません）`
+        `完了 ${st.done} タスク / 全 ${st.total} タスク（持ち越し済み [>] のタスクは数えません）`
       );
+      if (steps.total > 0) {
+        // ステップ: タスクをまたいで1ステップ = 1区切り。区切りにマウスを乗せると「タスク名 / ステップ」
+        this.summaryMeter(
+          body,
+          "ステップ",
+          own.flatMap((t) =>
+            t.steps
+              .filter((sp) => sp.text.trim())
+              .map((sp) => ({ weight: 1, done: sp.done, tip: `${this.displayTitle(t)}\n${sp.text}${sp.done ? " · 完了" : ""}` }))
+          ),
+          `${steps.done}/${steps.total}`,
+          `チェック済み ${steps.done} ステップ / 全 ${steps.total} ステップ（今日のタスクに書いた「- [ ] …」の合計）`
+        );
+      }
       if (st.plan > 0) {
         this.summaryMeter(
           body,
@@ -2737,14 +2756,17 @@ export class DayTimelineView extends ItemView {
       const remain = st.total - st.done;
       const remainPlan = st.plan - st.donePlan;
       const parts: string[] = [];
-      if (remain > 0) parts.push(`あと ${remain} 件` + (remainPlan > 0 ? `・${hmm(remainPlan)}` : ""));
+      const remainSteps = steps.total - steps.done;
+      if (remain > 0) parts.push(`あと ${remain} タスク` + (remainPlan > 0 ? `・${hmm(remainPlan)}` : ""));
+      if (remainSteps > 0) parts.push(`ステップ あと ${remainSteps}`);
       if (st.actual > 0) parts.push(`実績 ${hmm(st.actual)}`);
       if (parts.length) {
         const line = body.createDiv({ cls: "dt-summary-line", text: parts.join("　") });
         line.setAttr(
           "aria-label",
           [
-            remain > 0 ? `残り ${remain} 件（予定時間 ${hmm(remainPlan)}）` : "",
+            remain > 0 ? `残り ${remain} タスク（予定時間 ${hmm(remainPlan)}）` : "",
+            remainSteps > 0 ? `未チェックのステップ ${remainSteps} 件` : "",
             st.actual > 0 ? `今日の実績の合計 ${hmm(st.actual)}` : "",
           ]
             .filter(Boolean)
@@ -2873,6 +2895,22 @@ export class DayTimelineView extends ItemView {
     if (isScheduled(t)) row.createSpan({ cls: "dt-summary-next-time", text: minutesToHHMM(t.start) });
     row.createSpan({ cls: "dt-summary-next-title", text: this.displayTitle(t) });
     if (isScheduled(t)) row.createSpan({ cls: "dt-summary-next-dur", text: hmm(t.end - t.start) });
+    // ステップ: 「2/4」の小さなバーと、次にやる（最初の未チェックの）ステップ。タスク名だけだと
+    // いま何をすればいいかが分からないので、タスクとステップの両方を出す
+    const stepsOf = t.steps.filter((sp) => sp.text.trim());
+    if (stepsOf.length) {
+      const doneSteps = stepsOf.filter((sp) => sp.done).length;
+      const nextStep = stepsOf.find((sp) => !sp.done);
+      const line = row.createDiv("dt-summary-next-steps");
+      const bar = line.createDiv("dt-summary-bar");
+      const fill = bar.createDiv("dt-summary-seg is-done is-plain");
+      fill.style.flex = `0 0 ${Math.round((doneSteps / stepsOf.length) * 100)}%`;
+      line.createSpan({ cls: "dt-summary-next-steps-count", text: `ステップ ${doneSteps}/${stepsOf.length}` });
+      if (nextStep) {
+        line.createSpan({ cls: "dt-summary-next-steps-sep", text: "·" });
+        line.createSpan({ cls: "dt-summary-next-steps-next", text: `次: ${nextStep.text}`, attr: { title: nextStep.text } });
+      }
+    }
     // 実績の計測（ストップウォッチ）の開始 / 終了。右クリックメニューと同じ操作
     if (this.plugin.blockStoreFor(t.owner)) {
       const tr = this.plugin.settings.tracking;
@@ -2903,6 +2941,7 @@ export class DayTimelineView extends ItemView {
         t.title || "(無題)",
         isScheduled(t) ? `${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}` : "",
         kindTip,
+        stepsOf.length ? `ステップ ${stepsOf.filter((sp) => sp.done).length}/${stepsOf.length}` : "",
         t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
         "クリックで編集、右クリックでメニュー",
       ]
@@ -5448,6 +5487,21 @@ function dayStats(tasks: Task[]): DayStats {
   }
   const ratio = plan > 0 ? donePlan / plan : total > 0 ? done / total : null;
   return { total, done, plan, donePlan, actual, ratio };
+}
+
+/** 今日の自分のタスクに書かれたステップの消化（持ち越し済み [>] は除く。空のステップ行は数えない） */
+function stepStats(tasks: Task[]): { total: number; done: number } {
+  let total = 0;
+  let done = 0;
+  for (const t of tasks) {
+    if (t.owner || t.forwarded) continue;
+    for (const sp of t.steps) {
+      if (!sp.text.trim()) continue;
+      total++;
+      if (sp.done) done++;
+    }
+  }
+  return { total, done };
 }
 
 /** 進み具合に応じた一言（本日のサマリーの見出しの右端）。控えめに */
