@@ -101,11 +101,19 @@ export class DailyReportModal extends Modal {
   }
 
   private async copy(): Promise<void> {
+    const text = this.markdown();
     try {
-      await navigator.clipboard.writeText(this.markdown());
+      // モバイルの WebView では navigator.clipboard が使えないことがあるので、
+      // 使えなければ隠しテキストエリア + execCommand("copy") に落とす
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else if (!copyFallback(text)) throw new Error("クリップボードを使えません");
       new Notice("日報をコピーしました");
     } catch (e) {
       console.error(e);
+      if (copyFallback(text)) {
+        new Notice("日報をコピーしました");
+        return;
+      }
       new Notice("コピーできませんでした: " + String(e));
     }
   }
@@ -263,7 +271,8 @@ export class DailyReportModal extends Modal {
   private bucketTable(parent: HTMLElement, title: string, rows: DailyBucket[]): void {
     if (!rows.length) return;
     const body = this.section(parent, title);
-    const table = body.createEl("table", { cls: "dt-daily-table" });
+    // 狭い画面（スマホ）でも本文がはみ出さないよう、表だけ横にスクロールさせる
+    const table = body.createDiv("dt-daily-table-wrap").createEl("table", { cls: "dt-daily-table" });
     const head = table.createEl("thead").createEl("tr");
     for (const h of [title.replace("別", ""), "件数", "予定", "実績", "差異"]) head.createEl("th", { text: h });
     const tbody = table.createEl("tbody");
@@ -282,4 +291,24 @@ export class DailyReportModal extends Modal {
   private titleOf(t: Task): string {
     return stripTags(t.title) || "(無題)";
   }
+}
+
+/**
+ * navigator.clipboard が無い / 失敗したときのコピー（隠しテキストエリア + execCommand）。
+ * コピーできたかを返す
+ */
+function copyFallback(text: string): boolean {
+  const ta = document.body.createEl("textarea", { attr: { readonly: "" } });
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (e) {
+    console.error(e);
+  }
+  ta.remove();
+  return ok;
 }
