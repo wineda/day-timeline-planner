@@ -1561,8 +1561,8 @@
 .dt-day-header.is-today:hover {
   background: color-mix(in srgb, var(--interactive-accent) 13%, transparent);
 }
-/* 曜日 + 日付のまとまり（スマホでは横並びにする）。枠や背景は付けず、
-   日付の丸だけを見せる Google カレンダー風の見た目にする */
+/* 曜日 + 日付のまとまり（スマホでは横並びにする）。枠や背景・丸は付けず、
+   文字だけの控えめな見た目にする（今日は文字色と列の薄い色で示す） */
 .dt-day-header-date {
   display: flex;
   flex-direction: column;
@@ -1578,7 +1578,7 @@
   outline-offset: 2px;
 }
 /* 日付そのもののクリックは「その日の日報」。ヘッダーの他の場所（日表示へ切替）と
-   区別が付くよう、ホバー・フォーカスのときだけ日付の丸をアクセント色で薄く塗る */
+   区別が付くよう、ホバー・フォーカスのときだけ日付の数字の裏を薄く丸く塗る */
 .dt-day-header-date.is-clickable:hover .dt-day-header-num,
 .dt-day-header-date.is-clickable:focus-visible .dt-day-header-num {
   background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
@@ -1586,15 +1586,6 @@
 }
 .dt-day-header-date.is-clickable:active .dt-day-header-num {
   transform: scale(0.92);
-}
-/* 今日は日付の丸がアクセント色で塗られているので、輪を外側に出す */
-.dt-day-header.is-today .dt-day-header-date.is-clickable:hover .dt-day-header-num,
-.dt-day-header.is-today .dt-day-header-date.is-clickable:focus-visible .dt-day-header-num {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  box-shadow:
-    0 0 0 2px var(--background-primary),
-    0 0 0 4px var(--interactive-accent);
 }
 .dt-day-header-dow {
   font-size: 11px;
@@ -1681,8 +1672,7 @@
   opacity: 0.55;
 }
 .dt-day-header.is-today .dt-day-header-num {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  color: var(--interactive-accent);
   opacity: 1;
 }
 .dt-day-header.is-today .dt-day-header-dow {
@@ -3967,7 +3957,9 @@ body.is-phone .dt-day-header-dow {
   letter-spacing: 0;
 }
 body.is-phone .dt-day-header-num {
-  width: 24px;
+  width: auto; /* 丸は付けないので、幅は数字なりにして曜日との間を詰める */
+  min-width: 20px;
+  padding: 0 2px;
   height: 24px;
   line-height: 24px;
   font-size: 13px;
@@ -4509,19 +4501,13 @@ body.is-phone .dt-daily-note-field {
   gap: 0;
 }
 
-/* スマホ・タブレットの日報: ホバーが無いので「日付は押せる」ことが分かるよう、
-   日付の丸に薄い下地を敷き、日付のまとまりの余白で指で押せる大きさを確保する
-   （枠線付きのチップは、下の予実の数字と二段に重なって見た目がうるさいので使わない） */
+/* スマホ・タブレットの日報: 日付のまとまりの余白で指で押せる大きさを確保する。
+   常に見える下地や枠は付けず（丸やチップは主張が強くうるさい）、押した瞬間だけ
+   数字の裏を薄く塗って反応を返す */
 body.is-mobile .dt-day-header-date.is-clickable {
   padding: 2px 6px;
   min-height: 30px;
   justify-content: center;
-}
-body.is-mobile .dt-day-header-date.is-clickable .dt-day-header-num {
-  background: var(--background-modifier-hover);
-}
-body.is-mobile .dt-day-header.is-today .dt-day-header-date.is-clickable .dt-day-header-num {
-  background: var(--interactive-accent);
 }
 body.is-mobile .dt-day-header-date.is-clickable:active .dt-day-header-num {
   background: var(--background-modifier-active-hover);
