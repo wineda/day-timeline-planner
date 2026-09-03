@@ -208,10 +208,20 @@ function hash(s: string): number {
   return h;
 }
 
-/** そのランクの中から、種（プロジェクトのリンク先）で決まる1体を選ぶ */
-export function pickMonster(seed: string, rank: MonsterRank): Monster {
+/** そのランクの中から、種（プロジェクトのリンク先）で決まる1体を選ぶ。offset で「別の姿」に順に切り替えられる */
+export function pickMonster(seed: string, rank: MonsterRank, offset = 0): Monster {
   const pool = MONSTERS.filter((m) => m.rank === rank);
-  return pool[hash(seed) % pool.length];
+  return pool[(hash(seed) + offset) % pool.length];
+}
+
+/** 「- 難易度: 」の値をランクにする（雑魚 / 中級 / ボス、★の数、1〜3 も読む）。読めなければ null */
+export function parseRank(v: string): MonsterRank | null {
+  const t = v.trim();
+  if (!t) return null;
+  if (t === "雑魚" || t === "★" || t === "1" || /^(easy|low)$/i.test(t)) return "雑魚";
+  if (t === "中級" || t === "★★" || t === "2" || /^(normal|mid|medium)$/i.test(t)) return "中級";
+  if (t === "ボス" || t === "★★★" || t === "3" || /^(boss|hard|high)$/i.test(t)) return "ボス";
+  return null;
 }
 
 /** 予定時間の合計（時間）からランクを決める */

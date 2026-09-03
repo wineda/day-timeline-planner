@@ -4996,3 +4996,29 @@ body.is-mobile .modal.dt-modal .modal-content {
     animation-duration: 0.01s;
   }
 }
+
+/* 難易度ピッカー（プロジェクトの作成ダイアログ・「難易度を変更…」）: 選んだランクのモンスターをプレビュー */
+.dt-difficulty-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dt-difficulty-sprite {
+  width: 48px;
+  height: 48px;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+.dt-difficulty-sprite:empty {
+  display: none;
+}
+.dt-difficulty-sprite svg {
+  width: 100%;
+  height: 100%;
+}
+.dt-difficulty-name {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+}

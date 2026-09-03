@@ -69,12 +69,17 @@ export function hpRatio(hp: BattleHp): number {
   return hp.total > 0 ? hp.remain / hp.total : 1;
 }
 
-/** プロジェクトのモンスター（ノートの「- モンスター: 名前」で指定。無ければ名前から自動で選ぶ） */
+/**
+ * プロジェクトのモンスター。ノートの「- モンスター: 名前」があればそれ。
+ * 無ければ「- 難易度: 」（作成時・右クリックで選んだランク）、それも無ければ予定時間の合計から決めたランクの中で
+ * 名前から自動で選ぶ
+ */
 export function monsterOf(sum: ProjectSummary, rules: BattleRules): Monster {
-  const hours = projectHp(sum, rules).total / 60;
-  const rank = rankForHours(hours, rules.midHours, rules.bossHours);
   const named = sum.fields?.monster ? monsterByName(sum.fields.monster) : undefined;
-  return named ?? pickMonster(sum.ref.linktext, rank);
+  if (named) return named;
+  const rank =
+    sum.fields?.difficulty ?? rankForHours(projectHp(sum, rules).total / 60, rules.midHours, rules.bossHours);
+  return pickMonster(sum.ref.linktext, rank);
 }
 
 export function monsterLabel(m: Monster): string {

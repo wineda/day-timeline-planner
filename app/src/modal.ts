@@ -1,6 +1,7 @@
 import { App, DropdownComponent, Menu, Modal, Notice, Platform, Setting, moment, setIcon } from "obsidian";
 import type { TaskDraft } from "./model";
 import { projectDisplayName, type ProjectRef } from "./project";
+import { monsterSVG, pickMonster, RANK_STARS, RANKS, type Monster, type MonsterRank } from "./bestiary";
 import {
   STATUS_KINDS,
   actualTotal,
@@ -2242,14 +2243,139 @@ export interface ProjectCreateOptions {
   initialGroup?: string | null;
   /** 使うテンプレートのパス（表示用）。null = 最小の雛形で作る */
   templatePath?: string | null;
-  /** 空欄のままでは呼ばれない（trim 済みの名前と、選んだグループを渡す） */
-  onSubmit: (name: string, group: string | null) => void | Promise<void>;
+  /** 空欄のままでは呼ばれない（trim 済みの名前と、選んだグループ・難易度・モンスターを渡す。難易度 null = おまかせ） */
+  onSubmit: (
+    name: string,
+    group: string | null,
+    difficulty: MonsterRank | null,
+    monster: string | null
+  ) => void | Promise<void>;
+}
+
+/** 難易度ピッカーの値（null = おまかせ。monster は難易度を選んだときだけ） */
+export interface DifficultyChoice {
+  difficulty: MonsterRank | null;
+  monster: string | null;
+}
+
+const RANK_LABEL: Record<MonsterRank, string> = {
+  雑魚: "雑魚 ★（小さな仕事）",
+  中級: "中級 ★★（数日〜数週間）",
+  ボス: "ボス ★★★（大きな仕事）",
+};
+
+/**
+ * ボス戦の難易度を選ぶ欄（作成ダイアログと「難易度を変更…」で共用）。
+ * ドロップダウンで「おまかせ / 雑魚 / 中級 / ボス」を選ぶと、その姿がプレビューに出る。
+ * 「別の姿にする」で同じランクの別の1体に替えられる。seed() はプレビューの種（プロジェクト名）
+ */
+export function renderDifficultyPicker(
+  containerEl: HTMLElement,
+  seed: () => string,
+  initial: DifficultyChoice,
+  onChange: (c: DifficultyChoice) => void
+): { refresh: () => void } {
+  let difficulty = initial.difficulty;
+  let monster: Monster | null = initial.monster ? pickByName(initial.monster) : null;
+  let offset = 0;
+  const setting = new Setting(containerEl).setName("難易度");
+  setting.setDesc("プロジェクトパネルに出るモンスターの大きさ。おまかせは子タスクの予定時間の合計（10 時間・40 時間）で決まります。");
+  const preview = setting.controlEl.createDiv("dt-difficulty-preview");
+  const previewImg = preview.createDiv("dt-difficulty-sprite");
+  const previewName = preview.createDiv("dt-difficulty-name");
+  const emit = () => onChange({ difficulty, monster: difficulty && monster ? monster.name : null });
+  const draw = () => {
+    if (!difficulty) {
+      previewImg.empty();
+      previewName.setText("予定時間から自動で決まります");
+      another.hide();
+      return;
+    }
+    if (!monster || monster.rank !== difficulty) monster = pickMonster(seed() || "project", difficulty, offset);
+    previewImg.innerHTML = monsterSVG(monster, 1, 48);
+    previewName.setText(`${RANK_STARS[difficulty]} ${monster.name}`);
+    another.show();
+  };
+  setting.addDropdown((d) => {
+    d.addOption("", "おまかせ（予定時間から）");
+    for (const r of RANKS) d.addOption(r, RANK_LABEL[r]);
+    d.setValue(difficulty ?? "");
+    d.onChange((v) => {
+      difficulty = (v || null) as MonsterRank | null;
+      offset = 0;
+      if (difficulty && monster?.rank !== difficulty) monster = null;
+      draw();
+      emit();
+    });
+  });
+  let another!: HTMLButtonElement;
+  setting.addButton((b) => {
+    another = b.buttonEl;
+    b.setButtonText("別の姿にする").onClick(() => {
+      if (!difficulty) return;
+      offset++;
+      monster = pickMonster(seed() || "project", difficulty, offset);
+      draw();
+      emit();
+    });
+  });
+  draw();
+  return { refresh: draw };
+}
+
+function pickByName(name: string): Monster | null {
+  const n = name.trim();
+  for (const r of RANKS) {
+    for (let i = 0; i < 10; i++) {
+      const m = pickMonster("", r, i);
+      if (m.name === n) return m;
+    }
+  }
+  return null;
+}
+
+/** 既存のプロジェクトの難易度を変えるダイアログ（プロジェクト行の右クリック「難易度を変更…」） */
+export class ProjectDifficultyModal extends Modal {
+  constructor(
+    app: App,
+    private opts: {
+      projectName: string;
+      initial: DifficultyChoice;
+      onSubmit: (c: DifficultyChoice) => void | Promise<void>;
+    }
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal");
+    this.titleEl.setText(`「${this.opts.projectName}」の難易度`);
+    let choice = this.opts.initial;
+    renderDifficultyPicker(this.contentEl, () => this.opts.projectName, choice, (c) => (choice = c));
+    const buttons = new Setting(this.contentEl);
+    buttons.settingEl.addClass("dt-modal-buttons");
+    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+    buttons.addButton((b) =>
+      b
+        .setButtonText("保存")
+        .setCta()
+        .onClick(() => {
+          this.close();
+          void this.opts.onSubmit(choice);
+        })
+    );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 /** 新しいプロジェクトを作るダイアログ（パネルの＋ボタン・コマンドから） */
 export class ProjectCreateModal extends Modal {
   private name = "";
   private group: string | null;
+  private choice: DifficultyChoice = { difficulty: null, monster: null };
 
   constructor(
     app: App,
@@ -2270,7 +2396,7 @@ export class ProjectCreateModal extends Modal {
         return;
       }
       this.close();
-      void this.opts.onSubmit(name, this.group?.trim() || null);
+      void this.opts.onSubmit(name, this.group?.trim() || null, this.choice.difficulty, this.choice.monster);
     };
 
     const nameSetting = new Setting(this.contentEl).setName("名前");
@@ -2284,7 +2410,10 @@ export class ProjectCreateModal extends Modal {
       cls: "dt-prompt-input",
       attr: { placeholder: "例: 環境構築" },
     });
-    nameInput.addEventListener("input", () => (this.name = nameInput.value));
+    nameInput.addEventListener("input", () => {
+      this.name = nameInput.value;
+      picker.refresh(); // 姿は名前で決まるので、名前を打つとプレビューも変わる
+    });
     nameInput.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
@@ -2326,6 +2455,9 @@ export class ProjectCreateModal extends Modal {
       });
     });
     groupSetting.controlEl.appendChild(newGroupInput);
+
+    // 難易度（ボス戦のモンスター）。おまかせなら何も書かず、予定時間から決まる
+    const picker = renderDifficultyPicker(this.contentEl, () => this.name.trim(), this.choice, (c) => (this.choice = c));
 
     const buttons = new Setting(this.contentEl);
     buttons.settingEl.addClass("dt-modal-buttons");
