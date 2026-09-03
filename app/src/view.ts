@@ -30,6 +30,7 @@ import {
 import { subtractActualRanges, type ActualRange, type TaskStep, type TicketRef } from "./markdown/blocks";
 import {
   groupProjects,
+  isChildSettled,
   knownGroupNames,
   projectDisplayName,
   renderGroupIcon,
@@ -2046,7 +2047,8 @@ export class DayTimelineView extends ItemView {
   private renderProjectChildTableRow(body: HTMLElement, child: ProjectChild): void {
     const t = child.task;
     const tr = body.createEl("tr", { cls: "dt-project-child-trow" });
-    tr.toggleClass("is-done", t.done);
+    // 持ち越し先で完了した [>] も完了として見せる（引き継いだ先で終わった仕事）
+    tr.toggleClass("is-done", isChildSettled(child));
     const wrap = tr.createEl("td", { cls: "dt-ptc-name" }).createDiv("dt-ptc-child");
     this.renderChildCheckbox(wrap, child);
     wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
@@ -2107,7 +2109,8 @@ export class DayTimelineView extends ItemView {
     for (const child of shown) {
       const t = child.task;
       const item = childrenEl.createDiv("dt-project-child");
-      item.toggleClass("is-done", t.done);
+      // 持ち越し先で完了した [>] も完了として見せる（引き継いだ先で終わった仕事）
+      item.toggleClass("is-done", isChildSettled(child));
       this.renderChildCheckbox(item, child);
       this.renderChildDateBadge(item, child);
       item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
@@ -2253,6 +2256,18 @@ export class DayTimelineView extends ItemView {
   private renderChildCheckbox(parent: HTMLElement, child: ProjectChild): void {
     const t = child.task;
     const box = parent.createDiv("dt-tray-check");
+    if (child.settledByCarry) {
+      // 持ち越し先で完了した [>]: チェック済みに見せるが、このブロック自体は「引き継いだ記録」なので
+      // ここからは切り替えない（外すなら持ち越し先のほうを未完了に戻す）
+      setIcon(box, iconName("check-square"));
+      box.addClass("is-settled-by-carry");
+      box.setAttr("aria-label", "持ち越し先で完了しています（このブロックは引き継ぎ前の記録）");
+      box.addEventListener("click", (e) => {
+        e.stopPropagation();
+        new Notice("持ち越し先のタスクで完了しています。戻すときは持ち越し先のほうを未完了にしてください");
+      });
+      return;
+    }
     setIcon(box, iconName(t.done ? "check-square" : "square"));
     box.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -2278,7 +2293,8 @@ export class DayTimelineView extends ItemView {
     });
     const scheduled = t.start !== null && t.end !== null;
     if (child.date === null) dateEl.addClass("is-undated");
-    else if (!scheduled) dateEl.addClass("is-unscheduled"); // 時刻未定（＝遅れ）は今日でもオレンジのまま
+    // 時刻未定（＝遅れ）は今日でもオレンジのまま。持ち越し済み [>] は閉じた記録なので「遅れ」扱いにしない
+    else if (!scheduled && !t.forwarded) dateEl.addClass("is-unscheduled");
     else if (today) dateEl.addClass("is-today");
   }
 
@@ -2295,7 +2311,8 @@ export class DayTimelineView extends ItemView {
     if (child.date === null) {
       cls = "is-undated";
       label = "日付未定";
-    } else if (!scheduled) {
+    } else if (!scheduled && !t.forwarded) {
+      // 持ち越し済み [>] は閉じた記録なので「遅れ」の印は出さない
       cls = "is-unscheduled";
       label = `時刻未定（${child.date.getMonth() + 1}/${child.date.getDate()}）`;
     } else if (today) {
@@ -2322,6 +2339,11 @@ export class DayTimelineView extends ItemView {
           : "日付は未定") +
         (plan || act ? `\n実績 ${act ? hmm(act) : "–"} / 予定 ${plan ? hmm(plan) : "–"}` : "") +
         (sp ? `\nステップ ${sp.done}/${sp.total}（${Math.round(sp.ratio * 100)}%）` : "") +
+        (child.settledByCarry
+          ? "\n持ち越し先で完了（このブロックは引き継ぎ前の記録）"
+          : t.forwarded
+            ? "\n持ち越し済み（続きは持ち越し先のブロック）"
+            : "") +
         (child.date
           ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
           : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
