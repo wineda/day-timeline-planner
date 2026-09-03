@@ -4504,3 +4504,90 @@ body.is-mobile .dt-daily-modal .dt-daily-title {
   flex: 1 0 100%;
   order: -1;
 }
+
+/* 日報の見出し: ◀ 日報 9月3日 (木) ▶。スワイプ・← → キーでも前後の日へ */
+.dt-daily-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.dt-daily-title-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.dt-daily-title-date {
+  font-variant-numeric: tabular-nums;
+}
+.dt-daily-title-today {
+  font-size: var(--font-ui-smaller);
+  font-weight: 500;
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 1.6;
+}
+button.dt-daily-nav {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+button.dt-daily-nav:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+button.dt-daily-nav svg {
+  width: 20px;
+  height: 20px;
+}
+/* 本文の入れ物。読み込み中は薄くし、切り替わったら移動した方向から滑り込ませる */
+.dt-daily-body {
+  transition: opacity 120ms ease;
+  touch-action: pan-y;
+}
+.dt-daily-body.is-loading {
+  opacity: 0.5;
+}
+.dt-daily-body.is-slide-left {
+  animation: dt-daily-slide-left 180ms ease-out;
+}
+.dt-daily-body.is-slide-right {
+  animation: dt-daily-slide-right 180ms ease-out;
+}
+@keyframes dt-daily-slide-left {
+  from {
+    transform: translateX(24px);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes dt-daily-slide-right {
+  from {
+    transform: translateX(-24px);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+/* モバイルは矢印ボタンを指で押せる大きさに */
+body.is-mobile button.dt-daily-nav {
+  width: 40px;
+  height: 40px;
+}
