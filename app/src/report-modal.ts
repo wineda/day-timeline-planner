@@ -2,6 +2,7 @@
  * 日報のポップアップ（日付ヘッダーの日付をクリックすると開く）。
  * その日の予定・実績の合計、タスクの一覧、結果・ふりかえりなどの記録、集計をまとめて見せる。
  * 「ノートに書き出す」で同じ内容を Markdown のノート（日報）にできる。
+ * 左右のスワイプ（◀ ▶ ボタン・← → キーでも）で前後の日の日報に移れる。
  */
 import { App, Modal, Notice, Setting, moment, setIcon } from "obsidian";
 import type { Task } from "./model";
@@ -14,21 +15,23 @@ import {
   type DailyBucket,
   type DailyReport,
 } from "./report";
-import { stripTags } from "./util";
+import { addDays, isToday, stripTags } from "./util";
 import { iconName } from "./icons";
 
 export interface DailyReportModalOptions {
   date: Date;
   /** その日のタスク（メンバーの予定が混ざっていても中で除外する） */
   tasks: Task[];
+  /** 別の日へ移ったときにその日のタスクを読む（無ければ日付の移動はできない） */
+  loadTasks?: (date: Date) => Promise<Task[]>;
   /** チケットの URL（無ければ null） */
   ticketUrlOf: (tracker: string, id: string) => string | null;
   /** タグの色（バッジの色分けに使う。無ければ枠線だけ） */
   colorOfTags: (tags: string[]) => string | null;
-  /** 「ノートに書き出す」を押したとき */
-  onExport: () => void;
+  /** 「ノートに書き出す」を押したとき（表示中の日） */
+  onExport: (date: Date) => void;
   /** タスクの行をクリックしたとき（タイムラインの該当ブロックへジャンプ）。無ければクリック不可 */
-  onSelectTask?: (task: Task) => void;
+  onSelectTask?: (date: Date, task: Task) => void;
 }
 
 /** 分を "6:30" のような時:分表示に。0 は "–" */
@@ -45,14 +48,28 @@ function diff(plan: number, act: number): string {
   return `${d > 0 ? "+" : "-"}${hmm(Math.abs(d))}`;
 }
 
+/** 横スワイプと見なす最小の移動量（px）。タイムラインの日付移動と同じ */
+const SWIPE_MIN_X = 48;
+/** これより縦に動いたらスクロールと見なしてスワイプ判定をやめる */
+const SWIPE_SLOP_Y = 10;
+
 export class DailyReportModal extends Modal {
+  /** 表示中の日（スワイプで変わる） */
+  private date: Date;
+  private tasks: Task[];
   private report: DailyReport;
+  /** 日付の切替が重ならないよう、最後の読み込みだけを反映するための通し番号 */
+  private loadSeq = 0;
+  private titleLabelEl: HTMLElement | null = null;
+  private bodyEl: HTMLElement | null = null;
 
   constructor(
     app: App,
     private opts: DailyReportModalOptions
   ) {
     super(app);
+    this.date = opts.date;
+    this.tasks = opts.tasks;
     this.report = summarizeDaily({ date: opts.date, tasks: opts.tasks });
   }
 
@@ -60,14 +77,9 @@ export class DailyReportModal extends Modal {
     const { contentEl } = this;
     this.modalEl.addClass("dt-modal");
     this.modalEl.addClass("dt-daily-modal");
-    this.titleEl.setText(`日報 ${moment(this.opts.date).format("M月D日 (ddd)")}`);
-
-    this.renderTotals(contentEl);
-    this.renderTasks(contentEl);
-    this.renderNotes(contentEl);
-    this.renderOthers(contentEl);
-    this.renderLeftovers(contentEl);
-    this.renderBuckets(contentEl);
+    this.renderTitle();
+    this.bodyEl = contentEl.createDiv("dt-daily-body");
+    this.renderBody();
 
     const buttons = new Setting(contentEl);
     buttons.settingEl.addClass("dt-modal-buttons");
@@ -82,22 +94,179 @@ export class DailyReportModal extends Modal {
         .setButtonText("ノートに書き出す")
         .setCta()
         .onClick(() => {
+          const date = this.date;
           this.close();
-          this.opts.onExport();
+          this.opts.onExport(date);
         })
     );
     buttons.addButton((b) => b.setButtonText("閉じる").onClick(() => this.close()));
+
+    if (this.opts.loadTasks) {
+      this.attachSwipe();
+      // ← → で前後の日（入力欄は無いので、そのままキーを取ってよい）
+      this.scope.register([], "ArrowLeft", (e) => {
+        e.preventDefault();
+        void this.go(-1);
+      });
+      this.scope.register([], "ArrowRight", (e) => {
+        e.preventDefault();
+        void this.go(1);
+      });
+    }
   }
 
   onClose(): void {
+    this.loadSeq++;
     this.contentEl.empty();
   }
 
-  private markdown(): string {
-    return buildDailyReport(
-      { date: this.opts.date, tasks: this.opts.tasks },
-      { ticketUrlOf: this.opts.ticketUrlOf }
+  /** 見出し: 「◀ 日報 9月3日 (木) ▶」。日付の移動ができないときはボタンを出さない */
+  private renderTitle(): void {
+    const el = this.titleEl;
+    el.empty();
+    el.addClass("dt-daily-title-bar");
+    if (this.opts.loadTasks) {
+      this.navButton(el, "chevron-left", "前の日の日報（← キー / 右へスワイプ）", -1);
+    }
+    this.titleLabelEl = el.createSpan("dt-daily-title-label");
+    this.updateTitleLabel();
+    if (this.opts.loadTasks) {
+      this.navButton(el, "chevron-right", "次の日の日報（→ キー / 左へスワイプ）", 1);
+    }
+  }
+
+  private navButton(parent: HTMLElement, icon: string, label: string, dir: -1 | 1): void {
+    const btn = parent.createEl("button", {
+      cls: "clickable-icon dt-daily-nav",
+      attr: { type: "button", "aria-label": label },
+    });
+    setIcon(btn, iconName(icon));
+    btn.addEventListener("click", () => void this.go(dir));
+  }
+
+  private updateTitleLabel(): void {
+    const el = this.titleLabelEl;
+    if (!el) return;
+    el.empty();
+    el.createSpan({ cls: "dt-daily-title-word", text: "日報" });
+    el.createSpan({ cls: "dt-daily-title-date", text: moment(this.date).format("M月D日 (ddd)") });
+    if (isToday(this.date)) el.createSpan({ cls: "dt-daily-title-today", text: "今日" });
+  }
+
+  /** 本文（合計・タスク・記録・集計）を描き直す */
+  private renderBody(): void {
+    const body = this.bodyEl;
+    if (!body) return;
+    body.empty();
+    this.renderTotals(body);
+    this.renderTasks(body);
+    this.renderNotes(body);
+    this.renderOthers(body);
+    this.renderLeftovers(body);
+    this.renderBuckets(body);
+  }
+
+  /**
+   * 前後の日へ移る。読み込みの間は本文を薄くし、読めたら移動した方向から滑り込ませる。
+   * 連続でスワイプされたときは最後の日だけを反映する
+   */
+  private async go(dir: -1 | 1): Promise<void> {
+    const load = this.opts.loadTasks;
+    const body = this.bodyEl;
+    if (!load || !body) return;
+    const date = addDays(this.date, dir);
+    const seq = ++this.loadSeq;
+    body.addClass("is-loading");
+    let tasks: Task[];
+    try {
+      tasks = await load(date);
+    } catch (e) {
+      console.error(e);
+      if (seq === this.loadSeq) body.removeClass("is-loading");
+      new Notice("日報を読めませんでした: " + String(e));
+      return;
+    }
+    if (seq !== this.loadSeq) return; // その後さらに移動している
+    this.date = date;
+    this.tasks = tasks;
+    this.report = summarizeDaily({ date, tasks });
+    this.updateTitleLabel();
+    this.renderBody();
+    body.removeClass("is-loading");
+    body.removeClass("is-slide-left", "is-slide-right");
+    // 同じクラスを付け直してもアニメーションが再生されるよう、1フレーム空ける
+    void body.offsetWidth;
+    body.addClass(dir > 0 ? "is-slide-left" : "is-slide-right");
+    body.addEventListener("animationend", () => body.removeClass("is-slide-left", "is-slide-right"), {
+      once: true,
+    });
+    this.contentEl.scrollTop = 0;
+  }
+
+  /**
+   * 左右スワイプで前後の日へ（タッチ・ペンだけ。マウスのドラッグでは動かさない）。
+   * 縦方向が優勢ならスクロールに譲る。タイムラインの日付移動と同じ判定
+   */
+  private attachSwipe(): void {
+    const el = this.modalEl;
+    el.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.pointerType === "mouse" || !e.isPrimary) return;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      const id = e.pointerId;
+      const cleanup = () => {
+        document.removeEventListener("pointermove", onMove, true);
+        document.removeEventListener("pointerup", onEnd, true);
+        document.removeEventListener("pointercancel", onEnd, true);
+      };
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== id) return;
+        const dx = ev.clientX - sx;
+        const dy = ev.clientY - sy;
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > SWIPE_SLOP_Y) {
+          cleanup();
+          return;
+        }
+        if (Math.abs(dx) >= SWIPE_MIN_X && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          cleanup();
+          // 左へ払う（dx < 0）= 次の日、右へ払う = 前の日
+          void this.go(dx < 0 ? 1 : -1);
+        }
+      };
+      const onEnd = (ev: PointerEvent) => {
+        if (ev.pointerId !== id) return;
+        cleanup();
+      };
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", onEnd, true);
+      document.addEventListener("pointercancel", onEnd, true);
+    });
+    // 横方向の touchmove が Obsidian 本体（モバイルのサイドバー開閉）に取られないようにする
+    let tsx = 0;
+    let tsy = 0;
+    el.addEventListener(
+      "touchstart",
+      (ev: TouchEvent) => {
+        const t = ev.touches[0];
+        if (!t) return;
+        tsx = t.clientX;
+        tsy = t.clientY;
+      },
+      { passive: true }
     );
+    el.addEventListener(
+      "touchmove",
+      (ev: TouchEvent) => {
+        const t = ev.touches[0];
+        if (!t) return;
+        if (Math.abs(t.clientX - tsx) > Math.abs(t.clientY - tsy)) ev.stopPropagation();
+      },
+      { passive: true }
+    );
+  }
+
+  private markdown(): string {
+    return buildDailyReport({ date: this.date, tasks: this.tasks }, { ticketUrlOf: this.opts.ticketUrlOf });
   }
 
   private async copy(): Promise<void> {
@@ -207,8 +376,9 @@ export class DailyReportModal extends Modal {
         el.setAttr("tabindex", "0");
         el.setAttr("aria-label", "タイムラインのこのタスクへ移動");
         const jump = () => {
+          const date = this.date;
           this.close();
-          this.opts.onSelectTask?.(t);
+          this.opts.onSelectTask?.(date, t);
         };
         el.addEventListener("click", jump);
         el.addEventListener("keydown", (e: KeyboardEvent) => {

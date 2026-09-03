@@ -317,10 +317,11 @@ export default class DayTimelinePlugin extends Plugin {
       new DailyReportModal(this.app, {
         date: day,
         tasks,
+        loadTasks: async (d) => (await store.load(d)).tasks,
         ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
         colorOfTags: (tags) => colorForTags(tags, this.settings.tagColors),
-        onExport: () => void this.createDailyReport(day),
-        onSelectTask: (task) => this.getTimelineView()?.revealTask(day, task),
+        onExport: (d) => void this.createDailyReport(d),
+        onSelectTask: (d, task) => this.getTimelineView()?.revealTask(d, task),
       }).open();
     } catch (e) {
       console.error(e);
