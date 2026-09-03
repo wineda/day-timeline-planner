@@ -1411,6 +1411,11 @@
   width: 14px;
   height: 14px;
 }
+/* 持ち越し先で完了した [>] のチェック: 完了の印だが、ここからは切り替えない */
+.dt-tray-check.is-settled-by-carry {
+  cursor: default;
+  opacity: 0.7;
+}
 
 .dt-tray-title {
   overflow: hidden;

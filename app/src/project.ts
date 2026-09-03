@@ -206,6 +206,67 @@ export interface ProjectChild {
   task: Task;
   /** 誰の予定か（null = 自分） */
   owner: string | null;
+  /**
+   * 持ち越し済み [>] で、持ち越し先（鎖の末端）が完了しているか。
+   * 引き継いだ先で終わった仕事なので、一覧では完了として見せる（summarize が付ける）
+   */
+  settledByCarry?: boolean;
+}
+
+/** 子タスクが「片付いた」か: 自身が完了、または持ち越し先で完了している */
+export function isChildSettled(c: ProjectChild): boolean {
+  return c.task.done || c.settledByCarry === true;
+}
+
+/** "path#^id" 形式のリンクを「.md 抜きのパス」と「ブロックID」に分ける。ID が無ければ null */
+function splitBlockLink(link: string): { path: string; id: string } | null {
+  const i = link.indexOf("#^");
+  if (i < 0) return null;
+  const path = link.slice(0, i).trim().replace(/\.md$/, "");
+  const id = link.slice(i + 2).trim();
+  return path && id ? { path, id } : null;
+}
+
+/**
+ * 持ち越し済み [>] の子タスクについて、持ち越し先の鎖をたどって末端が完了していれば
+ * settledByCarry を立てる。続きのブロックはプロジェクトを引き継ぐので同じ children の中にある。
+ * リンクは手書きの短い形（[[2026-09-03#^id]]）も読めるよう、フルパスで見つからなければ末尾の名前で照合する
+ */
+export function markSettledByCarry(children: ProjectChild[]): void {
+  const byFull = new Map<string, ProjectChild>();
+  const byBase = new Map<string, ProjectChild>();
+  for (const c of children) {
+    const id = c.task.blockId;
+    if (!id) continue;
+    const path = c.path.replace(/\.md$/, "");
+    byFull.set(`${path}#^${id}`, c);
+    const base = path.split("/").pop() ?? path;
+    if (!byBase.has(`${base}#^${id}`)) byBase.set(`${base}#^${id}`, c);
+  }
+  const follow = (link: string): ProjectChild | null => {
+    const parts = splitBlockLink(link);
+    if (!parts) return null;
+    const full = byFull.get(`${parts.path}#^${parts.id}`);
+    if (full) return full;
+    const base = parts.path.split("/").pop() ?? parts.path;
+    return byBase.get(`${base}#^${parts.id}`) ?? null;
+  };
+  for (const c of children) {
+    c.settledByCarry = false;
+    if (!c.task.forwarded || !c.task.carryTo) continue;
+    // 鎖をたどる（当日内 → 翌日 → … と続くこともある）。輪になっていたら打ち切る
+    const seen = new Set<ProjectChild>([c]);
+    let cur: ProjectChild | null = follow(c.task.carryTo);
+    while (cur && !seen.has(cur)) {
+      if (cur.task.done) {
+        c.settledByCarry = true;
+        break;
+      }
+      if (!cur.task.forwarded || !cur.task.carryTo) break;
+      seen.add(cur);
+      cur = follow(cur.task.carryTo);
+    }
+  }
 }
 
 /** プロジェクトの集計（パネルとノート内一覧に使う） */
@@ -222,13 +283,15 @@ export interface ProjectSummary {
 }
 
 export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSummary {
+  markSettledByCarry(children);
   let planMin = 0;
   let actMin = 0;
   let doneCount = 0;
   for (const c of children) {
     if (c.task.start !== null && c.task.end !== null) planMin += c.task.end - c.task.start;
     actMin += c.task.actual.reduce((n, r) => n + (r.end - r.start), 0);
-    if (c.task.done) doneCount++;
+    // 持ち越し先で完了した [>] も「片付いた」として数える（引き継いだ先で終わった仕事）
+    if (isChildSettled(c)) doneCount++;
   }
   return { ref, children, planMin, actMin, doneCount };
 }
@@ -337,6 +400,7 @@ const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 
 /** プロジェクトノートへ書き込む「タスク」セクションの行（マーカー含む） */
 export function buildTaskListSection(children: ProjectChild[]): string[] {
+  markSettledByCarry(children);
   const rows = sortChildren(children);
   const lines = [SECTION_START, "## タスク", ""];
   if (!rows.length) {
@@ -358,7 +422,8 @@ export function buildTaskListSection(children: ProjectChild[]): string[] {
       const linkBase = c.path.replace(/\.md$/, "");
       const titleCell = t.blockId ? `[[${linkBase}#^${t.blockId}\\|${title}]]` : title;
       lines.push(
-        `| ${t.done ? "✅" : t.forwarded ? "▶" : "⬜"} | ${dateLabel} | ${titleCell} | ${hmm(plan)} | ${hmm(act)} |`
+        // 持ち越し先で完了した [>] は ✅▶（完了扱いだが続きへ引き継いだ記録だと分かるように）
+        `| ${t.done ? "✅" : c.settledByCarry ? "✅▶" : t.forwarded ? "▶" : "⬜"} | ${dateLabel} | ${titleCell} | ${hmm(plan)} | ${hmm(act)} |`
       );
     }
     lines.push(`| | | **合計（${rows.length}件）** | **${hmm(planTotal)}** | **${hmm(actTotal)}** |`);
