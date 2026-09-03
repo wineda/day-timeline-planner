@@ -224,6 +224,17 @@ function replay(el: HTMLElement, cls: string): void {
   el.addClass(cls);
 }
 
+/**
+ * ステージのモンスターの代わりに殴る相手（ペット）。
+ * 渡すと、ステージは自分のモンスターを描かず、この要素に一撃の動きを付け、HP に合わせて draw で描き直させる。
+ * ステージはこの要素の位置に合わせて出る（斬撃・ダメージ・判はその上に重なる）
+ */
+export interface BattlePuppet {
+  el: HTMLElement;
+  size: number;
+  draw: (ratio: number) => void;
+}
+
 export interface BattleStageOptions {
   monster: Monster;
   title: string;
@@ -240,6 +251,8 @@ export interface BattleStageOptions {
   onHit?: (kind: "small" | "big" | "kill") => void;
   /** 討伐を短縮版にする（単独タスクはタスクを終えるたびに討伐になるので、長いと疲れる） */
   brief?: boolean;
+  /** ペットの上で再生する（anchor より優先） */
+  puppet?: BattlePuppet;
 }
 
 /**
@@ -253,7 +266,8 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
   const total = Math.max(o.hp.total, 1);
   let remain = Math.min(total, o.hp.remain + damage);
   const kill = o.hp.remain <= 0 && o.hp.total > 0;
-  const size = SPRITE_SIZE[monster.rank];
+  const puppet = o.puppet;
+  const size = puppet ? puppet.size : SPRITE_SIZE[monster.rank];
 
   // 行の上に重ねる（行が見えていなければビューの右下に出す）。
   // 行は再読み込みで作り直されるので、行の中ではなく document.body に画面座標（fixed）で置く
@@ -269,7 +283,15 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     a.top < hostRect.bottom &&
     a.right > hostRect.left &&
     a.left < hostRect.right;
-  if (a && visible) {
+  if (puppet) {
+    // ペットの上: モンスターの枠をペットのスプライトにぴったり重ね、その下に名前と HP バーを出す
+    stage.addClass("is-puppet");
+    const w = 220;
+    const pr = puppet.el.getBoundingClientRect();
+    stage.style.width = `${w}px`;
+    stage.style.left = `${pr.left + pr.width / 2 - w / 2}px`;
+    stage.style.top = `${pr.top + pr.height / 2 - size / 2}px`;
+  } else if (a && visible) {
     stage.addClass("is-anchored");
     stage.style.left = `${a.left}px`;
     stage.style.top = `${a.top}px`;
@@ -282,11 +304,13 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     stage.style.left = `${hostRect.right - w - 16}px`;
     stage.style.top = `${hostRect.bottom - 16 - 60}px`;
   }
-  const flash = stage.createDiv("dt-battle-flash");
   const monWrap = stage.createDiv("dt-battle-mon-wrap");
   monWrap.style.width = `${size}px`;
   monWrap.style.height = `${size}px`;
-  const mon = monWrap.createDiv("dt-battle-mon");
+  // 大の一撃の光。ペットの上ではモンスターの枠だけを光らせる（ステージ全体には背景が無い）
+  const flash = (puppet ? monWrap : stage).createDiv("dt-battle-flash");
+  // ペットの上で再生するときは、ステージのモンスターは描かずペットのスプライトを動かす
+  const mon = puppet ? puppet.el : monWrap.createDiv("dt-battle-mon");
   const slashS = monWrap.createDiv("dt-battle-slash");
   const slashB = monWrap.createDiv("dt-battle-slash is-big");
   const slashC = monWrap.createDiv("dt-battle-slash is-big is-cross");
@@ -297,10 +321,12 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
   const fill = bar.createDiv("dt-battle-fill");
   const hpt = info.createDiv("dt-battle-hpt");
   const stamp = stage.createDiv({ cls: "dt-battle-stamp", text: "討伐" });
+  if (puppet) stamp.style.top = `${size / 2}px`; // ペットの上では判をモンスターの中心に
 
   const draw = (ratioOverride?: number) => {
     const ratio = Math.max(0, remain / total);
-    mon.innerHTML = monsterSVG(monster, ratioOverride ?? ratio, size);
+    if (puppet) puppet.draw(ratioOverride ?? ratio);
+    else mon.innerHTML = monsterSVG(monster, ratioOverride ?? ratio, size);
     fill.style.width = `${ratio * 100}%`;
     fill.toggleClass("is-mid", ratio <= 0.5 && ratio > 0.2);
     fill.toggleClass("is-low", ratio <= 0.2);
@@ -349,7 +375,7 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     stage.addClass("is-dead");
     hpt.setText(`討伐！ 総工数 ${hmm(o.totalWork)}`);
     replay(stamp, "is-on");
-    confetti(stage);
+    confetti(puppet ? monWrap : stage, !!puppet);
     await wait(1200);
   } else if (kill) {
     await wait(350);
@@ -364,7 +390,7 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     hpt.setText(`討伐！ 総工数 ${hmm(o.totalWork)}`);
     replay(stamp, "is-on");
     if (o.sound) hitSound("kill");
-    confetti(stage);
+    confetti(puppet ? monWrap : stage, !!puppet);
     await wait(2600);
   } else {
     await wait(900);
@@ -372,12 +398,16 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
   stage.addClass("is-out");
   await wait(300);
   stage.remove();
+  // ペットのスプライトに付けた動きのクラスは、演出のあとに外す（倒れたままにしない）
+  if (puppet) puppet.el.removeClass("is-flinch", "is-tremble", "is-fall");
 }
 
-function confetti(stage: HTMLElement): void {
+/** 紙吹雪。centered なら親の中央から、そうでなければ行のモンスターの位置から散る */
+function confetti(parent: HTMLElement, centered = false): void {
   const colors = ["#fbbf24", "#f87171", "#60a5fa", "#4ade80", "#c084fc"];
   for (let i = 0; i < 24; i++) {
-    const c = stage.createDiv("dt-battle-confetti");
+    const c = parent.createDiv("dt-battle-confetti");
+    if (centered) c.style.left = "50%";
     c.style.background = colors[i % colors.length];
     const a = Math.random() * Math.PI * 2;
     const r = 50 + Math.random() * 90;
