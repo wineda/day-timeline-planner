@@ -3771,6 +3771,14 @@ export class DayTimelineView extends ItemView {
       this.closeMemoPopover();
       this.openEditModal(date, task, "memo");
     });
+    // プロジェクトが結びついていれば、そのノートを直接開くアイコン（作業中は案件ノートを見ながら進めることが多い）
+    const projectLink = task.project;
+    if (projectLink) {
+      button("folder-open", `プロジェクトノートを開く: ${projectDisplayName(projectLink)}`, () => {
+        this.closeMemoPopover();
+        void this.plugin.openProject(projectLink);
+      });
+    }
     button("file-text", "ノートで開く", () => {
       this.closeMemoPopover();
       void this.openTaskInNote(date, task);
