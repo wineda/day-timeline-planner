@@ -1561,7 +1561,7 @@
 .dt-day-header.is-today:hover {
   background: color-mix(in srgb, var(--interactive-accent) 13%, transparent);
 }
-/* 曜日 + 日付のまとまり（スマホでは横並びにする）。枠や背景・丸は付けず、
+/* 曜日 + 日付のまとまり（曜日・日付を1行ずつ中央揃えで縦に積む）。枠や背景・丸は付けず、
    文字だけの控えめな見た目にする（今日は文字色と列の薄い色で示す） */
 .dt-day-header-date {
   display: flex;
@@ -3914,28 +3914,23 @@ body.is-mobile .dt-project-group-count {
   font-size: 0.8em;
 }
 
-/* スマホの日付ヘッダー: 列が狭く縦の場所も貴重なので、
-   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実の数字は一段小さく。
-   （タブレットは列が広いのでデスクトップと同じ縦積みのまま） */
+/* スマホの日付ヘッダー: デスクトップと同じく曜日・日付を1行ずつ中央揃えで縦に積み、
+   列が狭いぶん文字と余白を一段小さくする。予実の数字も一段小さく */
 body.is-phone .dt-day-header {
   padding: 4px 1px 5px;
-  gap: 3px;
+  gap: 2px;
 }
 body.is-phone .dt-day-header-date {
-  flex-direction: row;
-  align-items: center;
-  gap: 3px;
+  gap: 1px;
 }
 body.is-phone .dt-day-header-dow {
   font-size: 10px;
   letter-spacing: 0;
 }
 body.is-phone .dt-day-header-num {
-  width: auto; /* 丸は付けないので、幅は数字なりにして曜日との間を詰める */
-  min-width: 20px;
-  padding: 0 2px;
-  height: 24px;
-  line-height: 24px;
+  width: 24px;
+  height: 22px;
+  line-height: 22px;
   font-size: 13px;
 }
 /* 狭い列でも「14.1 +1.6」が1行に収まるよう、実績の文字を差異と同じ大きさにして間を詰める */
