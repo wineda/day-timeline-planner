@@ -1,5 +1,6 @@
 import {
   ItemView,
+  MarkdownRenderer,
   MarkdownView,
   Menu,
   Notice,
@@ -355,6 +356,7 @@ export class DayTimelineView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.closeMemoPopover();
     DropdownMenu.closeAll();
     this.contentEl.empty();
   }
@@ -3283,7 +3285,7 @@ export class DayTimelineView extends ItemView {
             if (viaLongPress) {
               this.swallowNextClick();
               this.showTaskMenu(col.date, task, ev);
-            } else if (toNote) void this.openTaskInNote(col.date, task);
+            } else if (toNote) void this.showMemoPopover(col.date, task, ev);
             else this.openEditModal(col.date, task);
             return;
           }
@@ -3470,7 +3472,7 @@ export class DayTimelineView extends ItemView {
         this.registerTaskEl(`${key}|${task.key}`, item);
         item.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (e.ctrlKey || e.metaKey) void this.openTaskInNote(cell.date, task);
+          if (e.ctrlKey || e.metaKey) void this.showMemoPopover(cell.date, task, e);
           else this.openEditModal(cell.date, task);
         });
         item.addEventListener("contextmenu", (e) => {
@@ -3693,6 +3695,140 @@ export class DayTimelineView extends ItemView {
       ev.stopPropagation();
       this.showProjectPreview(el, linktext, ev);
     });
+  }
+
+  // ---------- 作業メモのポップアップ（Ctrl/Cmd + クリック / 右クリック「作業メモを見る」） ----------
+
+  /** 表示中の作業メモのポップアップ（1つだけ） */
+  private memoPopoverEl: HTMLElement | null = null;
+  private memoPopoverCleanup: (() => void) | null = null;
+
+  /**
+   * タスクの作業メモ（ステップ・備考）を、ノートも編集ダイアログも開かずにその場のポップアップで見る。
+   * ステップはその場でチェックでき、「編集」で作業メモのタブを開いたダイアログへ、「ノートで開く」でブロックへ飛べる。
+   * 記録（結果など）は出さない: 作業中に見返したいのは手順と手元のメモだけなので
+   */
+  private async showMemoPopover(date: Date, task: Task, e: MouseEvent): Promise<void> {
+    this.closeMemoPopover();
+    const pop = document.body.createDiv({ cls: "dt-memo-popover", attr: { role: "dialog", "aria-label": "作業メモ" } });
+    this.memoPopoverEl = pop;
+    pop.style.left = `${e.clientX + 8}px`;
+    pop.style.top = `${e.clientY + 8}px`;
+
+    const head = pop.createDiv("dt-memo-pop-head");
+    const titleWrap = head.createDiv("dt-memo-pop-title");
+    titleWrap.createSpan({ cls: "dt-memo-pop-label", text: "作業メモ" });
+    titleWrap.createSpan({ cls: "dt-memo-pop-name", text: this.displayTitle(task), attr: { title: task.title } });
+    const actions = head.createDiv("dt-memo-pop-actions");
+    const button = (icon: string, label: string, onClick: () => void) => {
+      const b = actions.createEl("button", { cls: "dt-memo-pop-btn", attr: { type: "button", "aria-label": label, title: label } });
+      setIcon(b, iconName(icon));
+      b.onclick = (ev: MouseEvent) => {
+        ev.stopPropagation();
+        onClick();
+      };
+    };
+    button("pencil", "作業メモを編集", () => {
+      this.closeMemoPopover();
+      this.openEditModal(date, task, "memo");
+    });
+    button("file-text", "ノートで開く", () => {
+      this.closeMemoPopover();
+      void this.openTaskInNote(date, task);
+    });
+    button("x", "閉じる", () => this.closeMemoPopover());
+
+    const body = pop.createDiv("dt-memo-pop-body");
+    await this.renderMemoPopoverBody(body, date, task);
+    if (this.memoPopoverEl !== pop) return; // 描画中に閉じられた
+
+    // 画面からはみ出す分は寄せる（右・下にあふれたら左・上へ）
+    const rect = pop.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = e.clientX + 8;
+    let top = e.clientY + 8;
+    if (left + rect.width > vw - 8) left = Math.max(8, e.clientX - rect.width - 8);
+    if (top + rect.height > vh - 8) top = Math.max(8, vh - rect.height - 8);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+
+    // 外側のクリック・Esc で閉じる（このクリック自体で閉じないよう、登録は次のティックで）
+    const onDown = (ev: PointerEvent) => {
+      if (!pop.contains(ev.target as Node)) this.closeMemoPopover();
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") this.closeMemoPopover();
+    };
+    window.setTimeout(() => {
+      if (this.memoPopoverEl !== pop) return;
+      document.addEventListener("pointerdown", onDown, true);
+      document.addEventListener("keydown", onKey, true);
+      this.memoPopoverCleanup = () => {
+        document.removeEventListener("pointerdown", onDown, true);
+        document.removeEventListener("keydown", onKey, true);
+      };
+    }, 0);
+  }
+
+  private closeMemoPopover(): void {
+    this.memoPopoverCleanup?.();
+    this.memoPopoverCleanup = null;
+    this.memoPopoverEl?.remove();
+    this.memoPopoverEl = null;
+  }
+
+  /** ポップアップの中身（ステップのチェックリスト + 備考の Markdown）。ステップの切替後にも呼んで描き直す */
+  private async renderMemoPopoverBody(body: HTMLElement, date: Date, task: Task): Promise<void> {
+    body.empty();
+    const sourcePath = this.storeOf(task).pathFor(date);
+    const steps = task.steps.filter((st) => st.text.trim());
+    if (steps.length) {
+      const sec = body.createDiv("dt-memo-pop-steps");
+      const done = steps.filter((st) => st.done).length;
+      sec.createDiv({ cls: "dt-memo-pop-sec", text: `ステップ ${done} / ${steps.length}` });
+      const bar = sec.createDiv("dt-memo-pop-bar");
+      bar.createDiv().style.width = `${(done / steps.length) * 100}%`;
+      for (const [idx, st] of steps.entries()) {
+        const row = sec.createDiv("dt-memo-pop-step");
+        row.toggleClass("is-done", st.done);
+        const cb = row.createEl("input", { type: "checkbox", attr: { "aria-label": st.text } });
+        cb.checked = st.done;
+        cb.addEventListener("change", () => void this.toggleMemoStep(body, date, task, idx, cb.checked));
+        row.createSpan({ cls: "dt-memo-pop-step-text", text: st.text });
+        const children = st.children.map((l) => l.replace(/^\s+/, "")).filter((l) => l.trim());
+        if (children.length) {
+          const sub = row.createDiv("dt-memo-pop-step-sub markdown-rendered");
+          await MarkdownRenderer.render(this.app, children.join("\n"), sub, sourcePath, this);
+        }
+      }
+    }
+    if (task.details.trim()) {
+      const sec = body.createDiv("dt-memo-pop-details");
+      sec.createDiv({ cls: "dt-memo-pop-sec", text: "備考" });
+      const md = sec.createDiv("dt-memo-pop-md markdown-rendered");
+      await MarkdownRenderer.render(this.app, task.details, md, sourcePath, this);
+    }
+    if (!steps.length && !task.details.trim()) {
+      body.createDiv({
+        cls: "dt-memo-pop-empty",
+        text: "作業メモはまだありません。「作業メモを編集」でステップや備考を書けます",
+      });
+    }
+  }
+
+  /** ポップアップのチェックでステップの完了を切り替えて保存し、最新のタスクで描き直す */
+  private async toggleMemoStep(body: HTMLElement, date: Date, task: Task, index: number, done: boolean): Promise<void> {
+    const steps = task.steps.map((st) => ({ ...st, children: [...st.children] }));
+    const visible = steps.filter((st) => st.text.trim());
+    if (!visible[index]) return;
+    visible[index].done = done;
+    await this.commitUpdate(date, task, { ...this.draftOf(task), steps });
+    if (!this.memoPopoverEl) return;
+    const fresh = (this.data.get(dateKey(date))?.tasks ?? []).find(
+      (t) => (task.blockId ? t.blockId === task.blockId : t.key === task.key)
+    );
+    if (fresh) await this.renderMemoPopoverBody(body, date, fresh);
   }
 
   /** Ctrl/Cmd + ホバーでノートの該当ブロックをプレビュー */
@@ -4145,7 +4281,7 @@ export class DayTimelineView extends ItemView {
             if (viaLongPress) {
               this.swallowNextClick(); // 合成 click がメニューに当たって即閉じないように
               this.showTaskMenu(col.date, task, ev);
-            } else if (toNote) void this.openTaskInNote(col.date, task);
+            } else if (toNote) void this.showMemoPopover(col.date, task, ev);
             else this.openEditModal(col.date, task);
             return;
           }
@@ -4293,6 +4429,14 @@ export class DayTimelineView extends ItemView {
     menu.addItem((i) =>
       i.setTitle("編集").setIcon("pencil").onClick(() => this.openEditModal(date, task))
     );
+    if (this.plugin.blockStoreFor(task.owner)) {
+      menu.addItem((i) =>
+        i
+          .setTitle("作業メモを見る")
+          .setIcon("list-checks")
+          .onClick(() => void this.showMemoPopover(date, task, e))
+      );
+    }
     menu.addItem((i) =>
       i
         .setTitle(task.done ? "未完了に戻す" : "完了にする")
@@ -4526,7 +4670,7 @@ export class DayTimelineView extends ItemView {
     }).open();
   }
 
-  private openEditModal(date: Date, task: Task): void {
+  private openEditModal(date: Date, task: Task, pane?: "record" | "memo"): void {
     // 自動保存のたびに参照を最新へ差し替える（タイトルや時刻が変わると照合できなくなるため）
     let current = task;
     const wasDone = task.done;
@@ -4554,6 +4698,7 @@ export class DayTimelineView extends ItemView {
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
       otherActuals: this.otherActualsFor(date, task.owner ?? null, task.key),
+      initialPane: pane,
       ...this.projectOptions(),
       onAutoSave: async (data) => {
         // 持ち主・日付の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する

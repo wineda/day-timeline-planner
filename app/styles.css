@@ -3947,3 +3947,120 @@ body .dt-dropdown button.dt-dropdown-item.is-checked {
     animation: none;
   }
 }
+
+/* ---------- 作業メモのポップアップ（タスクを Ctrl/Cmd + クリック） ---------- */
+.dt-memo-popover {
+  position: fixed;
+  z-index: var(--layer-popover, 30);
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
+}
+.dt-memo-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.dt-memo-pop-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dt-memo-pop-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+}
+.dt-memo-pop-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-memo-pop-actions {
+  display: flex;
+  gap: 2px;
+}
+.dt-memo-pop-btn {
+  height: auto;
+  min-height: 0;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+.dt-memo-pop-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.dt-memo-pop-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.dt-memo-pop-body {
+  overflow: auto;
+  padding: 6px 12px 10px;
+}
+.dt-memo-pop-sec {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 6px 0 4px;
+}
+.dt-memo-pop-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.dt-memo-pop-bar div {
+  height: 100%;
+  background: var(--interactive-accent);
+}
+.dt-memo-pop-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  padding: 2px 0;
+}
+.dt-memo-pop-step input[type="checkbox"] {
+  margin: 3px 0 0;
+}
+.dt-memo-pop-step.is-done .dt-memo-pop-step-text {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.dt-memo-pop-step-sub {
+  grid-column: 2;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.dt-memo-pop-md {
+  font-size: var(--font-ui-small);
+}
+.dt-memo-pop-md > :first-child,
+.dt-memo-pop-step-sub > :first-child {
+  margin-top: 0;
+}
+.dt-memo-pop-md > :last-child,
+.dt-memo-pop-step-sub > :last-child {
+  margin-bottom: 0;
+}
+.dt-memo-pop-empty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 6px 0;
+}

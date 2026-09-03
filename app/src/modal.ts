@@ -76,6 +76,8 @@ export interface TaskModalOptions {
   trackers?: IssueTracker[];
   /** 同じ日の他のタスクの実績（実績の重複を保存前に注意する。無ければチェックしない） */
   otherActuals?: OtherActual[];
+  /** 最初に開くタブ（既定は「記録」。作業メモのポップアップの「編集」から開くときは "memo"） */
+  initialPane?: "record" | "memo";
   /** 「誰の予定か」の選択肢（無ければ欄を出さない） */
   owners?: { id: string | null; name: string; color: string }[];
   initialOwner?: string | null;
@@ -342,7 +344,7 @@ export class TaskModal extends Modal {
       recordPane = contentEl.createDiv({ cls: "dt-modal-pane", attr: { role: "tabpanel" } });
       memoPane = contentEl.createDiv({ cls: "dt-modal-pane", attr: { role: "tabpanel" } });
       this.panes.push({ name: "record", el: recordPane }, { name: "memo", el: memoPane });
-      this.showPane("record");
+      this.showPane(this.opts.initialPane ?? "record");
     }
 
     // ---- モバイル: TickTick 風のシンプル表示 ----
@@ -941,6 +943,7 @@ export class TaskModal extends Modal {
     this.applyTagSchema();
     this.updateTitleDesc();
     this.updateMemoBadge();
+    if (blockMode && this.opts.initialPane === "memo") window.setTimeout(() => this.showPane("memo"), 0);
 
     // 入力が入ったら、保存時の警告で付けた「未入力」マークを消す
     contentEl.addEventListener("input", () => {
