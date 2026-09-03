@@ -1257,15 +1257,35 @@ export class DayTimelineView extends ItemView {
       el.toggleClass("is-sunday", dow === 0);
       el.toggleClass("is-saturday", dow === 6);
       el.toggleClass("is-other-month", col.date.getMonth() !== this.date.getMonth());
-      // 曜日と日付は1つのまとまりに（スマホでは横並びにして高さを節約する）
+      // 曜日と日付は1つのまとまりに（スマホでは横並びにして高さを節約する）。
+      // 日付そのものをクリックするとその日の日報、ヘッダーの他の場所は今までどおり日表示へ
       const dateEl = el.createDiv("dt-day-header-date");
       dateEl.createSpan({ cls: "dt-day-header-dow", text: WEEKDAY_JA[dow] });
       dateEl.createSpan({ cls: "dt-day-header-num", text: String(col.date.getDate()) });
-      el.setAttr("aria-label", `${moment(col.date).format("M月D日 (ddd)")} を日表示で開く`);
+      const label = moment(col.date).format("M月D日 (ddd)");
+      el.setAttr("aria-label", `${label} を日表示で開く`);
       el.onclick = () => {
         this.date = startOfDay(col.date);
         this.setViewMode("day");
       };
+      if (this.plugin.blockStore()) {
+        const date = startOfDay(col.date);
+        dateEl.addClass("is-clickable");
+        dateEl.setAttr("role", "button");
+        dateEl.setAttr("tabindex", "0");
+        dateEl.setAttr("aria-label", `${label} の日報を見る`);
+        dateEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void this.plugin.openDailyReport(date);
+        });
+        dateEl.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            void this.plugin.openDailyReport(date);
+          }
+        });
+      }
     }
   }
 
@@ -3796,6 +3816,17 @@ export class DayTimelineView extends ItemView {
       ?.querySelectorAll<HTMLElement>(".dt-project-child.is-selected, .dt-project-child-trow.is-selected")
       .forEach((el) => el.removeClass("is-selected"));
     rowEl?.addClass("is-selected");
+  }
+
+  /**
+   * 日報など、ビューの外からその日のタスクをタイムラインで見せる。
+   * その日へ移動し、対応するブロックを強調して画面内へスクロールする
+   */
+  revealTask(date: Date, task: Task): void {
+    this.selectTask(date, task);
+    this.setDate(date);
+    if (this.isNarrow) this.setNarrowPane("timeline");
+    this.revealSelectedTask();
   }
 
   /** パネルで選んだタスクの強調を解除する */
