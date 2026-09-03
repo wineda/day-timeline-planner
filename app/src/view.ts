@@ -3552,15 +3552,16 @@ export class DayTimelineView extends ItemView {
         }
         if (!el) el = col.headerEl.createDiv("dt-day-total");
         el.empty();
-        // 「実績/予定」（小数1桁の時間）と差異を1つのピルにまとめる。列が広ければ1行、
-        // 狭ければ差異が自然に2行目へ折り返す。下端の極小バーが予定に対する実績の割合
-        const nums = el.createSpan("dt-day-total-nums");
+        // 「実績/予定」（小数1桁の時間）と差異を小さな1行にまとめ、その下に予定に対する
+        // 実績の割合を示す細いバーを置く。列が狭ければ差異が自然に2行目へ折り返す
+        const line = el.createDiv("dt-day-total-line");
+        const nums = line.createSpan("dt-day-total-nums");
         nums.createSpan({ cls: "dt-day-total-act", text: hoursDecimal(act) });
         nums.createSpan({ text: `/${hoursDecimal(plan)}` });
         el.setAttr("aria-label", `実績 ${hmm(act)} / 予定 ${hmm(plan)}`);
         if (plan && act) {
           const diff = act - plan;
-          const d = el.createSpan({
+          const d = line.createSpan({
             cls: "dt-day-total-diff",
             text: `${diff >= 0 ? "+" : "-"}${hoursDecimal(Math.abs(diff))}`,
           });
