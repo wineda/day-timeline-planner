@@ -16,7 +16,15 @@ import {
   type HoverPopover,
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
-import { ScheduledTask, Task, TaskDraft, TaskSource, isScheduled, stepProgress } from "./model";
+import {
+  ScheduledTask,
+  Task,
+  TaskDraft,
+  TaskSource,
+  isScheduled,
+  stepProgress,
+  taskProgress,
+} from "./model";
 import {
   ConfirmModal,
   PromptModal,
@@ -2133,19 +2141,24 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * テーブル表示の「進捗」セル: タスクのステップの消化率をバーと % で出す。
-   * ステップが記録されていないタスクは空のまま（件数は出さない）
+   * テーブル表示の「進捗」セル: タスクの消化率をバーと % で出す。
+   * ステップが記録されていないタスクはステップ1件として数えるので、
+   * タスクを完了にすれば 100% になる
    */
   private renderStepProgressBar(td: HTMLElement, t: Task): void {
-    const sp = stepProgress(t);
-    if (!sp) return;
+    const sp = taskProgress(t);
     const pct = Math.round(sp.ratio * 100);
     const wrap = td.createDiv("dt-progress");
     wrap.toggleClass("is-complete", sp.done >= sp.total);
     const bar = wrap.createDiv("dt-progress-bar");
     bar.createDiv("dt-progress-fill").style.width = `${pct}%`;
     wrap.createSpan({ cls: "dt-progress-text", text: `${pct}%` });
-    td.setAttr("aria-label", `ステップ ${sp.done}/${sp.total} 完了（${pct}%）`);
+    td.setAttr(
+      "aria-label",
+      stepProgress(t)
+        ? `ステップ ${sp.done}/${sp.total} 完了（${pct}%）`
+        : `${t.done ? "完了" : "未完了"}（${pct}%）`
+    );
   }
 
   /** プロジェクトの期日の表示文字列（日付として読めれば M/D、年が違えば YYYY/M/D、読めなければ書かれたまま） */
