@@ -4754,6 +4754,37 @@ body.is-mobile .modal.dt-modal .modal-content {
 .dt-battle.is-out {
   opacity: 0;
 }
+/* ペットの上で再生: 背景を持たず縦に並べ、モンスターの枠（透明）をペットに重ね、その下に名前と HP バー */
+.dt-battle.is-puppet {
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+  z-index: calc(var(--layer-notice, 60) + 1);
+}
+.dt-battle.is-puppet .dt-battle-flash {
+  border-radius: 50%;
+  inset: -20%;
+}
+.dt-battle.is-puppet .dt-battle-info {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+  text-align: center;
+}
+.dt-battle.is-puppet .dt-battle-stamp {
+  right: auto;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%) rotate(-12deg) scale(3);
+}
+.dt-battle.is-puppet .dt-battle-stamp.is-on {
+  animation: dt-battle-stamp-center 0.3s cubic-bezier(0.2, 1.6, 0.5, 1) forwards;
+}
 .dt-battle.is-shake {
   animation: dt-battle-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
@@ -4979,6 +5010,11 @@ body.is-mobile .modal.dt-modal .modal-content {
   60% { transform: rotate(96deg) translateY(2px); }
   100% { transform: rotate(90deg) translateY(0); filter: grayscale(1); }
 }
+@keyframes dt-battle-stamp-center {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-12deg) scale(3); }
+  70% { opacity: 1; transform: translate(-50%, -50%) rotate(-12deg) scale(0.92); }
+  100% { opacity: 1; transform: translate(-50%, -50%) rotate(-12deg) scale(1); }
+}
 @keyframes dt-battle-stamp {
   0% { opacity: 0; transform: translateY(-50%) rotate(-12deg) scale(3); }
   70% { opacity: 1; transform: translateY(-50%) rotate(-12deg) scale(0.92); }
@@ -5078,6 +5114,27 @@ body.is-mobile .modal.dt-modal .modal-content {
 .dt-pet.is-dragging {
   cursor: grabbing;
 }
+/* 演出: ゆっくり中央へ行く・戻る（pet.ts の TRAVEL_MS と合わせる） */
+.dt-pet.is-traveling {
+  transition: left 0.8s ease-in-out, top 0.8s ease-in-out;
+}
+.dt-pet.is-battling {
+  cursor: default;
+  z-index: var(--layer-notice, 60);
+}
+.dt-pet.is-battling .dt-pet-bubble {
+  display: none;
+}
+/* 討伐: その場で縮んで消える（pet.ts の VANISH_MS と合わせる） */
+.dt-pet.is-vanish {
+  transition: opacity 0.45s ease, transform 0.45s ease;
+  opacity: 0;
+  transform: scale(0.5);
+}
+/* 討伐のあと、次の相手が元の位置にふわっと現れる */
+.dt-pet.is-appear {
+  animation: dt-pet-appear 0.45s ease-out;
+}
 .dt-pet-sprite {
   line-height: 0;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
@@ -5092,6 +5149,12 @@ body.is-mobile .modal.dt-modal .modal-content {
 }
 .dt-pet-sprite.is-shake {
   animation: dt-battle-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+.dt-pet-sprite.is-tremble {
+  animation: dt-battle-tremble 0.05s linear 18;
+}
+.dt-pet-sprite.is-fall {
+  animation: dt-battle-fall 0.55s cubic-bezier(0.3, 1.4, 0.6, 1) forwards;
 }
 .dt-pet-bubble {
   position: absolute;
@@ -5129,6 +5192,10 @@ body.is-mobile .modal.dt-modal .modal-content {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+@keyframes dt-pet-appear {
+  0% { opacity: 0; transform: translateY(12px) scale(0.6); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes dt-pet-bob {
   0%, 100% { transform: translateY(0); }

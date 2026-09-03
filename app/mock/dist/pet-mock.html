@@ -1,3 +1,6 @@
+<title>ペットの演出モック</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">
+<style>
 /* ===== Day Timeline Planner ===== */
 
 .workspace-leaf-content[data-type="day-timeline-planner-view"] .view-content {
@@ -5208,3 +5211,2136 @@ body.is-mobile .modal.dt-modal .modal-content {
     animation: none;
   }
 }
+
+/* モックの見た目: ドット絵のモンスターに合わせ、見出しだけドットフォント。本文は角ゴシック。
+   Obsidian のテーマ変数の代わりもここで定義する（ライト / ダーク） */
+:root {
+  --background-primary: #fbfaf7;
+  --background-secondary: #f1efe9;
+  --background-modifier-border: #d8d4c8;
+  --background-modifier-hover: #e8e4da;
+  --text-normal: #26241f;
+  --text-muted: #6f6a5e;
+  --text-accent: #4f5fb8;
+  --interactive-accent: #4f5fb8;
+  --radius-s: 6px;
+  --shadow-s: 0 2px 8px rgba(40, 35, 20, 0.12);
+  --font-ui-small: 13px;
+  --font-ui-smaller: 12px;
+  --color-red: #c04545;
+  --color-green: #4caf50;
+  --color-yellow: #e0a800;
+  --color-orange: #e07a2f;
+  --layer-notice: 60;
+  --layer-popover: 30;
+  --mock-display: "DotGothic16", "Zen Kaku Gothic New", "Hiragino Sans", sans-serif;
+  --mock-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background-primary: #1d1c1a;
+    --background-secondary: #292826;
+    --background-modifier-border: #3f3d38;
+    --background-modifier-hover: #34322e;
+    --text-normal: #ebe8e1;
+    --text-muted: #a19c90;
+    --text-accent: #9aa6ea;
+    --interactive-accent: #6b7bd6;
+    --shadow-s: 0 2px 8px rgba(0, 0, 0, 0.45);
+  }
+}
+:root[data-theme="dark"] {
+  --background-primary: #1d1c1a;
+  --background-secondary: #292826;
+  --background-modifier-border: #3f3d38;
+  --background-modifier-hover: #34322e;
+  --text-normal: #ebe8e1;
+  --text-muted: #a19c90;
+  --text-accent: #9aa6ea;
+  --interactive-accent: #6b7bd6;
+  --shadow-s: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+body {
+  margin: 0;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: 14px/1.6 var(--mock-body);
+}
+.mock-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 20px 120px;
+}
+.mock-page h1 {
+  font-family: var(--mock-display);
+  font-weight: 400;
+  font-size: 26px;
+  letter-spacing: 0.02em;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+.mock-page h1 .mock-h1-mon {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  vertical-align: -6px;
+  margin-right: 8px;
+  line-height: 0;
+}
+.mock-page h1 .mock-h1-mon svg {
+  width: 100%;
+  height: 100%;
+}
+.mock-lead {
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 62ch;
+  margin: 0 0 18px;
+}
+.mock-lead b {
+  color: var(--text-normal);
+}
+.mock-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.mock-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+.mock-task.is-done {
+  opacity: 0.55;
+}
+.mock-task.is-done .mock-task-title {
+  text-decoration: line-through;
+}
+.mock-task.is-focus {
+  outline: 2px solid var(--interactive-accent);
+}
+.mock-task-mon {
+  width: 30px;
+  height: 30px;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+.mock-task-mon svg {
+  width: 100%;
+  height: 100%;
+}
+.mock-task-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mock-task-title {
+  font-weight: 700;
+}
+.mock-task-rank {
+  font-family: var(--mock-display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-accent);
+  margin-right: 6px;
+}
+.mock-task-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mock-task button,
+.mock-bar button,
+.mock-dialog button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+.mock-dialog button.is-primary {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: #fff;
+}
+.mock-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+.mock-bar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mock-log {
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 10px;
+  max-height: 180px;
+  overflow: auto;
+  font-variant-numeric: tabular-nums;
+}
+.mock-log div + div {
+  margin-top: 2px;
+}
+.mock-log .is-head {
+  color: var(--text-normal);
+  font-weight: 700;
+  margin-top: 8px;
+}
+.mock-log-title {
+  font-family: var(--mock-display);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.mock-dialog h2 {
+  font-family: var(--mock-display);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-pet.is-traveling {
+    transition-duration: 0.01s;
+  }
+}
+
+/* 編集ダイアログの模型 */
+.mock-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mock-dialog {
+  width: min(420px, calc(100vw - 32px));
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mock-dialog h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.mock-dialog .mock-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.mock-dialog .mock-row-label {
+  width: 64px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+.mock-dialog input[type="text"],
+.mock-dialog select {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  flex: 1 1 auto;
+}
+.mock-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 72px;
+  font-size: 13px;
+}
+.mock-steps label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mock-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.mock-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding-left: 72px;
+}
+
+/* 右クリックメニューと通知の模型 */
+.mock-menu {
+  position: fixed;
+  z-index: 100;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-s);
+  padding: 4px;
+  font-size: 13px;
+  min-width: 180px;
+}
+.mock-menu-item {
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.mock-menu-item:hover {
+  background: var(--background-modifier-hover);
+}
+.mock-menu-sep {
+  height: 1px;
+  background: var(--background-modifier-border);
+  margin: 4px 0;
+}
+.mock-notice {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  z-index: 100;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+</style>
+<div class="mock-root"></div>
+<script>
+"use strict";
+(() => {
+  // mock/obsidian-shim.ts
+  function applyInfo(el, o) {
+    if (!o) return;
+    if (typeof o === "string") {
+      el.className = o;
+      return;
+    }
+    if (o.cls) el.className = Array.isArray(o.cls) ? o.cls.join(" ") : o.cls;
+    if (o.text !== void 0) el.textContent = o.text;
+    if (o.title) el.title = o.title;
+    if (o.attr) for (const [k, v] of Object.entries(o.attr)) el.setAttribute(k, v);
+  }
+  var proto = HTMLElement.prototype;
+  var def = (name, fn) => {
+    if (!(name in proto)) Object.defineProperty(proto, name, { value: fn, writable: true, configurable: true });
+  };
+  def("createEl", function(tag, o) {
+    const el = document.createElement(tag);
+    applyInfo(el, o);
+    this.appendChild(el);
+    return el;
+  });
+  def("createDiv", function(o) {
+    return this.createEl("div", o);
+  });
+  def("createSpan", function(o) {
+    return this.createEl("span", o);
+  });
+  def("empty", function() {
+    this.replaceChildren();
+  });
+  def("setText", function(t) {
+    this.textContent = t;
+  });
+  def("setAttr", function(k, v) {
+    this.setAttribute(k, String(v));
+  });
+  def("addClass", function(...cls) {
+    this.classList.add(...cls);
+  });
+  def("removeClass", function(...cls) {
+    this.classList.remove(...cls);
+  });
+  def("toggleClass", function(cls, on) {
+    this.classList.toggle(cls, on);
+  });
+  def("hasClass", function(cls) {
+    return this.classList.contains(cls);
+  });
+  def("find", function(sel) {
+    return this.querySelector(sel);
+  });
+  window.createDiv = (o) => document.body.createDiv(o);
+  globalThis.createDiv = (o) => {
+    const el = document.createElement("div");
+    applyInfo(el, o);
+    return el;
+  };
+  var MenuItem = class {
+    constructor() {
+      this.title = "";
+      this.icon = "";
+      this.cb = null;
+    }
+    setTitle(t) {
+      this.title = t;
+      return this;
+    }
+    setIcon(i) {
+      this.icon = i;
+      return this;
+    }
+    onClick(cb) {
+      this.cb = cb;
+      return this;
+    }
+  };
+  var Menu = class {
+    constructor() {
+      this.items = [];
+    }
+    addItem(cb) {
+      const it = new MenuItem();
+      cb(it);
+      this.items.push(it);
+      return this;
+    }
+    addSeparator() {
+      this.items.push("sep");
+      return this;
+    }
+    showAtMouseEvent(e) {
+      document.querySelectorAll(".mock-menu").forEach((m) => m.remove());
+      const menu = document.body.createDiv("mock-menu");
+      menu.style.left = `${e.clientX}px`;
+      menu.style.top = `${e.clientY}px`;
+      for (const it of this.items) {
+        if (it === "sep") {
+          menu.createDiv("mock-menu-sep");
+          continue;
+        }
+        const row = menu.createDiv({ cls: "mock-menu-item", text: it.title });
+        row.addEventListener("click", () => {
+          var _a2;
+          menu.remove();
+          (_a2 = it.cb) == null ? void 0 : _a2.call(it);
+        });
+      }
+      const close = (ev) => {
+        if (!menu.contains(ev.target)) {
+          menu.remove();
+          document.removeEventListener("pointerdown", close);
+        }
+      };
+      window.setTimeout(() => document.addEventListener("pointerdown", close), 0);
+    }
+  };
+
+  // src/bestiary.ts
+  var RANK_GRID = { \u96D1\u9B5A: 16, \u4E2D\u7D1A: 24, \u30DC\u30B9: 32 };
+  var P = (body, dark, light, accent, wing, extra = {}) => ({
+    "#": body,
+    o: dark,
+    d: dark,
+    m: dark,
+    h: light,
+    a: accent,
+    w: wing,
+    t: "#fffaf0",
+    r: "#ef4444",
+    ...extra
+  });
+  var MONSTERS = [
+    // ---------- 雑魚 ----------
+    { rank: "\u96D1\u9B5A", name: "\u30B9\u30E9\u30A4\u30E0", pal: P("#60a5fa", "#1e3a8a", "#bfdbfe", "#93c5fd", "#3b82f6"), rows: [
+      "........",
+      "........",
+      "........",
+      "....####",
+      "..###h##",
+      ".###h###",
+      ".####e##",
+      ".#######",
+      ".####mmm",
+      ".#######",
+      ".#######",
+      "..######",
+      "...#####",
+      "........",
+      "........",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30B4\u30D6\u30EA\u30F3", pal: P("#84cc16", "#365314", "#d9f99d", "#a16207", "#7c2d12"), rows: [
+      "........",
+      "........",
+      "....####",
+      "..a#####",
+      ".aa##e##",
+      "..a#####",
+      "...##m##",
+      "....####",
+      "..#.wwww",
+      ".##.wwww",
+      ".#..wwww",
+      "....####",
+      "....##.#",
+      "....##.#",
+      "....dd.d",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30B3\u30DC\u30EB\u30C8", pal: P("#b45309", "#451a03", "#fcd34d", "#d97706", "#57534e"), rows: [
+      "........",
+      "...a....",
+      "...aa...",
+      "...#####",
+      "...##e##",
+      "...#####",
+      "...###mm",
+      "....####",
+      "..#.wwww",
+      ".##.wwww",
+      ".#..wwww",
+      "....####",
+      "....##.#",
+      "....##.#",
+      "....dd.d",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30B9\u30B1\u30EB\u30C8\u30F3", pal: P("#e7e5e4", "#44403c", "#ffffff", "#a8a29e", "#78716c"), rows: [
+      "........",
+      "........",
+      "....####",
+      "...#####",
+      "...##e##",
+      "...#####",
+      "....#t#t",
+      "....####",
+      ".....#..",
+      "...#####",
+      "..#.#d#d",
+      "..#.####",
+      "....#d#d",
+      ".....###",
+      "....#..#",
+      "....#..#"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30BE\u30F3\u30D3", pal: P("#86a37f", "#1f3a1e", "#c5d9bd", "#6b7280", "#4b5563"), rows: [
+      "........",
+      "........",
+      "....####",
+      "...#####",
+      "...#e###",
+      "...#####",
+      "...##m##",
+      "....####",
+      "#####www",
+      "#####www",
+      "....wwww",
+      "....wwww",
+      "....##.#",
+      "....##.#",
+      "....dd.d",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30D0\u30C3\u30C8", pal: P("#fbbf24", "#78350f", "#fde68a", "#ef4444", "#7c2d12"), rows: [
+      "........",
+      "........",
+      ".....a..",
+      ".....aa.",
+      "w...####",
+      "ww.###e#",
+      "www#####",
+      "wwww####",
+      "wwww#m##",
+      "www#####",
+      "ww..####",
+      "w....###",
+      "......##",
+      "........",
+      "........",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30A6\u30EB\u30D5", pal: P("#9ca3af", "#1f2937", "#e5e7eb", "#4b5563", "#6b7280"), rows: [
+      "................",
+      "................",
+      "................",
+      "..#.#...........",
+      "..###.........#.",
+      ".e###.........##",
+      "m###############",
+      ".###############",
+      "..#############.",
+      "...###########..",
+      "...##.....##....",
+      "...##.....##....",
+      "...dd.....dd....",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30DE\u30F3\u30C9\u30E9\u30B4\u30E9", pal: P("#a16207", "#3f2205", "#d6a45a", "#4ade80", "#166534"), rows: [
+      "........",
+      "..a.a...",
+      "...aa.aa",
+      "....aa.a",
+      ".....aa.",
+      "....####",
+      "...##e##",
+      "...#####",
+      "...##m##",
+      "...#####",
+      "....####",
+      "....####",
+      ".....###",
+      "......##",
+      ".......#",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30DF\u30DF\u30C3\u30AF", pal: P("#92400e", "#3b1503", "#c2703a", "#fbbf24", "#7c2d12"), rows: [
+      "........",
+      "........",
+      "........",
+      "...#####",
+      "..######",
+      "..#aaaaa",
+      "..#e####",
+      "..######",
+      "..tt.t.t",
+      "..d.d.d.",
+      "..t.tt.t",
+      "..######",
+      "..#aaaaa",
+      "..######",
+      "........",
+      "........"
+    ] },
+    { rank: "\u96D1\u9B5A", name: "\u30A4\u30F3\u30D7", pal: P("#ef4444", "#7f1d1d", "#fca5a5", "#1f2937", "#991b1b"), rows: [
+      "........",
+      "...a....",
+      "...a....",
+      "....####",
+      "....#e##",
+      "....####",
+      "....##m#",
+      ".....###",
+      "...#wwww",
+      "..##wwww",
+      ".#..wwww",
+      ".#..####",
+      "....##.#",
+      "....##.#",
+      "....dd.d",
+      "........"
+    ] },
+    // ---------- 中級 ----------
+    { rank: "\u4E2D\u7D1A", name: "\u30AA\u30FC\u30AF", pal: P("#4d7c0f", "#1a2e05", "#a3e635", "#78350f", "#57534e"), rows: [
+      "............",
+      "............",
+      "............",
+      "......######",
+      ".....#######",
+      ".....##e####",
+      ".....#######",
+      "......###t##",
+      ".......#####",
+      "...www.wwwww",
+      "..wwww######",
+      ".#.ww.######",
+      ".#...#######",
+      ".#...#######",
+      "dd...#######",
+      ".....##.####",
+      "......dddddd",
+      "......###.##",
+      "......###.##",
+      "......###.##",
+      "......###.##",
+      "......ddd.dd",
+      "............",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30AA\u30FC\u30AC", pal: P("#7c3aed", "#2e1065", "#c4b5fd", "#fbbf24", "#4c1d95"), rows: [
+      "............",
+      "......a.....",
+      "......aa....",
+      "......######",
+      ".....#######",
+      ".....##e####",
+      ".....#######",
+      ".....###mmmm",
+      "......t.####",
+      "......######",
+      "...#########",
+      "..##########",
+      ".###.#######",
+      ".##..#######",
+      ".##..#######",
+      ".##..#######",
+      "ddd..#######",
+      "......dddddd",
+      ".....####.##",
+      ".....####.##",
+      ".....####.##",
+      ".....####.##",
+      ".....dddd.dd",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30C8\u30ED\u30FC\u30EB", pal: P("#6b8e6b", "#1c331c", "#a7c4a7", "#3f6212", "#365314"), rows: [
+      "............",
+      "............",
+      ".......wwwww",
+      "......wwwwww",
+      ".....#######",
+      ".....##e####",
+      ".....######a",
+      "......#####a",
+      "......##m###",
+      "......######",
+      "....########",
+      "...#########",
+      "..##.#######",
+      "..##.###h###",
+      "..##.#######",
+      "dddd.#######",
+      ".....#######",
+      "......dddddd",
+      "......###.##",
+      "......###.##",
+      "......###.##",
+      "......ddd.dd",
+      "............",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30AC\u30FC\u30B4\u30A4\u30EB", pal: P("#78716c", "#1c1917", "#d6d3d1", "#57534e", "#44403c"), rows: [
+      "............",
+      "....a.......",
+      "....aa......",
+      ".....a######",
+      "w.....######",
+      "ww....##e###",
+      "www...######",
+      "wwww..##t###",
+      "wwwww.######",
+      "wwwwww######",
+      "wwwwww######",
+      "wwwww#######",
+      "wwww.#######",
+      "www..#######",
+      "ww...#######",
+      "w....#######",
+      ".....##.####",
+      "....###..###",
+      "....##....##",
+      "....dd....dd",
+      "............",
+      "............",
+      "............",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30CF\u30FC\u30D4\u30FC", pal: P("#fcd9b6", "#7c2d12", "#ffedd5", "#c2410c", "#0ea5e9"), rows: [
+      "............",
+      "............",
+      "......wwwwww",
+      ".....wwwwwww",
+      ".....ww#####",
+      ".....ww#e###",
+      ".....ww#####",
+      ".....ww##m##",
+      "......ww####",
+      "aaa....#####",
+      "aaaa..######",
+      "aaaaa.######",
+      "aaaaaa######",
+      ".aaaaa######",
+      "..aaaa######",
+      "...aa.######",
+      "......######",
+      ".......#####",
+      ".......##.##",
+      ".......##.##",
+      ".......dd.dd",
+      "......d.d.d.",
+      "............",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30B1\u30F3\u30BF\u30A6\u30ED\u30B9", pal: P("#fcd9b6", "#3f2a1a", "#ffedd5", "#92400e", "#1d4ed8"), rows: [
+      "........................",
+      "........................",
+      "....#####...............",
+      "...##e###...............",
+      "...#######..............",
+      "....##m##...............",
+      "....#####...............",
+      ".wwwwwwwww..............",
+      "wwwwwwwwww..............",
+      "w.wwwwwwww..............",
+      "#.wwwwwwww..............",
+      "..aaaaaaaaaaaaaaaaaaa...",
+      ".aaaaaaaaaaaaaaaaaaaaaa.",
+      ".aaaaaaaaaaaaaaaaaaaaaad",
+      "..aaaaaaaaaaaaaaaaaaa.dd",
+      "..aaaa.....aaaa.......d.",
+      "..aa.aa...aa.aa.........",
+      "..aa.aa...aa.aa.........",
+      "..aa.aa...aa.aa.........",
+      "..dd.dd...dd.dd.........",
+      "........................",
+      "........................",
+      "........................",
+      "........................"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30B3\u30AB\u30C8\u30EA\u30B9", pal: P("#e5c07b", "#5a3a0a", "#fff3c4", "#f59e0b", "#16a34a"), rows: [
+      "........................",
+      "......r.r...............",
+      ".....rrrr...............",
+      ".....#####..............",
+      "....#e####..............",
+      "..aa######..............",
+      "....######..............",
+      ".....r####..............",
+      "......####..............",
+      "......#####.............",
+      "......###########.......",
+      "......#############.....",
+      "......###############...",
+      "......#####wwww#####w...",
+      ".......####wwww###..ww..",
+      ".......##########....ww.",
+      "........########......w.",
+      "........##....##........",
+      "........aa....aa........",
+      ".......a.a...a.a........",
+      "........................",
+      "........................",
+      "........................",
+      "........................"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30EF\u30FC\u30A6\u30EB\u30D5", pal: P("#6b7280", "#111827", "#d1d5db", "#374151", "#1e40af"), rows: [
+      "............",
+      "........#...",
+      "........##..",
+      "......######",
+      ".....#######",
+      ".....##e####",
+      ".....#######",
+      "......##t###",
+      ".......#####",
+      "....########",
+      "...#########",
+      "..##.#######",
+      ".##..#######",
+      ".##..#######",
+      "dd...#######",
+      ".....wwwwwww",
+      ".....wwww.ww",
+      ".....###..##",
+      ".....###..##",
+      ".....###..##",
+      ".....dd...dd",
+      "............",
+      "............",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30B4\u30FC\u30EC\u30E0", pal: P("#a8a29e", "#292524", "#e7e5e4", "#57534e", "#78716c", { r: "#22d3ee" }), rows: [
+      "............",
+      "............",
+      "........####",
+      "........#e##",
+      "........####",
+      "....########",
+      "..##########",
+      ".###.#######",
+      ".###.###r###",
+      ".###.##rr###",
+      ".###.###r###",
+      ".###.#######",
+      ".###.#######",
+      ".###.#######",
+      "dddd.#######",
+      ".....#######",
+      ".....####.##",
+      ".....####.##",
+      ".....####.##",
+      ".....####.##",
+      ".....dddd.dd",
+      "............",
+      "............",
+      "............"
+    ] },
+    { rank: "\u4E2D\u7D1A", name: "\u30DF\u30CE\u30BF\u30A6\u30ED\u30B9", pal: P("#92400e", "#2a0f02", "#d9a066", "#f5f5f4", "#7f1d1d"), rows: [
+      "............",
+      "..a.........",
+      "..aa........",
+      "...aa.######",
+      "....a#######",
+      ".....##e####",
+      ".....#######",
+      ".....###hhhh",
+      "......##hdhh",
+      ".......#####",
+      "...#########",
+      "..##########",
+      ".###.#######",
+      ".###.#######",
+      ".###.#######",
+      "dddd.#######",
+      ".....wwwwwww",
+      ".....wwww.ww",
+      ".....###..##",
+      ".....###..##",
+      ".....###..##",
+      ".....dd...dd",
+      "............",
+      "............"
+    ] },
+    // ---------- ボス ----------
+    { rank: "\u30DC\u30B9", name: "\u30B0\u30EA\u30D5\u30A9\u30F3", pal: P("#b45309", "#3b1a05", "#fef3c7", "#f59e0b", "#7c2d12"), rows: ["................", "................", "................", "............hhhh", "...........hhhhh", "...........hhehh", "...........hhhhh", "............hhhh", ".............aaa", "..............aa", "w...........hhhh", "ww..........hh##", "www.........h###", "wwww......######", "wwwww....#######", "wwwwww..########", "wwwwwww.########", "wwwwwwww########", "wwwwwwww########", ".wwwwwww########", "..wwwww.########", "...www..########", "....w...########", ".......#########", ".......#########", "........########", ".........###.###", ".........###.###", ".........###.###", ".........aaa.aaa", "................", "................"] },
+    { rank: "\u30DC\u30B9", name: "\u30AD\u30E1\u30E9", pal: P("#d97706", "#3b1a05", "#fde68a", "#b91c1c", "#1f2937"), rows: [
+      "................",
+      "................",
+      "........d.......",
+      "........dd......",
+      ".........dd.aaaa",
+      "..........aaaaaa",
+      ".........aaa####",
+      "........aaa#####",
+      "........aa##e###",
+      "........aa######",
+      "w.......aa###hhh",
+      "ww......aaa#hhhh",
+      "www.....aaaa#tt#",
+      "wwww.....aaaaaaa",
+      "wwwww....aaaaaaa",
+      "wwwwww.#########",
+      "wwwwwww#########",
+      "wwwwwww#########",
+      ".wwwww##########",
+      "..www.##########",
+      "...w..##########",
+      "......##########",
+      "......##########",
+      "......###.######",
+      "......###.######",
+      "......###.######",
+      "......ddd.dd####",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30D0\u30B8\u30EA\u30B9\u30AF", pal: P("#15803d", "#052e16", "#bbf7d0", "#facc15", "#166534"), rows: ["................", "................", "..............a.", ".............aaa", "............aaaa", "..........######", ".........#######", "........####e###", "........########", "........###hhhhh", ".........##hhhhh", "..........#hhhhh", "..........##tt##", "...........#####", "...........#####", "...........#hhhh", "...........#hhhh", "..........##hhhh", ".........###hhhh", ".......#####hhhh", ".....#######hhhh", "....######..####", "...####......###", "..####..........", "..###...........", "..###...........", "..####.....#####", "...######.######", "....############", "......##########", "................", "................"] },
+    { rank: "\u30DC\u30B9", name: "\u30EF\u30A4\u30D0\u30FC\u30F3", pal: P("#0f766e", "#042f2e", "#99f6e4", "#f59e0b", "#134e4a"), rows: [
+      "................",
+      "................",
+      "................",
+      "............#...",
+      "............##..",
+      "...........#####",
+      "..........##e###",
+      "..........######",
+      "...........##t##",
+      "............####",
+      "w............###",
+      "ww...........###",
+      "www.........####",
+      "wwww.......#####",
+      "wwwww.....######",
+      "wwwwww...#######",
+      "wwwwwww.########",
+      "wwwwwwww#hhhhhhh",
+      "wwwwwwww#hhhhhhh",
+      ".wwwwwww#hhhhhhh",
+      "..wwwww.##hhhhhh",
+      "...www..########",
+      "....w....#######",
+      "..........######",
+      "..........##.###",
+      "..........##.###",
+      "..........dd.ddd",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30D2\u30C9\u30E9", pal: P("#4d7c0f", "#1a2e05", "#bef264", "#facc15", "#365314"), rows: [
+      "................",
+      "................",
+      "..............##",
+      "..##.........###",
+      ".####........#e#",
+      ".#e##.......####",
+      ".####.......###t",
+      "..##t.......####",
+      "..###........###",
+      "...##........###",
+      "...###.......###",
+      "....###......###",
+      ".....###....####",
+      "......###..#####",
+      ".......#########",
+      "........########",
+      "........########",
+      ".......#########",
+      "......##########",
+      ".....###########",
+      "....############",
+      "....############",
+      "....############",
+      ".....###########",
+      "......##########",
+      ".......#########",
+      ".......###.#####",
+      ".......###.#####",
+      ".......ddd.ddddd",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30AF\u30E9\u30FC\u30B1\u30F3", pal: P("#7e22ce", "#2e1065", "#d8b4fe", "#f0abfc", "#581c87"), rows: [
+      "................",
+      "................",
+      "................",
+      "..........######",
+      "........########",
+      ".......#########",
+      "......##########",
+      "......##########",
+      ".....###########",
+      ".....####e######",
+      ".....###########",
+      ".....###########",
+      "......##########",
+      "......##########",
+      ".......#########",
+      ".......##hh#hhhh",
+      "......#.###.####",
+      ".....##.###.####",
+      "....##..###.####",
+      "...##...##..####",
+      "..##....##..###.",
+      ".##....##...###.",
+      ".##....##..###..",
+      "..#....##..###..",
+      ".......##..##...",
+      "......##...##...",
+      ".....##....hh...",
+      ".....h....hh....",
+      "................",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30F4\u30A1\u30F3\u30D1\u30A4\u30A2\u30ED\u30FC\u30C9", pal: P("#f1e4dc", "#1c1917", "#fdf6f0", "#7f1d1d", "#111827", { r: "#b91c1c" }), rows: [
+      "................",
+      "................",
+      "................",
+      "............dddd",
+      "...........ddddd",
+      "...........dd###",
+      "...........d####",
+      "...........#e###",
+      "...........#####",
+      "...........##t##",
+      "............####",
+      ".......rr...####",
+      "......rrrr.wwwww",
+      ".....rrrrr#wwwww",
+      "....rrrrr##wwwww",
+      "....rrrrr.#wwwww",
+      "...rrrrrr.#wwwww",
+      "...rrrrrr.#wwwww",
+      "...rrrrrr..wwwww",
+      "...rrrrrrr.wwwww",
+      "...rrrrrrr.wwwww",
+      "...rrrrrrrrwwwww",
+      "...rrrrrrrrwwwww",
+      "...rrrrrrr.www.w",
+      "....rrrrrr.www.w",
+      "....rrrrr..www.w",
+      "...........www.w",
+      "...........ddd.d",
+      "................",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30EA\u30C3\u30C1", pal: P("#1e1b4b", "#0b0a1f", "#f5f5f4", "#facc15", "#312e81", { r: "#22d3ee" }), rows: [
+      "................",
+      "................",
+      "............a.a.",
+      "............aaaa",
+      "...........hhhhh",
+      "...........hhhhh",
+      "...........hehhh",
+      "...........hhhhh",
+      "............hthh",
+      ".............hhh",
+      "........wwwwwwww",
+      ".......wwwwwwwww",
+      "......wwwwwwwwww",
+      "......ww.wwwwwww",
+      ".....ww..wwwwwww",
+      ".....hh..wwwwwww",
+      ".....h...wwwwwww",
+      ".........wwwwwww",
+      ".........wwwwwww",
+      "........wwwwwwww",
+      "........wwwwwwww",
+      ".......wwwwwwwww",
+      ".......wwwwwwwww",
+      "......wwwwwwwwww",
+      "......wwwwwwwwww",
+      ".....wwwwwwwwwww",
+      ".....wwwwwwwwwww",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30C7\u30FC\u30E2\u30F3\u30ED\u30FC\u30C9", pal: P("#b91c1c", "#3f0a0a", "#fca5a5", "#facc15", "#1f2937"), rows: [
+      "................",
+      "........d.......",
+      "........dd......",
+      ".........dd.....",
+      "..........dd.###",
+      "...........d####",
+      "...........#####",
+      "...........#e###",
+      "...........#####",
+      "...........##t##",
+      "............####",
+      "w...........####",
+      "ww.......#######",
+      "www.....########",
+      "wwww...#########",
+      "wwwww.##########",
+      "wwwwww.#########",
+      "wwwwwww.########",
+      "wwwwwwww########",
+      "wwwwwwww.#######",
+      ".wwwwww..#######",
+      "..wwww...#######",
+      "...ww....aaaaaaa",
+      ".........#######",
+      ".........###.###",
+      ".........###.###",
+      ".........###.###",
+      ".........ddd.ddd",
+      "................",
+      "................",
+      "................",
+      "................"
+    ] },
+    { rank: "\u30DC\u30B9", name: "\u30C9\u30E9\u30B4\u30F3", pal: P("#dc2626", "#450a0a", "#fde68a", "#f59e0b", "#7f1d1d"), rows: [
+      "................",
+      "................",
+      "..........d.....",
+      "..........dd....",
+      "...........dd###",
+      "............####",
+      "...........#####",
+      "..........##e###",
+      "..........######",
+      "..........###tt#",
+      "...........#####",
+      "w..........#####",
+      "ww.........#####",
+      "www.........####",
+      "wwww........####",
+      "wwwww......#####",
+      "wwwwww....######",
+      "wwwwwww..#######",
+      "wwwwwwww.##hhhhh",
+      "wwwwwwwww##hhhhh",
+      "wwwwwwwww##hhhhh",
+      ".wwwwwwww##hhhhh",
+      "..wwwwww.##hhhhh",
+      "...wwww..###hhhh",
+      "....ww...#######",
+      ".........#######",
+      ".........###.###",
+      ".........###.###",
+      ".........ddd.ddd",
+      "................",
+      "................",
+      "................"
+    ] }
+  ];
+  function monsterByName(name) {
+    const n = name.trim();
+    return MONSTERS.find((m) => m.name === n);
+  }
+  function hash(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h;
+  }
+  function pickMonster(seed, rank, offset = 0) {
+    const pool = MONSTERS.filter((m) => m.rank === rank);
+    return pool[(hash(seed) + offset) % pool.length];
+  }
+  function rankForHours(hours, midHours, bossHours) {
+    if (bossHours > 0 && hours >= bossHours) return "\u30DC\u30B9";
+    if (midHours > 0 && hours >= midHours) return "\u4E2D\u7D1A";
+    return "\u96D1\u9B5A";
+  }
+  function expand(rows, n) {
+    return rows.map((r) => r.length === n ? r : r + [...r].reverse().join(""));
+  }
+  function outline(g, n) {
+    const solid = (c) => !!c && c !== "." && c !== "o";
+    const out = g.map((r) => [...r]);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (solid(g[y][x])) continue;
+        const near = [
+          [0, 1],
+          [1, 0],
+          [0, -1],
+          [-1, 0]
+        ].some(([dx, dy]) => {
+          var _a2;
+          return solid((_a2 = g[y + dy]) == null ? void 0 : _a2[x + dx]);
+        });
+        if (near) out[y][x] = "o";
+      }
+    }
+    return out;
+  }
+  function gray(c) {
+    const v = parseInt(c.slice(1), 16);
+    const l = Math.round((v >> 16) * 0.3 + (v >> 8 & 255) * 0.59 + (v & 255) * 0.11);
+    return "#" + (l << 16 | l << 8 | l).toString(16).padStart(6, "0");
+  }
+  function monsterSVG(m, hp, size) {
+    const n = RANK_GRID[m.rank];
+    const px = size / n;
+    const g = outline(expand(m.rows, n), n);
+    const defeated = hp <= 0;
+    const hurt = hp <= 0.5 && !defeated;
+    const critical = hp <= 0.2 && !defeated;
+    const col = (c) => defeated ? gray(c) : c;
+    let body = "";
+    const eyes = [];
+    const mouth = [];
+    const cells = [];
+    g.forEach(
+      (row, y) => row.forEach((ch, x) => {
+        var _a2;
+        let c = ch;
+        if (c === ".") return;
+        if (c === "e") {
+          eyes.push([x, y]);
+          c = "#";
+        } else if (c === "m") {
+          mouth.push([x, y]);
+          if (hurt || defeated) c = "#";
+        }
+        if (c === "#" && y > n / 2) cells.push([x, y]);
+        body += `<rect x="${x * px}" y="${y * px}" width="${px}" height="${px}" fill="${col((_a2 = m.pal[c]) != null ? _a2 : m.pal["#"])}"/>`;
+      })
+    );
+    const dark = col(m.pal.o);
+    for (const [x, y] of eyes) {
+      const X = x * px;
+      const Y = y * px;
+      if (defeated) {
+        body += `<path d="M${X},${Y} l${px},${px} M${X + px},${Y} l${-px},${px}" stroke="${dark}" stroke-width="${px / 3}"/>`;
+      } else if (critical) {
+        const d = x < n / 2 ? 1 : -1;
+        body += `<path d="M${X + (d > 0 ? 0 : px)},${Y} l${d * px},${px / 2} l${-d * px},${px / 2}" fill="none" stroke="${dark}" stroke-width="${px / 3}"/>`;
+      } else {
+        const pupil = m.rank === "\u30DC\u30B9" ? col(m.pal.r) : dark;
+        body += `<rect x="${X}" y="${Y}" width="${px}" height="${px}" fill="#fff"/><rect x="${X + px / 2}" y="${Y + (hurt ? px / 2 : px / 4)}" width="${px / 2}" height="${px / 2}" fill="${pupil}"/>`;
+      }
+    }
+    if (mouth.length && (hurt || defeated)) {
+      const xs = mouth.map((p) => p[0]);
+      const y = mouth[0][1] * px + px / 2;
+      const x0 = Math.min(...xs) * px;
+      const x1 = (Math.max(...xs) + 1) * px;
+      const w = (x1 - x0) / 4;
+      let d = `M${x0},${y}`;
+      for (let i = 0; i < 4; i++) d += ` l${w / 2},${i % 2 ? px / 2 : -px / 2} l${w / 2},${i % 2 ? -px / 2 : px / 2}`;
+      body += `<path d="${d}" fill="none" stroke="${dark}" stroke-width="${px / 3}"/>`;
+    }
+    if (!defeated && hp < 0.8 && cells.length) {
+      const k = hp < 0.2 ? 3 : hp < 0.5 ? 2 : 1;
+      for (let i = 0; i < k; i++) {
+        const [x, y] = cells[Math.floor(cells.length * ((i + 1) / (k + 1)))];
+        const X = x * px;
+        const Y = y * px;
+        body += `<path d="M${X + px * 0.2},${Y} l${px * 0.5},${px * 0.6} l${-px * 0.3},${px * 0.5}" fill="none" stroke="${dark}" stroke-width="${px / 4}" stroke-linecap="round"/>`;
+      }
+    }
+    if (hurt) {
+      body += `<path d="M${(n - 2) * px},${2 * px} q${px},${px * 1.5} 0,${px * 2.2} q${-px},${-px * 0.7} 0,${-px * 2.2}z" fill="#7dd3fc" stroke="#0369a1" stroke-width="${px / 4}"/>`;
+    }
+    let aura = "";
+    if (m.rank === "\u30DC\u30B9" && !defeated) {
+      const id = "dt-aura-" + hash(m.name).toString(36);
+      aura = `<defs><radialGradient id="${id}"><stop offset="0" stop-color="${m.pal.a}" stop-opacity="0.5"/><stop offset="1" stop-color="${m.pal.a}" stop-opacity="0"/></radialGradient></defs><circle cx="${size / 2}" cy="${size * 0.55}" r="${size * 0.5}" fill="url(#${id})"/>`;
+    }
+    const tf = defeated ? ` transform="rotate(90 ${size / 2} ${size / 2})"` : "";
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img"><g shape-rendering="crispEdges"${tf}>${aura}${body}</g></svg>`;
+  }
+
+  // src/util.ts
+  function stripTags(text) {
+    const stripped = text.replace(/(^|[\s(（「\[])#[\p{L}\p{N}_\-\/]+/gu, "$1").replace(/\s{2,}/g, " ").trim();
+    return stripped || text;
+  }
+
+  // src/project.ts
+  function isChildSettled(c) {
+    return c.task.done || c.settledByCarry === true;
+  }
+  function splitBlockLink(link) {
+    const i = link.indexOf("#^");
+    if (i < 0) return null;
+    const path = link.slice(0, i).trim().replace(/\.md$/, "");
+    const id = link.slice(i + 2).trim();
+    return path && id ? { path, id } : null;
+  }
+  function markSettledByCarry(children) {
+    var _a2;
+    const byFull = /* @__PURE__ */ new Map();
+    const byBase = /* @__PURE__ */ new Map();
+    for (const c of children) {
+      const id = c.task.blockId;
+      if (!id) continue;
+      const path = c.path.replace(/\.md$/, "");
+      byFull.set(`${path}#^${id}`, c);
+      const base = (_a2 = path.split("/").pop()) != null ? _a2 : path;
+      if (!byBase.has(`${base}#^${id}`)) byBase.set(`${base}#^${id}`, c);
+    }
+    const follow = (link) => {
+      var _a3, _b;
+      const parts = splitBlockLink(link);
+      if (!parts) return null;
+      const full = byFull.get(`${parts.path}#^${parts.id}`);
+      if (full) return full;
+      const base = (_a3 = parts.path.split("/").pop()) != null ? _a3 : parts.path;
+      return (_b = byBase.get(`${base}#^${parts.id}`)) != null ? _b : null;
+    };
+    for (const c of children) {
+      c.settledByCarry = false;
+      if (!c.task.forwarded || !c.task.carryTo) continue;
+      const seen = /* @__PURE__ */ new Set([c]);
+      let cur = follow(c.task.carryTo);
+      while (cur && !seen.has(cur)) {
+        if (cur.task.done) {
+          c.settledByCarry = true;
+          break;
+        }
+        if (!cur.task.forwarded || !cur.task.carryTo) break;
+        seen.add(cur);
+        cur = follow(cur.task.carryTo);
+      }
+    }
+  }
+  function summarize(ref, children) {
+    markSettledByCarry(children);
+    let planMin = 0;
+    let actMin = 0;
+    let doneCount = 0;
+    for (const c of children) {
+      if (c.task.start !== null && c.task.end !== null) planMin += c.task.end - c.task.start;
+      actMin += c.task.actual.reduce((n, r) => n + (r.end - r.start), 0);
+      if (isChildSettled(c)) doneCount++;
+    }
+    return { ref, children, planMin, actMin, doneCount };
+  }
+
+  // src/model.ts
+  function isScheduled(t) {
+    return t.start !== null && t.end !== null;
+  }
+
+  // src/battle.ts
+  var SPRITE_SIZE = { \u96D1\u9B5A: 30, \u4E2D\u7D1A: 38, \u30DC\u30B9: 46 };
+  function taskWeight(t, rules2) {
+    return isScheduled(t) ? Math.max(0, t.end - t.start) : rules2.defaultMinutes;
+  }
+  function projectHp(sum, rules2) {
+    let total = 0;
+    let done = 0;
+    for (const c of sum.children) {
+      const w = taskWeight(c.task, rules2);
+      total += w;
+      if (c.task.done || c.settledByCarry || c.task.forwarded) done += w;
+      else {
+        const steps = c.task.steps.filter((st) => st.text.trim());
+        if (steps.length) done += w * steps.filter((st) => st.done).length / steps.length;
+      }
+    }
+    return { total, remain: Math.max(0, total - done) };
+  }
+  function hpRatio(hp) {
+    return hp.total > 0 ? hp.remain / hp.total : 1;
+  }
+  var SOLO_LINK_PREFIX = "dt-solo:";
+  function soloSummary(task, path, date) {
+    var _a2, _b;
+    const name = stripTags(task.title) || "(\u7121\u984C)";
+    const child = { date, path, task, owner: (_a2 = task.owner) != null ? _a2 : null };
+    const sum = summarize(
+      { linktext: `${SOLO_LINK_PREFIX}${path}#^${(_b = task.blockId) != null ? _b : ""}`, name, done: false, group: null },
+      [child]
+    );
+    sum.solo = true;
+    return sum;
+  }
+  function soloRank(hours, midHours, bossHours) {
+    if (bossHours > 0 && hours > bossHours) return "\u30DC\u30B9";
+    if (midHours > 0 && hours > midHours) return "\u4E2D\u7D1A";
+    return "\u96D1\u9B5A";
+  }
+  function monsterOf(sum, rules2) {
+    var _a2, _b, _c, _d;
+    const named = ((_a2 = sum.fields) == null ? void 0 : _a2.monster) ? monsterByName(sum.fields.monster) : void 0;
+    if (named) return named;
+    if (sum.solo) {
+      const t = (_b = sum.children[0]) == null ? void 0 : _b.task;
+      const hours = t ? taskWeight(t, rules2) / 60 : 0;
+      return pickMonster(sum.ref.name, soloRank(hours, rules2.soloMidHours, rules2.soloBossHours));
+    }
+    const rank = (_d = (_c = sum.fields) == null ? void 0 : _c.difficulty) != null ? _d : rankForHours(projectHp(sum, rules2).total / 60, rules2.midHours, rules2.bossHours);
+    return pickMonster(sum.ref.linktext, rank);
+  }
+  function snapshotOf(t) {
+    return { stepsDone: t.steps.filter((st) => st.done && st.text.trim()).length, done: t.done, forwarded: t.forwarded };
+  }
+  function battleEvent(before, task, data, rules2) {
+    var _a2;
+    const steps = ((_a2 = data.steps) != null ? _a2 : task.steps).filter((st) => st.text.trim());
+    const after = { ...task, steps, start: data.start, end: data.end };
+    const weight = taskWeight(after, rules2);
+    const per = steps.length ? weight / steps.length : 0;
+    const nowDone = steps.filter((st) => st.done).length;
+    const smallHits = before.done || before.forwarded ? 0 : Math.max(0, nowDone - before.stepsDone);
+    const completes = !!data.done && !before.done && !before.forwarded;
+    const bigDamage = completes ? Math.max(0, weight - per * nowDone) : 0;
+    return { smallHits, smallDamage: Math.round(per), bigDamage: Math.round(bigDamage) };
+  }
+  function hitSound(kind) {
+    var _a2;
+    try {
+      const Ctx = (_a2 = window.AudioContext) != null ? _a2 : window.webkitAudioContext;
+      if (!Ctx) return;
+      const ac = new Ctx();
+      const t = ac.currentTime;
+      const big = kind !== "small";
+      const len = big ? 0.22 : 0.09;
+      const buf = ac.createBuffer(1, Math.floor(ac.sampleRate * len), ac.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, big ? 2 : 3);
+      const src = ac.createBufferSource();
+      src.buffer = buf;
+      const f = ac.createBiquadFilter();
+      f.type = "lowpass";
+      f.frequency.setValueAtTime(big ? 900 : 2200, t);
+      f.frequency.exponentialRampToValueAtTime(big ? 120 : 400, t + len);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(big ? 0.8 : 0.3, t);
+      g.gain.exponentialRampToValueAtTime(1e-3, t + len);
+      src.connect(f).connect(g).connect(ac.destination);
+      src.start(t);
+      if (big) {
+        const o = ac.createOscillator();
+        o.type = "square";
+        o.frequency.setValueAtTime(kind === "kill" ? 70 : 110, t);
+        o.frequency.exponentialRampToValueAtTime(30, t + 0.25);
+        const og = ac.createGain();
+        og.gain.setValueAtTime(0.3, t);
+        og.gain.exponentialRampToValueAtTime(1e-3, t + 0.3);
+        o.connect(og).connect(ac.destination);
+        o.start(t);
+        o.stop(t + 0.3);
+      }
+      window.setTimeout(() => void ac.close(), 600);
+    } catch (_e) {
+    }
+  }
+  var wait = (ms) => new Promise((r) => window.setTimeout(r, ms));
+  function hmm(min) {
+    return `${Math.floor(min / 60)}:${String(Math.round(min) % 60).padStart(2, "0")}`;
+  }
+  function replay(el, cls) {
+    el.removeClass(cls);
+    void el.offsetWidth;
+    el.addClass(cls);
+  }
+  async function playBattle(o) {
+    var _a2, _b, _c;
+    const { event: ev, monster } = o;
+    if (!ev.smallHits && !ev.bigDamage) return;
+    const damage = ev.smallHits * ev.smallDamage + ev.bigDamage;
+    const total = Math.max(o.hp.total, 1);
+    let remain = Math.min(total, o.hp.remain + damage);
+    const kill = o.hp.remain <= 0 && o.hp.total > 0;
+    const puppet = o.puppet;
+    const size = puppet ? puppet.size : SPRITE_SIZE[monster.rank];
+    const host = o.host;
+    document.body.querySelectorAll(".dt-battle").forEach((el) => el.remove());
+    const stage = document.body.createDiv("dt-battle");
+    const hostRect = host.getBoundingClientRect();
+    const a = (_a2 = o.anchor) == null ? void 0 : _a2.getBoundingClientRect();
+    const visible = !!a && a.width > 0 && a.bottom > hostRect.top && a.top < hostRect.bottom && a.right > hostRect.left && a.left < hostRect.right;
+    if (puppet) {
+      stage.addClass("is-puppet");
+      const w = 220;
+      const pr = puppet.el.getBoundingClientRect();
+      stage.style.width = `${w}px`;
+      stage.style.left = `${pr.left + pr.width / 2 - w / 2}px`;
+      stage.style.top = `${pr.top + pr.height / 2 - size / 2}px`;
+    } else if (a && visible) {
+      stage.addClass("is-anchored");
+      stage.style.left = `${a.left}px`;
+      stage.style.top = `${a.top}px`;
+      stage.style.width = `${a.width}px`;
+      stage.style.minHeight = `${a.height}px`;
+    } else {
+      stage.addClass("is-floating");
+      const w = Math.min(280, Math.max(160, hostRect.width - 32));
+      stage.style.width = `${w}px`;
+      stage.style.left = `${hostRect.right - w - 16}px`;
+      stage.style.top = `${hostRect.bottom - 16 - 60}px`;
+    }
+    const monWrap = stage.createDiv("dt-battle-mon-wrap");
+    monWrap.style.width = `${size}px`;
+    monWrap.style.height = `${size}px`;
+    const flash = (puppet ? monWrap : stage).createDiv("dt-battle-flash");
+    const mon = puppet ? puppet.el : monWrap.createDiv("dt-battle-mon");
+    const slashS = monWrap.createDiv("dt-battle-slash");
+    const slashB = monWrap.createDiv("dt-battle-slash is-big");
+    const slashC = monWrap.createDiv("dt-battle-slash is-big is-cross");
+    const info = stage.createDiv("dt-battle-info");
+    info.createDiv({ cls: "dt-battle-title", text: o.title });
+    const bar2 = info.createDiv("dt-battle-bar");
+    const ghost = bar2.createDiv("dt-battle-ghost");
+    const fill = bar2.createDiv("dt-battle-fill");
+    const hpt = info.createDiv("dt-battle-hpt");
+    const stamp = stage.createDiv({ cls: "dt-battle-stamp", text: "\u8A0E\u4F10" });
+    if (puppet) stamp.style.top = `${size / 2}px`;
+    const draw = (ratioOverride) => {
+      const ratio = Math.max(0, remain / total);
+      if (puppet) puppet.draw(ratioOverride != null ? ratioOverride : ratio);
+      else mon.innerHTML = monsterSVG(monster, ratioOverride != null ? ratioOverride : ratio, size);
+      fill.style.width = `${ratio * 100}%`;
+      fill.toggleClass("is-mid", ratio <= 0.5 && ratio > 0.2);
+      fill.toggleClass("is-low", ratio <= 0.2);
+      hpt.setText(`HP ${hmm(remain)} / ${hmm(total)}`);
+    };
+    const pop = (text, big) => {
+      const d = monWrap.createDiv({ cls: "dt-battle-dmg" + (big ? " is-big" : ""), text });
+      d.style.left = `${40 + Math.random() * 20}%`;
+      replay(d, "is-on");
+      window.setTimeout(() => d.remove(), 1e3);
+    };
+    draw();
+    ghost.style.width = fill.style.width;
+    await wait(120);
+    for (let i = 0; i < ev.smallHits; i++) {
+      remain = Math.max(0, remain - ev.smallDamage);
+      replay(mon, "is-flinch");
+      replay(slashS, "is-on");
+      pop(`\u2212${hmm(ev.smallDamage)}`, false);
+      if (o.sound) hitSound("small");
+      (_b = o.onHit) == null ? void 0 : _b.call(o, "small");
+      draw();
+      await wait(110);
+    }
+    if (ev.bigDamage) {
+      if (ev.smallHits) await wait(180);
+      remain = kill ? 0 : Math.max(0, remain - ev.bigDamage);
+      replay(stage, "is-shake");
+      replay(flash, "is-on");
+      replay(slashB, "is-on");
+      replay(slashC, "is-on");
+      pop(`\u2212${hmm(ev.bigDamage)}`, true);
+      if (o.sound) hitSound(kill ? "kill" : "big");
+      (_c = o.onHit) == null ? void 0 : _c.call(o, kill ? "kill" : "big");
+      draw(kill ? 0.05 : void 0);
+    }
+    if (kill && o.brief) {
+      await wait(250);
+      replay(mon, "is-fall");
+      await wait(400);
+      mon.removeClass("is-fall");
+      draw(0);
+      stage.addClass("is-dead");
+      hpt.setText(`\u8A0E\u4F10\uFF01 \u7DCF\u5DE5\u6570 ${hmm(o.totalWork)}`);
+      replay(stamp, "is-on");
+      confetti(puppet ? monWrap : stage, !!puppet);
+      await wait(1200);
+    } else if (kill) {
+      await wait(350);
+      replay(mon, "is-tremble");
+      await wait(900);
+      mon.removeClass("is-tremble");
+      replay(mon, "is-fall");
+      await wait(560);
+      mon.removeClass("is-fall");
+      draw(0);
+      stage.addClass("is-dead");
+      hpt.setText(`\u8A0E\u4F10\uFF01 \u7DCF\u5DE5\u6570 ${hmm(o.totalWork)}`);
+      replay(stamp, "is-on");
+      if (o.sound) hitSound("kill");
+      confetti(puppet ? monWrap : stage, !!puppet);
+      await wait(2600);
+    } else {
+      await wait(900);
+    }
+    stage.addClass("is-out");
+    await wait(300);
+    stage.remove();
+    if (puppet) puppet.el.removeClass("is-flinch", "is-tremble", "is-fall");
+  }
+  function confetti(parent, centered = false) {
+    const colors = ["#fbbf24", "#f87171", "#60a5fa", "#4ade80", "#c084fc"];
+    for (let i = 0; i < 24; i++) {
+      const c = parent.createDiv("dt-battle-confetti");
+      if (centered) c.style.left = "50%";
+      c.style.background = colors[i % colors.length];
+      const a = Math.random() * Math.PI * 2;
+      const r = 50 + Math.random() * 90;
+      const anim = c.animate(
+        [
+          { transform: "translate(0,0) rotate(0)", opacity: 1 },
+          { transform: `translate(${Math.cos(a) * r}px,${Math.sin(a) * r - 30}px) rotate(${Math.random() * 720}deg)`, opacity: 0 }
+        ],
+        { duration: 700 + Math.random() * 500, easing: "cubic-bezier(.2,.8,.4,1)", fill: "forwards" }
+      );
+      anim.onfinish = () => c.remove();
+    }
+  }
+
+  // src/pet.ts
+  var PET_SIZE = { \u96D1\u9B5A: 40, \u4E2D\u7D1A: 50, \u30DC\u30B9: 60 };
+  var MARGIN = 8;
+  var TRAVEL_MS = 800;
+  var VANISH_MS = 450;
+  var wait2 = (ms) => new Promise((r) => window.setTimeout(r, ms));
+  var PetWidget = class {
+    constructor(handlers) {
+      this.handlers = handlers;
+      this.el = null;
+      this.spriteEl = null;
+      this.bubbleEl = null;
+      this.info = null;
+      /** 演出中。update は演出が終わるまで保留する（途中で姿や位置が変わらないように） */
+      this.battling = false;
+      /** 演出中に届いた update の内容（undefined = 届いていない） */
+      this.pending = void 0;
+      this.onResize = () => {
+        if (!this.battling) this.place();
+      };
+    }
+    /** いまの情報で描き直す。null なら隠す。演出中は終わってから反映する */
+    update(info) {
+      if (this.battling) {
+        this.pending = info;
+        return;
+      }
+      this.info = info;
+      if (!info) {
+        this.destroy();
+        return;
+      }
+      if (!this.el) this.build();
+      const el = this.el;
+      this.drawSprite(info.monster, hpRatio(info.hp));
+      const hmm3 = (m) => `${Math.floor(m / 60)}:${String(Math.round(m) % 60).padStart(2, "0")}`;
+      const bubble = this.bubbleEl;
+      bubble.empty();
+      bubble.createDiv({ cls: "dt-pet-bubble-label", text: `${info.label}: ${info.taskTitle}` });
+      const hpText = `HP ${hmm3(info.hp.remain)} / ${hmm3(info.hp.total)}`;
+      bubble.createDiv({
+        cls: "dt-pet-bubble-project",
+        text: info.solo ? `${info.monster.rank} \xB7 ${hpText}` : `${info.projectName} \xB7 ${hpText}`
+      });
+      el.setAttr(
+        "aria-label",
+        info.solo ? `${info.label}: ${info.taskTitle}` : `${info.label}: ${info.taskTitle}\uFF08${info.projectName}\uFF09`
+      );
+      this.place();
+    }
+    /** 演出に合わせてのけぞる（ステージが別の場所で再生されているとき用） */
+    react(kind) {
+      const sprite = this.spriteEl;
+      if (!sprite) return;
+      const cls = kind === "small" ? "is-flinch" : "is-shake";
+      sprite.removeClass("is-flinch", "is-shake");
+      void sprite.offsetWidth;
+      sprite.addClass(cls);
+    }
+    /**
+     * 保存の演出をペットの上で再生する。
+     * 1. 相手のモンスターの姿になって（別のタスクを編集したときのため）、ゆっくり画面の中央へ
+     * 2. その場で一撃・討伐の演出
+     * 3. 討伐なら消える。まだ残っていれば元の位置へゆっくり戻る
+     * 4. 演出中に保留した update（次の相手）を反映する。消えたあとに次の相手がいれば元の位置に現れる
+     * 演出が終わると解決する
+     */
+    async playBattle(o) {
+      if (this.battling) return;
+      this.battling = true;
+      this.pending = void 0;
+      try {
+        if (!this.el) this.build();
+        const el = this.el;
+        const sprite = this.spriteEl;
+        el.addClass("is-battling");
+        const size = PET_SIZE[o.monster.rank];
+        const ratio = o.hp.total > 0 ? Math.min(1, (o.hp.remain + o.event.smallHits * o.event.smallDamage + o.event.bigDamage) / o.hp.total) : 1;
+        this.drawSprite(o.monster, ratio, size);
+        if (!this.info) this.place();
+        const puppet = {
+          el: sprite,
+          size,
+          draw: (r) => this.drawSprite(o.monster, r, size)
+        };
+        await this.travelTo(this.centerPoint());
+        await playBattle({ ...o, anchor: null, puppet });
+        const kill = o.hp.remain <= 0 && o.hp.total > 0;
+        if (kill) {
+          el.addClass("is-vanish");
+          await wait2(VANISH_MS);
+        } else {
+          await this.travelTo(this.homePoint());
+        }
+      } finally {
+        this.endBattle();
+      }
+    }
+    destroy() {
+      var _a2;
+      window.removeEventListener("resize", this.onResize);
+      (_a2 = this.el) == null ? void 0 : _a2.remove();
+      this.el = null;
+      this.spriteEl = null;
+      this.bubbleEl = null;
+    }
+    drawSprite(monster, ratio, size = PET_SIZE[monster.rank]) {
+      const sprite = this.spriteEl;
+      if (!sprite) return;
+      sprite.style.width = `${size}px`;
+      sprite.style.height = `${size}px`;
+      sprite.innerHTML = monsterSVG(monster, ratio, size);
+    }
+    /** 演出の終わり: 一時的なクラスを外し、保留していた update（無ければ元の姿）を反映する */
+    endBattle() {
+      var _a2;
+      this.battling = false;
+      const el = this.el;
+      const vanished = !!(el == null ? void 0 : el.hasClass("is-vanish"));
+      el == null ? void 0 : el.removeClass("is-battling", "is-traveling", "is-vanish");
+      (_a2 = this.spriteEl) == null ? void 0 : _a2.removeClass("is-flinch", "is-shake", "is-tremble", "is-fall");
+      const next = this.pending !== void 0 ? this.pending : this.info;
+      this.pending = void 0;
+      this.update(next);
+      if (vanished && next && this.el) {
+        this.el.removeClass("is-appear");
+        void this.el.offsetWidth;
+        this.el.addClass("is-appear");
+      }
+    }
+    build() {
+      document.body.querySelectorAll(".dt-pet").forEach((e) => e.remove());
+      const el = document.body.createDiv("dt-pet");
+      this.el = el;
+      this.bubbleEl = el.createDiv("dt-pet-bubble");
+      this.spriteEl = el.createDiv("dt-pet-sprite");
+      window.addEventListener("resize", this.onResize);
+      let start = null;
+      let moved = false;
+      el.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0 || this.battling) return;
+        const r = el.getBoundingClientRect();
+        start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top };
+        moved = false;
+        el.setPointerCapture(e.pointerId);
+        el.addClass("is-dragging");
+        e.preventDefault();
+      });
+      el.addEventListener("pointermove", (e) => {
+        if (!start) return;
+        const dx = e.clientX - start.x;
+        const dy = e.clientY - start.y;
+        if (!moved && Math.hypot(dx, dy) < 4) return;
+        moved = true;
+        this.moveTo(start.left + dx, start.top + dy);
+      });
+      const finish = (e) => {
+        if (!start) return;
+        el.removeClass("is-dragging");
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch (_e) {
+        }
+        const wasMoved = moved;
+        start = null;
+        if (wasMoved) {
+          const r = el.getBoundingClientRect();
+          this.handlers.setPosition({ x: r.left, y: r.top });
+        } else if (e.type === "pointerup") {
+          this.handlers.onClick();
+        }
+      };
+      el.addEventListener("pointerup", finish);
+      el.addEventListener("pointercancel", finish);
+      el.addEventListener("contextmenu", (e) => {
+        var _a2;
+        e.preventDefault();
+        if (this.battling) return;
+        const menu = new Menu();
+        menu.addItem((i) => i.setTitle("\u30BF\u30B9\u30AF\u3092\u7DE8\u96C6").setIcon("pencil").onClick(() => this.handlers.onClick()));
+        if (!((_a2 = this.info) == null ? void 0 : _a2.solo)) {
+          menu.addItem(
+            (i) => i.setTitle("\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u30CE\u30FC\u30C8\u3092\u958B\u304F").setIcon("folder-open").onClick(() => this.handlers.onOpenProject())
+          );
+        }
+        menu.addSeparator();
+        menu.addItem((i) => i.setTitle("\u30DA\u30C3\u30C8\u3092\u96A0\u3059\uFF08\u8A2D\u5B9A\u3067\u623B\u305B\u307E\u3059\uFF09").setIcon("eye-off").onClick(() => this.handlers.onHide()));
+        menu.showAtMouseEvent(e);
+      });
+    }
+    /** 記憶した位置（無ければ右下）。画面からはみ出さないように収めた左上の座標 */
+    homePoint() {
+      const el = this.el;
+      const w = (el == null ? void 0 : el.offsetWidth) || 60;
+      const h = (el == null ? void 0 : el.offsetHeight) || 60;
+      const p = this.handlers.getPosition();
+      const x = p ? p.x : window.innerWidth - w - 24;
+      const y = p ? p.y : window.innerHeight - h - 72;
+      return this.clamp(x, y);
+    }
+    /** 画面の中央（ペットの中心が来る左上の座標） */
+    centerPoint() {
+      const el = this.el;
+      const w = (el == null ? void 0 : el.offsetWidth) || 60;
+      const h = (el == null ? void 0 : el.offsetHeight) || 60;
+      return this.clamp((window.innerWidth - w) / 2, (window.innerHeight - h) / 2);
+    }
+    /** 記憶した位置（無ければ右下）に置く */
+    place() {
+      const p = this.homePoint();
+      this.moveTo(p.x, p.y);
+    }
+    /** ゆっくり移動する（CSS のトランジション）。着いたら解決 */
+    async travelTo(p) {
+      const el = this.el;
+      if (!el) return;
+      const cur = el.getBoundingClientRect();
+      if (Math.abs(cur.left - p.x) < 1 && Math.abs(cur.top - p.y) < 1) return;
+      el.addClass("is-traveling");
+      void el.offsetWidth;
+      this.moveTo(p.x, p.y);
+      await wait2(TRAVEL_MS + 50);
+      el.removeClass("is-traveling");
+    }
+    clamp(x, y) {
+      const el = this.el;
+      const w = (el == null ? void 0 : el.offsetWidth) || 60;
+      const h = (el == null ? void 0 : el.offsetHeight) || 60;
+      return {
+        x: Math.min(Math.max(MARGIN, x), Math.max(MARGIN, window.innerWidth - w - MARGIN)),
+        y: Math.min(Math.max(MARGIN, y), Math.max(MARGIN, window.innerHeight - h - MARGIN))
+      };
+    }
+    moveTo(x, y) {
+      const el = this.el;
+      if (!el) return;
+      const c = this.clamp(x, y);
+      el.style.left = `${c.x}px`;
+      el.style.top = `${c.y}px`;
+    }
+  };
+
+  // mock/pet-mock.ts
+  var rules = { midHours: 10, bossHours: 40, defaultMinutes: 60, soloMidHours: 1, soloBossHours: 3 };
+  function makeTask(id, title, minutes, steps) {
+    return {
+      key: id,
+      title,
+      start: 9 * 60,
+      end: 9 * 60 + minutes,
+      done: false,
+      preview: "",
+      blockId: id,
+      tags: [],
+      reminder: null,
+      doneCondition: "",
+      steps: steps.map((text) => ({ text, done: false, children: [] })),
+      retrospective: "",
+      result: "",
+      remaining: "",
+      cause: "",
+      judgment: "",
+      others: [],
+      answer: "",
+      status: "",
+      ownerName: "",
+      due: "",
+      nextAction: "",
+      registered: "",
+      actual: [],
+      project: null,
+      forwarded: false,
+      carryTo: null,
+      carryFrom: null,
+      details: "",
+      ticket: null,
+      owner: null,
+      ref: { kind: "block", id, title, start: 9 * 60, end: 9 * 60 + minutes }
+    };
+  }
+  var initial = () => [
+    { task: makeTask("a1", "\u30E1\u30FC\u30EB\u8FD4\u4FE1", 45, ["\u53D7\u4FE1\u7BB1\u3092\u6574\u7406", "\u8FD4\u4FE1 3 \u4EF6", "\u30D5\u30A9\u30EB\u30C0\u3078\u79FB\u52D5"]) },
+    { task: makeTask("b2", "\u8A2D\u8A08\u66F8\u30EC\u30D3\u30E5\u30FC", 150, ["\u76EE\u6B21\u3092\u78BA\u8A8D", "API \u7AE0", "\u753B\u9762\u7AE0", "\u6307\u6458\u3092\u307E\u3068\u3081\u308B"]) },
+    { task: makeTask("c3", "\u30EA\u30EA\u30FC\u30B9\u4F5C\u696D", 240, ["\u30BF\u30B0\u3092\u5207\u308B", "\u30D3\u30EB\u30C9", "\u30B9\u30C6\u30FC\u30B8\u30F3\u30B0\u78BA\u8A8D", "\u672C\u756A\u53CD\u6620", "\u544A\u77E5"]) },
+    { task: makeTask("d4", "\u65E5\u5831\u3092\u66F8\u304F", 20, []) }
+  ];
+  var tasks = initial();
+  var petPos = null;
+  var sound = false;
+  var _a;
+  var page = ((_a = document.querySelector(".mock-root")) != null ? _a : document.body).createDiv("mock-page");
+  var h1 = page.createEl("h1");
+  var h1mon = h1.createSpan("mock-h1-mon");
+  h1mon.innerHTML = monsterSVG(monsterOf(soloSummary(makeTask("h", "\u30DA\u30C3\u30C8\u306E\u6F14\u51FA\u30E2\u30C3\u30AF", 45, []), "x", null), rules), 1, 28);
+  h1.createSpan({ text: "\u30DA\u30C3\u30C8\u306E\u6F14\u51FA\u30E2\u30C3\u30AF" });
+  var lead = page.createEl("p", { cls: "mock-lead" });
+  lead.innerHTML = "\u300C\u7DE8\u96C6\u300D\u3067\u30C0\u30A4\u30A2\u30ED\u30B0\u3092\u958B\u304D\u3001<b>\u30B9\u30C6\u30C3\u30D7\u306B\u30C1\u30A7\u30C3\u30AF</b>\u3092\u5165\u308C\u308B\u304B<b>\u5B8C\u4E86</b>\u306B\u3057\u3066\u4FDD\u5B58\u3059\u308B\u3068\u3001\u53F3\u4E0B\u306E\u30DA\u30C3\u30C8\u304C\u3086\u3063\u304F\u308A\u4E2D\u592E\u3078\u6765\u3066\u4E00\u6483\u3092\u53D7\u3051\u307E\u3059\u3002\u307E\u3060\u6B8B\u3063\u3066\u3044\u308C\u3070\u5143\u306E\u4F4D\u7F6E\u3078\u623B\u308A\u3001\u5B8C\u4E86\u306A\u3089\u8A0E\u4F10\u3057\u3066\u6D88\u3048\u3001\u6B21\u306E\u30BF\u30B9\u30AF\u306E\u30E2\u30F3\u30B9\u30BF\u30FC\u304C\u5143\u306E\u4F4D\u7F6E\u306B\u73FE\u308C\u307E\u3059\u3002\u30DA\u30C3\u30C8\u306F\u30C9\u30E9\u30C3\u30B0\u3067\u52D5\u304B\u305B\u307E\u3059\uFF08\u4F4D\u7F6E\u306F\u8A18\u61B6\uFF09\u3002";
+  var bar = page.createDiv("mock-bar");
+  var soundLabel = bar.createEl("label");
+  var soundCb = soundLabel.createEl("input", { attr: { type: "checkbox" } });
+  soundLabel.createSpan({ text: "\u52B9\u679C\u97F3" });
+  soundCb.addEventListener("change", () => sound = soundCb.checked);
+  var resetBtn = bar.createEl("button", { text: "\u30BF\u30B9\u30AF\u3092\u6700\u521D\u306B\u623B\u3059" });
+  resetBtn.addEventListener("click", () => {
+    tasks = initial();
+    render();
+    log("\u30BF\u30B9\u30AF\u3092\u6700\u521D\u306B\u623B\u3057\u307E\u3057\u305F", true);
+  });
+  var posBtn = bar.createEl("button", { text: "\u30DA\u30C3\u30C8\u306E\u4F4D\u7F6E\u3092\u53F3\u4E0B\u306B\u623B\u3059" });
+  posBtn.addEventListener("click", () => {
+    petPos = null;
+    updatePet();
+  });
+  bar.createSpan({ text: "\u30E9\u30F3\u30AF: 1 \u6642\u9593\u4EE5\u5185 = \u96D1\u9B5A / 3 \u6642\u9593\u4EE5\u5185 = \u4E2D\u7D1A / \u305D\u308C\u4EE5\u4E0A = \u30DC\u30B9" });
+  var listEl = page.createDiv("mock-tasks");
+  var logEl = page.createDiv("mock-log");
+  logEl.createDiv({ cls: "mock-log-title", text: "\u30ED\u30B0" });
+  function log(text, head = false) {
+    const t = /* @__PURE__ */ new Date();
+    const hh = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
+    const row = logEl.createDiv({ text: head ? text : `${hh}  ${text}` });
+    if (head) row.addClass("is-head");
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  var PATH = "Timeline/2026-09-03.md";
+  var hmm2 = (m) => `${Math.floor(m / 60)}:${String(Math.round(m) % 60).padStart(2, "0")}`;
+  function focusTask() {
+    var _a2;
+    return (_a2 = tasks.find((m) => !m.task.done)) != null ? _a2 : null;
+  }
+  function render() {
+    listEl.empty();
+    const focus = focusTask();
+    for (const m of tasks) {
+      const t = m.task;
+      const sum = soloSummary(t, PATH, /* @__PURE__ */ new Date());
+      const mon = monsterOf(sum, rules);
+      const hp = projectHp(sum, rules);
+      const row = listEl.createDiv("mock-task");
+      row.toggleClass("is-done", t.done);
+      row.toggleClass("is-focus", m === focus);
+      const icon = row.createDiv("mock-task-mon");
+      icon.innerHTML = monsterSVG(mon, hpRatio(hp), 30);
+      const body = row.createDiv("mock-task-body");
+      const titleEl = body.createDiv("mock-task-title");
+      titleEl.createSpan({ cls: "mock-task-rank", text: `${mon.rank} ${"\u2605".repeat(mon.rank === "\u96D1\u9B5A" ? 1 : mon.rank === "\u4E2D\u7D1A" ? 2 : 3)}` });
+      titleEl.createSpan({ text: t.title });
+      const done = t.steps.filter((s) => s.done).length;
+      body.createDiv({
+        cls: "mock-task-meta",
+        text: `${mon.name} \xB7 \u4E88\u5B9A ${hmm2(t.end - t.start)} \xB7 HP ${hmm2(hp.remain)} / ${hmm2(hp.total)}` + (t.steps.length ? ` \xB7 \u30B9\u30C6\u30C3\u30D7 ${done}/${t.steps.length}` : " \xB7 \u30B9\u30C6\u30C3\u30D7\u306A\u3057") + (m === focus ? " \xB7 \u30DA\u30C3\u30C8\u306E\u76F8\u624B" : "")
+      });
+      const btn = row.createEl("button", { text: "\u7DE8\u96C6" });
+      btn.addEventListener("click", () => openDialog(m));
+    }
+    updatePet();
+  }
+  var pet = new PetWidget({
+    getPosition: () => petPos,
+    setPosition: (p) => {
+      petPos = p;
+      log(`\u30DA\u30C3\u30C8\u306E\u4F4D\u7F6E\u3092\u8A18\u61B6: (${Math.round(p.x)}, ${Math.round(p.y)})`);
+    },
+    onClick: () => {
+      const f = focusTask();
+      if (f) openDialog(f);
+    },
+    onOpenProject: () => log("\uFF08\u5358\u72EC\u30BF\u30B9\u30AF\u306A\u306E\u3067\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u30CE\u30FC\u30C8\u306F\u3042\u308A\u307E\u305B\u3093\uFF09"),
+    onHide: () => log("\uFF08\u30E2\u30C3\u30AF\u3067\u306F\u96A0\u3057\u307E\u305B\u3093\uFF09")
+  });
+  function updatePet() {
+    const f = focusTask();
+    if (!f) {
+      pet.update(null);
+      return;
+    }
+    const sum = soloSummary(f.task, PATH, /* @__PURE__ */ new Date());
+    const info = {
+      monster: monsterOf(sum, rules),
+      hp: projectHp(sum, rules),
+      projectLink: sum.ref.linktext,
+      projectName: sum.ref.name,
+      taskTitle: f.task.title,
+      label: "\u6B21",
+      solo: true
+    };
+    pet.update(info);
+  }
+  function openDialog(m) {
+    const t = m.task;
+    const backdrop = document.body.createDiv("mock-backdrop");
+    const dlg = backdrop.createDiv("mock-dialog");
+    dlg.createEl("h2", { text: "\u30BF\u30B9\u30AF\u3092\u7DE8\u96C6" });
+    const titleRow = dlg.createDiv("mock-row");
+    titleRow.createSpan({ cls: "mock-row-label", text: "\u30BF\u30A4\u30C8\u30EB" });
+    const titleIn = titleRow.createEl("input", { attr: { type: "text" } });
+    titleIn.value = t.title;
+    const planRow = dlg.createDiv("mock-row");
+    planRow.createSpan({ cls: "mock-row-label", text: "\u4E88\u5B9A" });
+    const planSel = planRow.createEl("select");
+    for (const [v, label] of [
+      ["20", "20 \u5206"],
+      ["45", "45 \u5206"],
+      ["60", "1 \u6642\u9593"],
+      ["90", "1 \u6642\u9593 30 \u5206"],
+      ["150", "2 \u6642\u9593 30 \u5206"],
+      ["180", "3 \u6642\u9593"],
+      ["240", "4 \u6642\u9593"]
+    ]) {
+      const o = planSel.createEl("option", { text: label, attr: { value: v } });
+      if (Number(v) === t.end - t.start) o.selected = true;
+    }
+    const doneRow = dlg.createDiv("mock-row");
+    doneRow.createSpan({ cls: "mock-row-label", text: "\u5B8C\u4E86" });
+    const doneLabel = doneRow.createEl("label");
+    const doneCb = doneLabel.createEl("input", { attr: { type: "checkbox" } });
+    doneCb.checked = t.done;
+    doneLabel.createSpan({ text: " \u5B8C\u4E86\u306B\u3059\u308B" });
+    const stepsRow = dlg.createDiv("mock-row");
+    stepsRow.createSpan({ cls: "mock-row-label", text: "\u30B9\u30C6\u30C3\u30D7" });
+    stepsRow.createSpan({ cls: "mock-hint", text: t.steps.length ? "" : "\uFF08\u30B9\u30C6\u30C3\u30D7\u306A\u3057\u3002\u5B8C\u4E86\u3060\u3051\u3067\u8A0E\u4F10\uFF09" });
+    const stepsEl = dlg.createDiv("mock-steps");
+    const stepCbs = [];
+    for (const st of t.steps) {
+      const l = stepsEl.createEl("label");
+      const cb = l.createEl("input", { attr: { type: "checkbox" } });
+      cb.checked = st.done;
+      l.createSpan({ text: st.text });
+      stepCbs.push(cb);
+    }
+    dlg.createDiv({
+      cls: "mock-hint",
+      text: "\u4FDD\u5B58\u3059\u308B\u3068: \u65B0\u3057\u304F\u30C1\u30A7\u30C3\u30AF\u3057\u305F\u30B9\u30C6\u30C3\u30D7 1 \u3064\u306B\u3064\u304D\u5C0F\u306E\u4E00\u6483\u3001\u5B8C\u4E86\u3067\u5927\u306E\u4E00\u6483\uFF08\u6B8B\u308A HP \u3076\u3093\uFF09\u3002"
+    });
+    const foot = dlg.createDiv("mock-dialog-foot");
+    const cancel = foot.createEl("button", { text: "\u30AD\u30E3\u30F3\u30BB\u30EB" });
+    cancel.addEventListener("click", () => backdrop.remove());
+    const save = foot.createEl("button", { cls: "is-primary", text: "\u4FDD\u5B58" });
+    save.addEventListener("click", () => {
+      const steps = t.steps.map((st, i) => ({ ...st, done: stepCbs[i].checked }));
+      const minutes = Number(planSel.value);
+      const draft = {
+        title: titleIn.value,
+        start: t.start,
+        end: t.start + minutes,
+        done: doneCb.checked,
+        steps
+      };
+      backdrop.remove();
+      void commit(m, draft);
+    });
+    backdrop.addEventListener("pointerdown", (e) => {
+      if (e.target === backdrop) backdrop.remove();
+    });
+  }
+  async function commit(m, draft) {
+    var _a2;
+    const before = snapshotOf(m.task);
+    const wasDone = m.task.done;
+    const after = {
+      ...m.task,
+      title: draft.title,
+      start: draft.start,
+      end: draft.end,
+      done: draft.done,
+      steps: (_a2 = draft.steps) != null ? _a2 : m.task.steps
+    };
+    const ev = battleEvent(before, m.task, draft, rules);
+    m.task = after;
+    render();
+    if (!ev.smallHits && !ev.bigDamage) {
+      log(`\u300C${after.title}\u300D\u3092\u4FDD\u5B58\uFF08\u4E00\u6483\u306A\u3057: \u30B9\u30C6\u30C3\u30D7\u306E\u5B8C\u4E86\u6570\u304C\u5897\u3048\u3066\u3044\u306A\u3044\u30FB\u5B8C\u4E86\u306B\u306A\u3063\u3066\u3044\u306A\u3044\uFF09`, true);
+      return;
+    }
+    const sum = soloSummary(after, PATH, /* @__PURE__ */ new Date());
+    const hp = projectHp(sum, rules);
+    const mon = monsterOf(sum, rules);
+    const kill = hp.remain <= 0 && hp.total > 0;
+    log(`\u300C${after.title}\u300D\u3092\u4FDD\u5B58: ${mon.rank} ${mon.name}${wasDone ? "\uFF08\u3059\u3067\u306B\u5B8C\u4E86\uFF09" : ""}`, true);
+    if (ev.smallHits) log(`\u5C0F\u306E\u4E00\u6483 \xD7 ${ev.smallHits}\uFF081 \u767A ${hmm2(ev.smallDamage)}\uFF09`);
+    if (ev.bigDamage) log(`\u5927\u306E\u4E00\u6483 ${hmm2(ev.bigDamage)}`);
+    log("\u30DA\u30C3\u30C8\u304C\u4E2D\u592E\u3078\u79FB\u52D5 \u2026");
+    const t0 = performance.now();
+    await pet.playBattle({
+      monster: mon,
+      title: sum.ref.name,
+      hp,
+      totalWork: sum.actMin || sum.planMin,
+      event: ev,
+      sound,
+      host: document.body,
+      brief: true
+    });
+    const sec = ((performance.now() - t0) / 1e3).toFixed(1);
+    if (kill) log(`\u8A0E\u4F10 \u2192 \u6D88\u3048\u3066\u3001\u6B21\u306E\u76F8\u624B\u304C\u5143\u306E\u4F4D\u7F6E\u306B\u73FE\u308C\u308B\uFF08${sec} \u79D2\uFF09`);
+    else log(`\u6B8B\u308A HP ${hmm2(hp.remain)} \u2192 \u5143\u306E\u4F4D\u7F6E\u3078\u623B\u308B\uFF08${sec} \u79D2\uFF09`);
+  }
+  render();
+  log("\u6E96\u5099\u3067\u304D\u307E\u3057\u305F\u3002\u300C\u7DE8\u96C6\u300D\u304B\u3089\u3069\u3046\u305E", true);
+})();
+
+</script>

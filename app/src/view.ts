@@ -2424,22 +2424,26 @@ export class DayTimelineView extends ItemView {
     const rules = this.battleRules();
     const ev = battleEvent(before, task, data, rules);
     if (!ev.smallHits && !ev.bigDamage) return;
-    const anchor =
-      this.inboxEl?.querySelector<HTMLElement>(`.dt-project-row[data-dt-project="${CSS.escape(sum.ref.linktext)}"]`) ??
-      null;
-    const petSame = this.petInfo?.projectLink === sum.ref.linktext;
-    void playBattle({
+    const opts = {
       monster: monsterOf(sum, rules),
       title: sum.ref.name,
       hp: projectHp(sum, rules),
       totalWork: sum.actMin || sum.planMin,
       event: ev,
       sound: s.bossBattleSound,
-      anchor,
       host: this.contentEl,
-      onHit: petSame ? (kind) => this.pet?.react(kind) : undefined,
       brief: sum.solo,
-    });
+    };
+    // ペットを出しているときは、ペットが画面の中央へ来て演出を受ける（討伐なら消え、残っていれば元の位置へ戻る）
+    const pet = this.ensurePet();
+    if (pet) {
+      void pet.playBattle(opts);
+      return;
+    }
+    const anchor =
+      this.inboxEl?.querySelector<HTMLElement>(`.dt-project-row[data-dt-project="${CSS.escape(sum.ref.linktext)}"]`) ??
+      null;
+    void playBattle({ ...opts, anchor });
   }
 
   /** 保存内容（TaskDraft）を反映したタスクの写し（HP の計算用。ノートを読み直さずに済ませる） */
@@ -2498,39 +2502,15 @@ export class DayTimelineView extends ItemView {
     return pick ? { date: today, task: pick.task, label: pick.label } : null;
   }
 
-  /** ペットを描き直す（再読み込み・30 秒ごと・計測の開始と終了で呼ぶ） */
-  private updatePet(): void {
+  /** ペットのウィジェット。設定でペットが有効なら作って返し、無効なら片付けて null */
+  private ensurePet(): PetWidget | null {
     const s = this.plugin.settings;
     if (!s.petEnabled || !s.bossBattle || !s.showProjects || !this.plugin.projects) {
       this.pet?.destroy();
       this.pet = null;
       this.petInfo = null;
-      return;
+      return null;
     }
-    const target = this.petTarget();
-    let sum: ProjectSummary | null = null;
-    if (target) {
-      const path = this.storeOf(target.task).pathFor(target.date);
-      sum = target.task.project
-        ? this.projectSummaryFor(target.task.project, path)
-        : this.soloSummaryOf(target.task, path, target.date);
-    }
-    if (!target || !sum) {
-      this.petInfo = null;
-      this.pet?.update(null);
-      return;
-    }
-    const rules = this.battleRules();
-    const info: PetInfo = {
-      monster: monsterOf(sum, rules),
-      hp: projectHp(sum, rules),
-      projectLink: sum.ref.linktext,
-      projectName: sum.ref.name,
-      taskTitle: this.displayTitle(target.task),
-      label: target.label,
-      solo: sum.solo === true,
-    };
-    this.petInfo = info;
     if (!this.pet) {
       this.pet = new PetWidget({
         getPosition: () => this.plugin.settings.petPos,
@@ -2552,7 +2532,38 @@ export class DayTimelineView extends ItemView {
         },
       });
     }
-    this.pet.update(info);
+    return this.pet;
+  }
+
+  /** ペットを描き直す（再読み込み・30 秒ごと・計測の開始と終了で呼ぶ） */
+  private updatePet(): void {
+    const pet = this.ensurePet();
+    if (!pet) return;
+    const target = this.petTarget();
+    let sum: ProjectSummary | null = null;
+    if (target) {
+      const path = this.storeOf(target.task).pathFor(target.date);
+      sum = target.task.project
+        ? this.projectSummaryFor(target.task.project, path)
+        : this.soloSummaryOf(target.task, path, target.date);
+    }
+    if (!target || !sum) {
+      this.petInfo = null;
+      pet.update(null);
+      return;
+    }
+    const rules = this.battleRules();
+    const info: PetInfo = {
+      monster: monsterOf(sum, rules),
+      hp: projectHp(sum, rules),
+      projectLink: sum.ref.linktext,
+      projectName: sum.ref.name,
+      taskTitle: this.displayTitle(target.task),
+      label: target.label,
+      solo: sum.solo === true,
+    };
+    this.petInfo = info;
+    pet.update(info);
   }
 
   /**
