@@ -1485,6 +1485,49 @@
 .dt-view.is-multi-day .dt-day-headers {
   display: flex;
 }
+/* 2週間表示: 段の見出し（幅 100%）を曜日の行の上に置くため折り返しを許す。
+   曜日のまとまりは基準幅 0 にして、見出しの次の行で残り幅いっぱいに広がる（内容の幅で折り返さない） */
+.dt-view.is-2week .dt-day-headers {
+  flex-wrap: wrap;
+}
+.dt-view.is-2week .dt-day-headers-cells {
+  flex-basis: 0;
+}
+
+/* ---------- 2週間表示: 今週・来週の段を上下に重ねる ----------
+   段ごとに sticky なヘッダーと時間軸を持ち、列幅・文字は週表示と同じ。
+   ヘッダーは段（dt-row）の中で止まり、次の段に押し出される */
+.dt-row {
+  position: relative;
+}
+.dt-view.is-2week .dt-row + .dt-row {
+  border-top: 2px solid var(--background-modifier-border);
+}
+/* 段の見出し: 「今週  8/30〜9/5」と右端にその週の予実合計 */
+.dt-week-label {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px 1px 8px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.3;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dt-week-label-rel {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.dt-week-label.is-current .dt-week-label-rel {
+  color: var(--interactive-accent);
+}
+.dt-week-label-total {
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .dt-day-headers-spacer {
   flex: 0 0 52px;
   width: 52px;
@@ -1671,7 +1714,8 @@
   padding-left: 5px;
   padding-right: 4px;
 }
-.dt-view.is-week .dt-event-time {
+.dt-view.is-week .dt-event-time,
+.dt-view.is-2week .dt-event-time {
   font-size: 0.8em;
 }
 
@@ -3916,7 +3960,8 @@ body.is-phone .dt-day-total {
 
 /* 週表示・月表示は 7 列で 1 マスが狭いので、上の基準サイズ引き上げの対象から
    外して一段小さくし、読める文字数を優先する */
-body.is-mobile .dt-view.is-week .dt-event {
+body.is-mobile .dt-view.is-week .dt-event,
+body.is-mobile .dt-view.is-2week .dt-event {
   font-size: 11px;
 }
 body.is-mobile .dt-view.is-month .dt-month-item {
