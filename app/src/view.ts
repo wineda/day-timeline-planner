@@ -232,6 +232,9 @@ export class DayTimelineView extends ItemView {
   private headersEl!: HTMLElement;
   private labelsEl!: HTMLElement;
   private daysEl!: HTMLElement;
+  /** 現在時刻の線: 全列をまたぐ細い線と、左の時刻の目盛りに出す「17:58」のラベル（今日が表示範囲にあるときだけ） */
+  private nowLineEl: HTMLElement | null = null;
+  private nowLabelEl: HTMLElement | null = null;
   /** 幅が狭い（スマホなど）とき true。タイムラインとパネルを切り替えて片方だけ表示する */
   private isNarrow = false;
   /** 狭い画面で表示中の面 */
@@ -3667,22 +3670,58 @@ export class DayTimelineView extends ItemView {
     if (fg) el.style.setProperty("--dt-event-fg", fg);
   }
 
+  /**
+   * 現在時刻の線（TickTick 風）。今日が表示範囲にあるときだけ、
+   * - 全列をまたぐ細い線（dt-now-line）を日の列の入れ物に、
+   * - 今日の列には太い線と●（dt-now）を、
+   * - 左の時刻の目盛りには赤い「17:58」（dt-now-label）を出す。近くの「18:00」の目盛りは重なるので隠す
+   */
   private updateNowLine(): void {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
     const m = nowMinutes();
+    const inRange = s.showCurrentTime && m >= dayStart && m <= dayEnd;
+    let hasToday = false;
     for (const col of this.columns) {
-      const show = s.showCurrentTime && isToday(col.date) && m >= dayStart && m <= dayEnd;
+      const show = inRange && isToday(col.date);
       if (!show) {
         col.nowEl?.remove();
         col.nowEl = null;
         continue;
       }
+      hasToday = true;
       if (!col.nowEl || !col.nowEl.isConnected) {
         col.nowEl = col.canvasEl.createDiv("dt-now");
       }
       col.nowEl.style.top = this.minutesToPx(m) + "px";
+    }
+
+    const showAll = hasToday && this.mode !== "month" && !!this.daysEl?.isConnected;
+    if (!showAll) {
+      this.nowLineEl?.remove();
+      this.nowLineEl = null;
+      this.nowLabelEl?.remove();
+      this.nowLabelEl = null;
+      this.labelsEl?.querySelectorAll<HTMLElement>(".dt-hour-label.is-near-now").forEach((el) =>
+        el.removeClass("is-near-now")
+      );
+      return;
+    }
+    const top = this.minutesToPx(m);
+    if (!this.nowLineEl || !this.nowLineEl.isConnected) {
+      this.nowLineEl = this.daysEl.createDiv("dt-now-line");
+    }
+    this.nowLineEl.style.top = top + "px";
+    if (!this.nowLabelEl || !this.nowLabelEl.isConnected) {
+      this.nowLabelEl = this.labelsEl.createDiv("dt-now-label");
+    }
+    this.nowLabelEl.setText(minutesToHHMM(m));
+    this.nowLabelEl.style.top = top + "px";
+    // 現在時刻のラベルと重なる時刻の目盛り（前後 12px 以内）は隠す
+    for (const el of Array.from(this.labelsEl.querySelectorAll<HTMLElement>(".dt-hour-label"))) {
+      const labelTop = parseFloat(el.style.top) || 0;
+      el.toggleClass("is-near-now", Math.abs(labelTop - top) < 12);
     }
   }
 
