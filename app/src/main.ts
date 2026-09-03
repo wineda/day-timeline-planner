@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   DayTimelineSettingTab,
   DayTimelineSettings,
+  colorForTags,
   migrateSettings,
   ticketUrl,
 } from "./settings";
@@ -14,7 +15,8 @@ import { ReminderService, TimerModal, TimerService, requestNotificationPermissio
 import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
-import { buildWeeklyReport, type ReportDay } from "./report";
+import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
+import { DailyReportModal } from "./report-modal";
 import {
   ProjectStore,
   buildTaskListSection,
@@ -251,6 +253,24 @@ export default class DayTimelinePlugin extends Plugin {
         return true;
       },
     });
+    this.addCommand({
+      id: "daily-report",
+      name: "日報を見る（表示中の日）",
+      checkCallback: (checking) => {
+        if (!this.blockStore()) return false;
+        if (!checking) void this.openDailyReport(this.getTimelineView()?.getDate() ?? new Date());
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "daily-report-note",
+      name: "日報をノートに書き出す（表示中の日）",
+      checkCallback: (checking) => {
+        if (!this.blockStore()) return false;
+        if (!checking) void this.createDailyReport(this.getTimelineView()?.getDate() ?? new Date());
+        return true;
+      },
+    });
 
     this.addSettingTab(new DayTimelineSettingTab(this.app, this));
   }
@@ -273,34 +293,90 @@ export default class DayTimelinePlugin extends Plugin {
       const content = buildWeeklyReport(days, {
         ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
       });
-
-      const dir = normalizePath((this.settings.folder ? this.settings.folder + "/" : "") + "Reports");
-      let cur = "";
-      for (const part of dir.split("/")) {
-        cur = cur ? `${cur}/${part}` : part;
-        if (!this.app.vault.getAbstractFileByPath(cur)) {
-          try {
-            await this.app.vault.createFolder(cur);
-          } catch (_e) {
-            // 既にある場合など
-          }
-        }
-      }
-      const path = normalizePath(`${dir}/予実レポート ${dateKey(start)}.md`);
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      let file: TFile;
-      if (existing instanceof TFile) {
-        await this.app.vault.process(existing, () => content);
-        file = existing;
-      } else {
-        file = await this.app.vault.create(path, content);
-      }
-      await this.app.workspace.getLeaf("tab").openFile(file);
+      const path = await this.writeReport(`予実レポート ${dateKey(start)}.md`, content);
       new Notice(`予実レポートを作成しました: ${path}`);
     } catch (e) {
       console.error(e);
       new Notice("予実レポートを作成できませんでした: " + String(e));
     }
+  }
+
+  /**
+   * その日の日報をポップアップで見せる（日付ヘッダーの日付のクリック / コマンド）。
+   * ノートを読み直してから出すので、他の端末で書いた分もそのまま反映される
+   */
+  async openDailyReport(date: Date): Promise<void> {
+    const store = this.blockStore();
+    if (!store) {
+      new Notice("日報はタスクブロック形式のときだけ使えます");
+      return;
+    }
+    const day = startOfDay(date);
+    try {
+      const tasks = (await store.load(day)).tasks;
+      new DailyReportModal(this.app, {
+        date: day,
+        tasks,
+        ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
+        colorOfTags: (tags) => colorForTags(tags, this.settings.tagColors),
+        onExport: () => void this.createDailyReport(day),
+        onSelectTask: (task) => this.getTimelineView()?.revealTask(day, task),
+      }).open();
+    } catch (e) {
+      console.error(e);
+      new Notice("日報を開けませんでした: " + String(e));
+    }
+  }
+
+  /**
+   * その日の日報を Markdown で書き出して開く（日報のポップアップの「ノートに書き出す」）。
+   * 出力先: <フォルダ>/Reports/日報 YYYY-MM-DD.md（既にあれば上書き）
+   */
+  async createDailyReport(date: Date): Promise<void> {
+    const store = this.blockStore();
+    if (!store) return;
+    const day = startOfDay(date);
+    try {
+      const content = buildDailyReport(
+        { date: day, tasks: (await store.load(day)).tasks },
+        { ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id) }
+      );
+      const path = await this.writeReport(`日報 ${dateKey(day)}.md`, content);
+      new Notice(`日報を作成しました: ${path}`);
+    } catch (e) {
+      console.error(e);
+      new Notice("日報を作成できませんでした: " + String(e));
+    }
+  }
+
+  /**
+   * レポートのノートを <フォルダ>/Reports/ に書いて開く（既にあれば中身を差し替える）。
+   * 書いたノートのパスを返す
+   */
+  private async writeReport(name: string, content: string): Promise<string> {
+    const dir = normalizePath((this.settings.folder ? this.settings.folder + "/" : "") + "Reports");
+    let cur = "";
+    for (const part of dir.split("/")) {
+      cur = cur ? `${cur}/${part}` : part;
+      if (!this.app.vault.getAbstractFileByPath(cur)) {
+        try {
+          await this.app.vault.createFolder(cur);
+        } catch (_e) {
+          // 既にある場合など
+        }
+      }
+    }
+    const path = normalizePath(`${dir}/${name}`);
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    let file: TFile;
+    if (existing instanceof TFile) {
+      await this.app.vault.process(existing, () => content);
+      file = existing;
+    } else {
+      file = await this.app.vault.create(path, content);
+    }
+    await this.app.workspace.getLeaf("tab").openFile(file);
+    return path;
   }
 
   openTimerModal(): void {
