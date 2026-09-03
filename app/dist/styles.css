@@ -942,6 +942,10 @@
   width: 76px;
   min-width: 76px;
 }
+/* 見出しは他の列と同じく左寄せ（セルの中身はバーが幅いっぱいなので右寄せのまま） */
+.dt-projects-table th.dt-ptc-progress {
+  text-align: left;
+}
 /* タスクのステップの消化率（バー + %）。プロジェクトの行は今までどおり件数だけ出す */
 .dt-progress {
   display: flex;

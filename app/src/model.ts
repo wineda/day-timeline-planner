@@ -108,6 +108,18 @@ export function stepProgress(t: Task): StepProgress | null {
   return { done, total: steps.length, ratio: done / steps.length };
 }
 
+/**
+ * 進捗バーに出すタスクの消化度。ステップが1件も無いタスクは「ステップ1件」と数え、
+ * タスク自体を完了にすれば 1/1 = 100% になる。
+ * ステップがあるタスクも、完了にすれば残りは持ち越し済みとみなして 100% で出す
+ */
+export function taskProgress(t: Task): StepProgress {
+  const sp = stepProgress(t);
+  const total = sp ? sp.total : 1;
+  const done = t.done ? total : sp ? sp.done : 0;
+  return { done, total, ratio: done / total };
+}
+
 /** 追加・編集フォームの内容 */
 export interface TaskDraft {
   title: string;
