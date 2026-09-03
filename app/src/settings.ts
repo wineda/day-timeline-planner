@@ -13,6 +13,8 @@ export type SidebarTab = "inbox" | "projects" | "reschedule";
 
 /** プロジェクトパネルの表示形式（ツリー / テーブル） */
 export type ProjectsViewStyle = "tree" | "table";
+/** プロジェクト一覧の絞り込み: すべて / 本日タスクがあるものだけ */
+export type ProjectsFilter = "all" | "today";
 
 /** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
 export type PlanActualMode = "plan" | "both" | "actual";
@@ -618,6 +620,12 @@ export interface DayTimelineSettings {
   projectsHideDone: boolean;
   /** プロジェクトパネルでグループの見出し（階層）を出さずフラットな一覧にするか。並びはグループ順のまま */
   projectsFlatList: boolean;
+  /** プロジェクト一覧の絞り込み（パネル上部の切替。記憶される） */
+  projectsFilter: ProjectsFilter;
+  /** ペット: いま対応中のタスクのプロジェクトのモンスターを画面に浮かべて出すか */
+  petEnabled: boolean;
+  /** ペットの位置（画面の左上からの px）。null なら右下 */
+  petPos: { x: number; y: number } | null;
   /** プロジェクトパネルの表示形式（tree = ツリー / table = 期日・進捗・予定・実績を列に並べるテーブル） */
   projectsViewStyle: ProjectsViewStyle;
   /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
@@ -704,6 +712,9 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showProjects: true,
   projectsHideDone: false,
   projectsFlatList: false,
+  projectsFilter: "all",
+  petEnabled: true,
+  petPos: null,
   projectsViewStyle: "tree",
   projectGroups: [],
   defaultGroupIcon: "folder",
@@ -812,6 +823,9 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
   if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
   if (s.projectsViewStyle !== "table") s.projectsViewStyle = "tree";
+  if (s.projectsFilter !== "today") s.projectsFilter = "all";
+  if (typeof s.petEnabled !== "boolean") s.petEnabled = DEFAULT_SETTINGS.petEnabled;
+  if (!s.petPos || !Number.isFinite(s.petPos.x) || !Number.isFinite(s.petPos.y)) s.petPos = null;
   if (typeof s.showTodaySummary !== "boolean") s.showTodaySummary = DEFAULT_SETTINGS.showTodaySummary;
   if (typeof s.summaryCollapsed !== "boolean") s.summaryCollapsed = false;
   s.summaryStreakPercent = Number.isFinite(s.summaryStreakPercent)
@@ -1621,6 +1635,18 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.bossBattle).onChange(async (v) => {
           s.bossBattle = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("対応中のプロジェクトのモンスターを画面に出す（ペット）")
+      .setDesc(
+        "いま対応中のタスク（計測中 → 現在時刻のタスク → 次のタスク の順）が結びついているプロジェクトのモンスターを、画面に浮かべて出します。" +
+          "ドラッグで好きな位置に動かせ（記憶されます）、クリックでそのタスクを編集、右クリックでメニュー。一撃・討伐の演出に合わせて動きます。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.petEnabled).onChange(async (v) => {
+          s.petEnabled = v;
           await save();
         })
       );

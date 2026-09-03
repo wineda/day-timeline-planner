@@ -110,6 +110,11 @@ export default class DayTimelinePlugin extends Plugin {
       (v) => v.toggleProjectsFlatList()
     );
     viewCommand(
+      "timeline-projects-toggle-filter",
+      "タイムスケジュール: プロジェクト一覧の絞り込み（すべて / 本日タスクあり）を切り替える",
+      (v) => v.toggleProjectsFilter()
+    );
+    viewCommand(
       "timeline-projects-toggle-style",
       "タイムスケジュール: プロジェクト一覧のツリー表示 / テーブル表示を切り替える",
       (v) => v.toggleProjectsViewStyle()
