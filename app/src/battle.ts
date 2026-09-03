@@ -6,9 +6,11 @@
  * 討伐（最後のタスク）」の演出をその行の上に重ねて再生する（行そのものは再読み込みで作り直されるので、
  * 演出は別のオーバーレイで行う）。
  */
-import type { ProjectSummary } from "./project";
+import type { ProjectChild, ProjectSummary } from "./project";
+import { summarize } from "./project";
 import type { Task, TaskDraft } from "./model";
 import { isScheduled } from "./model";
+import { stripTags } from "./util";
 import {
   monsterByName,
   monsterSVG,
@@ -24,6 +26,9 @@ export interface BattleRules {
   midHours: number;
   bossHours: number;
   defaultMinutes: number;
+  /** 単独タスク（プロジェクトなし）のランク: 予定時間がこの値（時間）を超えたら中級・ボス */
+  soloMidHours: number;
+  soloBossHours: number;
 }
 
 /** プロジェクトの HP（分） */
@@ -69,6 +74,37 @@ export function hpRatio(hp: BattleHp): number {
   return hp.total > 0 ? hp.remain / hp.total : 1;
 }
 
+// ---------------------------------------------------------------------------
+// 単独タスク（プロジェクトに属さないタスクを 1 件 1 体として扱う）
+
+/** 単独タスクの仮のプロジェクトのリンク文字列の頭。実在のノートとぶつからない形 */
+export const SOLO_LINK_PREFIX = "dt-solo:";
+
+/**
+ * プロジェクトに属さないタスク 1 件を、それ自身を唯一の子とする仮のプロジェクトにする。
+ * ノートは作らない。HP はそのタスクの予定時間、完了すればそのまま討伐になる
+ */
+export function soloSummary(task: Task, path: string, date: Date | null): ProjectSummary {
+  const name = stripTags(task.title) || "(無題)";
+  const child: ProjectChild = { date, path, task, owner: task.owner ?? null };
+  const sum = summarize(
+    { linktext: `${SOLO_LINK_PREFIX}${path}#^${task.blockId ?? ""}`, name, done: false, group: null },
+    [child]
+  );
+  sum.solo = true;
+  return sum;
+}
+
+/**
+ * 単独タスクのランク。予定時間（時間）が soloMidHours 以内なら雑魚、soloBossHours 以内なら中級、
+ * それを超えたらボス（「以内」なので、ちょうど 1 時間は雑魚）。0 以下の閾値はその段を無効にする
+ */
+export function soloRank(hours: number, midHours: number, bossHours: number): MonsterRank {
+  if (bossHours > 0 && hours > bossHours) return "ボス";
+  if (midHours > 0 && hours > midHours) return "中級";
+  return "雑魚";
+}
+
 /**
  * プロジェクトのモンスター。ノートの「- モンスター: 名前」があればそれ。
  * 無ければ「- 難易度: 」（作成時・右クリックで選んだランク）、それも無ければ予定時間の合計から決めたランクの中で
@@ -77,6 +113,12 @@ export function hpRatio(hp: BattleHp): number {
 export function monsterOf(sum: ProjectSummary, rules: BattleRules): Monster {
   const named = sum.fields?.monster ? monsterByName(sum.fields.monster) : undefined;
   if (named) return named;
+  if (sum.solo) {
+    // 単独タスク: 予定時間でランクを決め、姿はタスク名から選ぶ（同じ名前の仕事はいつも同じ姿）
+    const t = sum.children[0]?.task;
+    const hours = t ? taskWeight(t, rules) / 60 : 0;
+    return pickMonster(sum.ref.name, soloRank(hours, rules.soloMidHours, rules.soloBossHours));
+  }
   const rank =
     sum.fields?.difficulty ?? rankForHours(projectHp(sum, rules).total / 60, rules.midHours, rules.bossHours);
   return pickMonster(sum.ref.linktext, rank);
@@ -196,6 +238,8 @@ export interface BattleStageOptions {
   host: HTMLElement;
   /** 一撃ごとに呼ぶ（ペットを合わせて動かす） */
   onHit?: (kind: "small" | "big" | "kill") => void;
+  /** 討伐を短縮版にする（単独タスクはタスクを終えるたびに討伐になるので、長いと疲れる） */
+  brief?: boolean;
 }
 
 /**
@@ -295,7 +339,19 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     o.onHit?.(kill ? "kill" : "big");
     draw(kill ? 0.05 : undefined);
   }
-  if (kill) {
+  if (kill && o.brief) {
+    // 短縮版: ふるえは省き、すぐ倒れて判を出す
+    await wait(250);
+    replay(mon, "is-fall");
+    await wait(400);
+    mon.removeClass("is-fall");
+    draw(0);
+    stage.addClass("is-dead");
+    hpt.setText(`討伐！ 総工数 ${hmm(o.totalWork)}`);
+    replay(stamp, "is-on");
+    confetti(stage);
+    await wait(1200);
+  } else if (kill) {
     await wait(350);
     replay(mon, "is-tremble");
     await wait(900);

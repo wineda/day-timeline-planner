@@ -649,6 +649,12 @@ export interface DayTimelineSettings {
   bossBattleSound: boolean;
   /** 予定時間の合計がこの時間以上なら中級のモンスター */
   bossRankMidHours: number;
+  /** プロジェクトに属さないタスクを 1 件 1 体のモンスターとして扱う（演出とペット。パネルには出さない） */
+  soloBattle: boolean;
+  /** 単独タスクが中級になる予定時間（時間）。これ以内は雑魚 */
+  soloRankMidHours: number;
+  /** 単独タスクがボスになる予定時間（時間）。これ以内は中級 */
+  soloRankBossHours: number;
   /** 予定時間の合計がこの時間以上ならボス */
   bossRankBossHours: number;
 
@@ -726,6 +732,9 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   bossBattle: true,
   bossBattleSound: true,
   bossRankMidHours: 10,
+  soloBattle: true,
+  soloRankMidHours: 1,
+  soloRankBossHours: 3,
   bossRankBossHours: 40,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
@@ -836,6 +845,11 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   s.bossRankMidHours = Number.isFinite(s.bossRankMidHours) && s.bossRankMidHours >= 0 ? s.bossRankMidHours : DEFAULT_SETTINGS.bossRankMidHours;
   s.bossRankBossHours =
     Number.isFinite(s.bossRankBossHours) && s.bossRankBossHours >= 0 ? s.bossRankBossHours : DEFAULT_SETTINGS.bossRankBossHours;
+  if (typeof s.soloBattle !== "boolean") s.soloBattle = DEFAULT_SETTINGS.soloBattle;
+  s.soloRankMidHours =
+    Number.isFinite(s.soloRankMidHours) && s.soloRankMidHours >= 0 ? s.soloRankMidHours : DEFAULT_SETTINGS.soloRankMidHours;
+  s.soloRankBossHours =
+    Number.isFinite(s.soloRankBossHours) && s.soloRankBossHours >= 0 ? s.soloRankBossHours : DEFAULT_SETTINGS.soloRankBossHours;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -1684,6 +1698,47 @@ export class DayTimelineSettingTab extends PluginSettingTab {
             const n = Number(v);
             if (Number.isFinite(n) && n >= 0) {
               s.bossRankBossHours = n;
+              await save();
+            }
+          })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトなしのタスクも 1 件 1 体のモンスターにする")
+      .setDesc(
+        "プロジェクトに属さないタスクを、そのタスクだけを子に持つ仮のプロジェクトとして扱います（ノートは作らず、パネルにも出しません）。" +
+          "HP はそのタスクの予定時間で、完了するとそのまま討伐（短縮版の演出）。ペットもこのタスクのモンスターになります。姿はタスク名から決まります。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.soloBattle).onChange(async (v) => {
+          s.soloBattle = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("単独タスクが中級・ボスになる予定時間")
+      .setDesc(
+        "プロジェクトなしのタスク 1 件の予定時間（時間）がこの値以内なら雑魚（★）・中級（★★）、超えたらボス（★★★）。既定は 1 時間以内が雑魚、3 時間以内が中級。時刻の無いタスクは「既定の長さ」で数えます。"
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("中級 1")
+          .setValue(String(s.soloRankMidHours))
+          .onChange(async (v) => {
+            const n = Number(v);
+            if (Number.isFinite(n) && n >= 0) {
+              s.soloRankMidHours = n;
+              await save();
+            }
+          })
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("ボス 3")
+          .setValue(String(s.soloRankBossHours))
+          .onChange(async (v) => {
+            const n = Number(v);
+            if (Number.isFinite(n) && n >= 0) {
+              s.soloRankBossHours = n;
               await save();
             }
           })

@@ -76,6 +76,7 @@ import {
   monsterLabel,
   monsterOf,
   playBattle,
+  soloSummary,
   projectHp,
   snapshotOf,
   SPRITE_SIZE,
@@ -2359,7 +2360,13 @@ export class DayTimelineView extends ItemView {
   /** ボス戦のルール（ランクの閾値と、時刻の無いタスクの重さ）。設定から作る */
   private battleRules(): BattleRules {
     const s = this.plugin.settings;
-    return { midHours: s.bossRankMidHours, bossHours: s.bossRankBossHours, defaultMinutes: s.defaultDurationMinutes };
+    return {
+      midHours: s.bossRankMidHours,
+      bossHours: s.bossRankBossHours,
+      defaultMinutes: s.defaultDurationMinutes,
+      soloMidHours: s.soloRankMidHours,
+      soloBossHours: s.soloRankBossHours,
+    };
   }
 
   /** ボス戦: プロジェクト行の左のモンスター。row の先頭（シェブロンの次）ではなく body の前に置く */
@@ -2411,7 +2418,8 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     if (!s.bossBattle || !s.showProjects) return;
     const link = data.project !== undefined ? data.project : task.project;
-    const sum = this.projectSummaryFor(link, sourcePath);
+    // プロジェクトに属さないタスクは 1 件 1 体（設定でオン）。保存後の状態を写して仮のプロジェクトにする
+    const sum = link ? this.projectSummaryFor(link, sourcePath) : this.soloSummaryOf(this.applyDraft(task, data), sourcePath, null);
     if (!sum) return;
     const rules = this.battleRules();
     const ev = battleEvent(before, task, data, rules);
@@ -2430,7 +2438,31 @@ export class DayTimelineView extends ItemView {
       anchor,
       host: this.contentEl,
       onHit: petSame ? (kind) => this.pet?.react(kind) : undefined,
+      brief: sum.solo,
     });
+  }
+
+  /** 保存内容（TaskDraft）を反映したタスクの写し（HP の計算用。ノートを読み直さずに済ませる） */
+  private applyDraft(task: Task, data: TaskDraft): Task {
+    return {
+      ...task,
+      title: data.title,
+      start: data.start,
+      end: data.end,
+      done: data.done,
+      forwarded: task.forwarded || data.forward === true,
+      steps: data.steps ?? task.steps,
+      actual: data.actual ?? task.actual,
+    };
+  }
+
+  /**
+   * プロジェクトに属さないタスクを「1 件 1 体」の仮のプロジェクトにする。
+   * 設定「プロジェクトなしのタスクも 1 件 1 体」がオフなら null。他人の予定は対象にしない
+   */
+  private soloSummaryOf(task: Task, path: string, date: Date | null): ProjectSummary | null {
+    if (!this.plugin.settings.soloBattle || task.project || task.owner) return null;
+    return soloSummary(task, path, date);
   }
 
   /** タスクのプロジェクトリンクを、パネルの集計（projectData）の1件に照合する。進行中のものだけ */
@@ -2451,15 +2483,17 @@ export class DayTimelineView extends ItemView {
    * 見つからなければ null（ペットは出さない）
    */
   private petTarget(): { date: Date; task: Task; label: string } | null {
+    // 単独タスク（1 件 1 体）がオンなら、プロジェクトの無いタスクも対象にする
+    const solo = this.plugin.settings.soloBattle;
     const tr = this.plugin.settings.tracking;
     if (tr) {
       const date = parseDateKey(tr.date);
       const t = date ? this.tasksOn(date)?.find((x) => x.blockId === tr.blockId && (x.owner ?? null) === tr.owner) : null;
-      if (date && t && t.project) return { date, task: t, label: "計測中" };
+      if (date && t && (t.project || (solo && !t.owner))) return { date, task: t, label: "計測中" };
     }
     const today = startOfDay(new Date());
     const all = this.tasksOn(today) ?? [];
-    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded && !!t.project);
+    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded && (solo || !!t.project));
     const pick = this.pickFocusTask(undone);
     return pick ? { date: today, task: pick.task, label: pick.label } : null;
   }
@@ -2474,7 +2508,13 @@ export class DayTimelineView extends ItemView {
       return;
     }
     const target = this.petTarget();
-    const sum = target ? this.projectSummaryFor(target.task.project, this.storeOf(target.task).pathFor(target.date)) : null;
+    let sum: ProjectSummary | null = null;
+    if (target) {
+      const path = this.storeOf(target.task).pathFor(target.date);
+      sum = target.task.project
+        ? this.projectSummaryFor(target.task.project, path)
+        : this.soloSummaryOf(target.task, path, target.date);
+    }
     if (!target || !sum) {
       this.petInfo = null;
       this.pet?.update(null);
@@ -2488,6 +2528,7 @@ export class DayTimelineView extends ItemView {
       projectName: sum.ref.name,
       taskTitle: this.displayTitle(target.task),
       label: target.label,
+      solo: sum.solo === true,
     };
     this.petInfo = info;
     if (!this.pet) {
@@ -2502,7 +2543,7 @@ export class DayTimelineView extends ItemView {
           if (t) this.openEditModal(t.date, t.task);
         },
         onOpenProject: () => {
-          if (this.petInfo) void this.plugin.openProject(this.petInfo.projectLink);
+          if (this.petInfo && !this.petInfo.solo) void this.plugin.openProject(this.petInfo.projectLink);
         },
         onHide: () => {
           this.plugin.settings.petEnabled = false;
