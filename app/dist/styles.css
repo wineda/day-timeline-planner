@@ -1543,61 +1543,78 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 4px 2px 5px;
+  gap: 3px;
+  padding: 6px 3px 6px;
   border-left: 1px solid var(--background-modifier-border);
   cursor: pointer;
   color: var(--text-muted);
   line-height: 1.1;
+  transition: background-color 0.12s;
 }
 .dt-day-header:hover {
   background: var(--background-modifier-hover);
 }
-/* 曜日 + 日付のまとまり（スマホでは横並びにする） */
+/* 今日の列は面ごと薄いアクセント色にして、どの列が今日か一目で分かるようにする */
+.dt-day-header.is-today {
+  background: color-mix(in srgb, var(--interactive-accent) 7%, transparent);
+}
+.dt-day-header.is-today:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 13%, transparent);
+}
+/* 曜日 + 日付のまとまり（スマホでは横並びにする）。枠や背景は付けず、
+   日付の丸だけを見せる Google カレンダー風の見た目にする */
 .dt-day-header-date {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
+  border-radius: 999px;
 }
-/* 日付そのもののクリックは「その日の日報」。ヘッダーの他の場所（日表示へ切替）と
-   区別が付くよう、ホバー・フォーカスのときだけ日付の丸に輪を出す */
 .dt-day-header-date.is-clickable {
   cursor: pointer;
-  border-radius: 12px;
 }
 .dt-day-header-date.is-clickable:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
+/* 日付そのもののクリックは「その日の日報」。ヘッダーの他の場所（日表示へ切替）と
+   区別が付くよう、ホバー・フォーカスのときだけ日付の丸をアクセント色で薄く塗る */
 .dt-day-header-date.is-clickable:hover .dt-day-header-num,
 .dt-day-header-date.is-clickable:focus-visible .dt-day-header-num {
-  box-shadow: inset 0 0 0 2px var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  color: var(--interactive-accent);
 }
 .dt-day-header-date.is-clickable:active .dt-day-header-num {
   transform: scale(0.92);
 }
-/* 今日は日付の丸がアクセント色で塗られているので、輪は外側に出す */
+/* 今日は日付の丸がアクセント色で塗られているので、輪を外側に出す */
 .dt-day-header.is-today .dt-day-header-date.is-clickable:hover .dt-day-header-num,
 .dt-day-header.is-today .dt-day-header-date.is-clickable:focus-visible .dt-day-header-num {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
   box-shadow:
     0 0 0 2px var(--background-primary),
     0 0 0 4px var(--interactive-accent);
 }
 .dt-day-header-dow {
-  font-size: var(--font-ui-smaller);
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
 }
 .dt-day-header-num {
   font-size: var(--font-ui-medium);
   font-weight: 600;
   color: var(--text-normal);
   font-variant-numeric: tabular-nums;
-  width: 26px;
-  height: 26px;
-  line-height: 26px;
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
   text-align: center;
   border-radius: 50%;
+  transition:
+    background-color 0.12s,
+    color 0.12s,
+    transform 0.08s;
 }
 .dt-day-header.is-sunday .dt-day-header-dow,
 .dt-day-header.is-sunday .dt-day-header-num {
@@ -1607,32 +1624,34 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
-/* 日付ヘッダーの予実合計。「実績/予定」と差異を1つのピルにまとめ、
-   下端の極小バーで予定に対する実績の割合を示す（超過は赤）。
-   列が広ければ1行に並び、狭ければ差異が2行目へ折り返す */
+/* 日付ヘッダーの予実合計。背景のピルは付けず、実績と差異「14.1 +1.6」を小さな1行に、
+   その下に予定に対する実績の割合を示す細いバーを置く（超過は赤）。
+   予定の時間そのものは幅を取るので出さない。列が狭ければ差異が2行目へ折り返す */
 .dt-day-total {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%; /* 数字が無い日（バーだけ）でもバーが列幅に広がるように */
+  min-width: 0;
+  font-size: 0.72em;
+  line-height: 1.2;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dt-day-total .dt-day-total-line {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: baseline;
-  column-gap: 4px;
-  overflow: hidden;
+  column-gap: 5px;
+  row-gap: 1px;
   max-width: 100%;
-  padding: 1px 7px 4px;
-  border-radius: 8px;
-  background: var(--background-secondary);
-  font-size: 0.72em;
-  line-height: 1.25;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.dt-day-total .dt-day-total-nums {
-  white-space: nowrap;
 }
 .dt-day-total .dt-day-total-act {
   color: var(--text-normal);
   font-weight: 600;
+  font-size: 1.1em;
 }
 .dt-day-total .dt-day-total-diff {
   font-size: 0.9em;
@@ -1642,15 +1661,16 @@
   color: var(--color-red);
 }
 .dt-day-total .dt-day-total-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
+  width: 100%;
+  max-width: 56px;
+  height: 3px;
+  border-radius: 2px;
   background: var(--background-modifier-border);
+  overflow: hidden;
 }
 .dt-day-total .dt-day-total-bar > div {
   height: 100%;
+  border-radius: inherit;
   background: var(--interactive-accent);
 }
 .dt-day-total .dt-day-total-bar > div.is-over {
@@ -1658,7 +1678,7 @@
 }
 
 .dt-day-header.is-other-month .dt-day-header-num {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 .dt-day-header.is-today .dt-day-header-num {
   background: var(--interactive-accent);
@@ -3931,11 +3951,11 @@ body.is-mobile .dt-project-group-count {
 }
 
 /* スマホの日付ヘッダー: 列が狭く縦の場所も貴重なので、
-   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実のピルは一段小さく。
+   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実の数字とバーは一段小さく。
    （タブレットは列が広いのでデスクトップと同じ縦積みのまま） */
 body.is-phone .dt-day-header {
-  padding: 3px 1px 4px;
-  gap: 2px;
+  padding: 4px 1px 5px;
+  gap: 3px;
 }
 body.is-phone .dt-day-header-date {
   flex-direction: row;
@@ -3947,15 +3967,26 @@ body.is-phone .dt-day-header-dow {
   letter-spacing: 0;
 }
 body.is-phone .dt-day-header-num {
-  width: 20px;
-  height: 20px;
-  line-height: 20px;
-  font-size: var(--font-ui-small);
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  font-size: 13px;
 }
 body.is-phone .dt-day-total {
-  font-size: 0.68em;
-  padding: 1px 5px 4px;
+  font-size: 0.66em;
+  gap: 2px;
+}
+body.is-phone .dt-day-total .dt-day-total-line {
   column-gap: 3px;
+}
+/* 差異は必ず2行目に置く（列によって1行に収まったり折り返したりすると、
+   隣の列とバーの高さがずれて見えるため） */
+body.is-phone .dt-day-total .dt-day-total-diff {
+  flex-basis: 100%;
+  text-align: center;
+}
+body.is-phone .dt-day-total .dt-day-total-bar {
+  max-width: 40px;
 }
 
 /* 週表示・月表示は 7 列で 1 マスが狭いので、上の基準サイズ引き上げの対象から
@@ -4479,22 +4510,25 @@ body.is-phone .dt-daily-note-field {
 }
 
 /* スマホ・タブレットの日報: ホバーが無いので「日付は押せる」ことが分かるよう、
-   日付のまとまりを薄いチップにして指で押せる大きさを確保する */
+   日付の丸に薄い下地を敷き、日付のまとまりの余白で指で押せる大きさを確保する
+   （枠線付きのチップは、下の予実の数字と二段に重なって見た目がうるさいので使わない） */
 body.is-mobile .dt-day-header-date.is-clickable {
-  background: var(--background-modifier-hover);
-  border: 1px solid var(--background-modifier-border);
-  padding: 2px 8px;
-  min-height: 26px;
+  padding: 2px 6px;
+  min-height: 30px;
   justify-content: center;
 }
-body.is-mobile .dt-day-header.is-today .dt-day-header-date.is-clickable {
-  border-color: var(--interactive-accent);
+body.is-mobile .dt-day-header-date.is-clickable .dt-day-header-num {
+  background: var(--background-modifier-hover);
 }
-body.is-mobile .dt-day-header-date.is-clickable:active {
+body.is-mobile .dt-day-header.is-today .dt-day-header-date.is-clickable .dt-day-header-num {
+  background: var(--interactive-accent);
+}
+body.is-mobile .dt-day-header-date.is-clickable:active .dt-day-header-num {
   background: var(--background-modifier-active-hover);
+  transform: scale(0.92);
 }
 body.is-phone .dt-day-header-date.is-clickable {
-  padding: 2px 6px;
+  padding: 2px 4px;
 }
 /* モバイルのポップアップは全画面に近いので、中身の詰まりだけ調整する */
 body.is-mobile .dt-daily-modal .dt-daily-task-head {
