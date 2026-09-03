@@ -2045,6 +2045,7 @@ export class DayTimelineView extends ItemView {
     const wrap = tr.createEl("td", { cls: "dt-ptc-name" }).createDiv("dt-ptc-child");
     this.renderChildCheckbox(wrap, child);
     wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+    this.renderChildTagBadge(wrap, t);
     const dateTd = tr.createEl("td", { cls: "dt-ptc-due" });
     this.renderChildDateBadge(dateTd, child);
     // 進捗の列: ステップが記録されたタスクだけ、消化率をバーと % で見せる（無ければ空のまま）
@@ -2105,9 +2106,25 @@ export class DayTimelineView extends ItemView {
       this.renderChildCheckbox(item, child);
       this.renderChildDateBadge(item, child);
       item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+      this.renderChildTagBadge(item, t);
       // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップとテーブル表示で見られる
       this.attachProjectChildBehavior(item, child);
     }
+  }
+
+  /**
+   * 子タスクのタグのバッジ（設定「タグの色」に登録されたタグだけ。サブタグがあればそちら）。
+   * タイムラインの色と同じ色の枠と左の帯で、どの種類の作業かがパネルでも分かる
+   */
+  private renderChildTagBadge(parent: HTMLElement, t: Task): void {
+    const rules = this.plugin.settings.tagColors;
+    const known = t.tags.filter((tag) => colorForTags([tag], rules));
+    if (!known.length) return;
+    // 最も深いタグ（#管理/質問 が付いていれば #管理 より優先）
+    const tag = known.reduce((a, b) => (b.split("/").length > a.split("/").length ? b : a));
+    const color = colorForTags([tag], rules) ?? "";
+    const badge = parent.createSpan({ cls: "dt-project-child-tag", text: "#" + tag, attr: { title: "#" + tag } });
+    badge.style.setProperty("--dt-chip-color", color);
   }
 
   /**

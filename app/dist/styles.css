@@ -795,6 +795,25 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+/* 子タスクのタグ: タイムラインと同じ色の枠 + 左の帯（塗りつぶすと行が重くなるので枠だけ） */
+.dt-project-child-tag {
+  flex: 0 1 auto;
+  max-width: 40%;
+  padding: 0 5px 0 7px;
+  border: 1px solid var(--dt-chip-color, var(--background-modifier-border));
+  border-radius: var(--radius-l);
+  box-shadow: inset 3px 0 0 var(--dt-chip-color, transparent);
+  color: var(--text-muted);
+  font-size: 0.82em;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-project-child.is-done .dt-project-child-tag,
+.dt-project-child-trow.is-done .dt-project-child-tag {
+  opacity: 0.6;
+}
 /* 本日・日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
 .dt-project-child-date.is-today,
 .dt-project-child-date.is-undated,
