@@ -1612,6 +1612,7 @@
 
 /* 日ごとの列を並べる入れ物 */
 .dt-days {
+  position: relative; /* 全列をまたぐ現在時刻の線（dt-now-line）の基準 */
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -2186,7 +2187,17 @@
   overflow: hidden;
 }
 
-/* 現在時刻ライン */
+/* 現在時刻ライン（TickTick 風）: 全列をまたぐ細い線 + 今日の列だけ太い線と● + 左の目盛りに時刻 */
+.dt-now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--color-red);
+  opacity: 0.55;
+  z-index: 9;
+  pointer-events: none;
+}
 .dt-now {
   position: absolute;
   left: 0;
@@ -2199,12 +2210,31 @@
 .dt-now::before {
   content: "";
   position: absolute;
-  left: -6px;
+  left: -5px;
   top: -6px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--color-red);
+}
+.dt-now-label {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  padding: 1px 4px;
+  border-radius: var(--radius-s);
+  background: var(--color-red);
+  color: #fff;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  z-index: 10;
+  pointer-events: none;
+}
+/* 現在時刻のラベルと重なる時刻の目盛りは隠す */
+.dt-hour-label.is-near-now {
+  visibility: hidden;
 }
 
 /* ---------- モーダル ---------- */
