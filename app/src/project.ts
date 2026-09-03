@@ -52,10 +52,13 @@ export interface ProjectFields {
   ticket: TicketRef | null;
   /** ドキュメント（「- ドキュメント: [[設計書]] …」行。複数行・複数リンク可） */
   docs: ProjectDoc[];
+  /** ボス戦のモンスター名（「- モンスター: ドラゴン」行。無ければ ""＝名前から自動で選ぶ） */
+  monster: string;
 }
 
 const DUE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?期日(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 const TICKET_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?チケット(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+const MONSTER_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?モンスター(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 const DOC_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:ドキュメント|資料)(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 
 /** 期日の行なら中身を返す（空でも ""）。違えば null */
@@ -156,6 +159,7 @@ export function extractProjectFields(content: string): ProjectFields {
   let dueDate: Date | null = null;
   let ticket: TicketRef | null = null;
   const docs: ProjectDoc[] = [];
+  let monster = "";
   let fence = false;
   for (let i = start; i < lines.length; i++) {
     const line = lines[i];
@@ -179,10 +183,17 @@ export function extractProjectFields(content: string): ProjectFields {
         continue;
       }
     }
+    if (!monster) {
+      const mv = MONSTER_LINE_RE.exec(line)?.[1];
+      if (mv !== undefined) {
+        monster = mv;
+        continue;
+      }
+    }
     const dv = parseDocLine(line);
     if (dv !== null) docs.push(...parseDocValue(dv));
   }
-  return { due, dueDate, ticket, docs };
+  return { due, dueDate, ticket, docs, monster };
 }
 
 /** プロジェクトノートの frontmatter でグループ名を持つキー */

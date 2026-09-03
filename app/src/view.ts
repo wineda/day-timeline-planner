@@ -69,6 +69,19 @@ import { applyRecurring, instanceOf, noteRecurringDeletion, RecurringModal } fro
 import { INBOX_DATE } from "./store";
 import { formatSeconds } from "./notify";
 import {
+  battleEvent,
+  hpRatio,
+  monsterLabel,
+  monsterOf,
+  playBattle,
+  projectHp,
+  snapshotOf,
+  SPRITE_SIZE,
+  type BattleRules,
+  type BattleSnapshot,
+} from "./battle";
+import { monsterSVG } from "./bestiary";
+import {
   addDays,
   clamp,
   contrastTextColor,
@@ -2164,6 +2177,13 @@ export class DayTimelineView extends ItemView {
     const nameWrap = nameTd.createDiv("dt-ptc-name-wrap");
     const chev = nameWrap.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
+    if (this.plugin.settings.bossBattle) {
+      const rules = this.battleRules();
+      const m = monsterOf(sum, rules);
+      const icon = nameWrap.createDiv("dt-boss-sprite is-small");
+      icon.innerHTML = monsterSVG(m, sum.children.length ? hpRatio(projectHp(sum, rules)) : 1, 20);
+      icon.setAttr("aria-label", monsterLabel(m));
+    }
     const nameEl = nameWrap.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
@@ -2230,26 +2250,34 @@ export class DayTimelineView extends ItemView {
     const expanded = this.expandedProjects.has(sum.ref.linktext);
 
     const row = container.createDiv("dt-project-row");
+    row.dataset.dtProject = sum.ref.linktext;
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    // ボス戦: モンスターを左に置き、右を「名前の行」と「HP バーの行」の2段にする
+    const boss = this.plugin.settings.bossBattle;
+    row.toggleClass("is-boss", boss);
+    const body = boss ? row.createDiv("dt-boss-body") : row;
+    const line1 = boss ? body.createDiv("dt-boss-line") : row;
+    if (boss) this.renderBossSprite(row, body, sum);
+    const nameEl = line1.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
     if (fields?.due) {
-      const dueEl = row.createSpan({
+      const dueEl = line1.createSpan({
         cls: "dt-project-due",
         text: `期日 ${this.projectDueLabel(fields)}`,
       });
       if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
     }
-    if (fields?.ticket) this.renderProjectTicketBadge(row, fields.ticket);
-    const stats = row.createSpan({ cls: "dt-project-stats" });
+    if (fields?.ticket) this.renderProjectTicketBadge(line1, fields.ticket);
+    const stats = line1.createSpan({ cls: "dt-project-stats" });
     // 予実の合計は行が見づらくなるため出さない（テーブル表示・プロジェクトノートのタスク一覧・予実レポートで見られる）
     stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
     if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
+    if (boss) this.renderBossHp(body, sum);
     // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
     // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
     this.attachProjectRowBehavior(row, chev, sum);
@@ -2279,6 +2307,82 @@ export class DayTimelineView extends ItemView {
       // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップとテーブル表示で見られる
       this.attachProjectChildBehavior(item, child);
     }
+  }
+
+  /** ボス戦のルール（ランクの閾値と、時刻の無いタスクの重さ）。設定から作る */
+  private battleRules(): BattleRules {
+    const s = this.plugin.settings;
+    return { midHours: s.bossRankMidHours, bossHours: s.bossRankBossHours, defaultMinutes: s.defaultDurationMinutes };
+  }
+
+  /** ボス戦: プロジェクト行の左のモンスター。row の先頭（シェブロンの次）ではなく body の前に置く */
+  private renderBossSprite(row: HTMLElement, before: HTMLElement, sum: ProjectSummary): void {
+    const rules = this.battleRules();
+    const m = monsterOf(sum, rules);
+    const hp = projectHp(sum, rules);
+    const ratio = sum.children.length ? hpRatio(hp) : 1;
+    const size = SPRITE_SIZE[m.rank];
+    const el = createDiv("dt-boss-sprite");
+    el.style.width = `${size}px`;
+    el.style.height = `${size}px`;
+    el.innerHTML = monsterSVG(m, ratio, size);
+    el.setAttr("aria-label", monsterLabel(m));
+    row.insertBefore(el, before);
+  }
+
+  /** ボス戦: プロジェクト行の2段目（HP バーと残り HP。討伐済みなら総工数） */
+  private renderBossHp(body: HTMLElement, sum: ProjectSummary): void {
+    const rules = this.battleRules();
+    const hp = projectHp(sum, rules);
+    const line = body.createDiv("dt-boss-line dt-boss-hp");
+    const bar = line.createDiv("dt-boss-bar");
+    const ratio = sum.children.length ? hpRatio(hp) : 1;
+    const fill = bar.createDiv("dt-boss-fill");
+    fill.style.width = `${ratio * 100}%`;
+    fill.toggleClass("is-mid", ratio <= 0.5 && ratio > 0.2);
+    fill.toggleClass("is-low", ratio <= 0.2 && ratio > 0);
+    const text = line.createSpan("dt-boss-hpt");
+    if (!sum.children.length) {
+      text.setText("HP —");
+    } else if (hp.remain <= 0) {
+      line.addClass("is-dead");
+      text.setText(`討伐！ 総工数 ${hmm(sum.actMin || sum.planMin)}`);
+    } else {
+      text.setText(`HP ${hmm(Math.round(hp.remain))} / ${hmm(Math.round(hp.total))}`);
+    }
+    line.setAttr(
+      "aria-label",
+      `HP はプロジェクトの子タスクの予定時間の合計（時刻の無いタスクは ${rules.defaultMinutes} 分）。ステップのチェックとタスクの完了で減ります`
+    );
+  }
+
+  /**
+   * 保存で起きた出来事をボス戦の演出にする。プロジェクトに結びついていないタスクなら何もしない。
+   * reload のあとに呼ぶ（this.projectData が保存後の集計になっている前提）
+   */
+  private playBattleFor(task: Task, data: TaskDraft, before: BattleSnapshot, sourcePath: string): void {
+    const s = this.plugin.settings;
+    if (!s.bossBattle || !s.showProjects) return;
+    const link = data.project !== undefined ? data.project : task.project;
+    if (!link) return;
+    const dest = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
+    const key = dest?.path ?? link + ".md";
+    const sum = this.projectData.find((x) => !x.done && x.ref.linktext + ".md" === key);
+    if (!sum) return;
+    const rules = this.battleRules();
+    const ev = battleEvent(before, task, data, rules);
+    if (!ev.smallHits && !ev.bigDamage) return;
+    const anchor = this.inboxEl?.querySelector<HTMLElement>(`.dt-project-row[data-dt-project="${CSS.escape(sum.ref.linktext)}"]`) ?? null;
+    void playBattle({
+      monster: monsterOf(sum, rules),
+      title: sum.ref.name,
+      hp: projectHp(sum, rules),
+      totalWork: sum.actMin || sum.planMin,
+      event: ev,
+      sound: s.bossBattleSound,
+      anchor,
+      host: this.contentEl,
+    });
   }
 
   /**
@@ -5114,6 +5218,8 @@ export class DayTimelineView extends ItemView {
     // 自動保存のたびに参照を最新へ差し替える（タイトルや時刻が変わると照合できなくなるため）
     let current = task;
     const wasDone = task.done;
+    // ボス戦の演出は、自動保存のたびではなく閉じるときに「開いてから」の差分でまとめて出す
+    const opened = snapshotOf(task);
     const serially = serialQueue();
     // 日付を空にして「日付未定（Inbox）」へ戻せるのは、自分のタスクで Inbox があるときだけ
     const allowClearDate = !!this.plugin.inbox && !task.owner;
@@ -5147,7 +5253,7 @@ export class DayTimelineView extends ItemView {
         return next !== null;
       },
       onSubmit: (data, dateSel) =>
-        serially(() => this.commitEditSubmit(date, current, data, dateSel, wasDone)),
+        serially(() => this.commitEditSubmit(date, current, data, dateSel, wasDone, opened)),
       onDelete: () => serially(() => this.commitDelete(date, current)),
       onOpenNote: () => serially(() => this.openTaskInNote(date, current)),
     }).open();
@@ -5162,16 +5268,17 @@ export class DayTimelineView extends ItemView {
     task: Task,
     data: TaskDraft,
     dateSel: Date | null | undefined,
-    wasDone: boolean
+    wasDone: boolean,
+    before?: BattleSnapshot
   ): Promise<void> {
     // 日付が変わっていない（または欄が無い）: これまでどおり
     if (dateSel === undefined || (dateSel !== null && isSameDay(dateSel, date))) {
-      return this.commitUpdate(date, task, data, wasDone);
+      return this.commitUpdate(date, task, data, wasDone, before);
     }
     // 持ち主の変更と同時はノートをまたぐ移動が重なるため、持ち主の変更を優先する
     if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
       new Notice("持ち主と日付は同時に変えられないため、日付は変更していません");
-      return this.commitUpdate(date, task, data, wasDone);
+      return this.commitUpdate(date, task, data, wasDone, before);
     }
     if (dateSel === null) return this.commitDayToInbox(date, task, data);
     return this.commitMove(date, task, dateSel, data);
@@ -5257,15 +5364,25 @@ export class DayTimelineView extends ItemView {
     await this.reload();
   }
 
-  private async commitUpdate(date: Date, task: Task, data: TaskDraft, wasDone = task.done): Promise<void> {
+  /**
+   * @param before ボス戦の演出の基準（保存前の状態）。編集ダイアログは開いたときの写しを渡す。
+   *   省略時は task そのもの（チェック・メニューからの完了）
+   */
+  private async commitUpdate(
+    date: Date,
+    task: Task,
+    data: TaskDraft,
+    wasDone = task.done,
+    before?: BattleSnapshot
+  ): Promise<void> {
     // 持ち主が変わった場合は、別のノートへブロックごと移す
     if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
       await this.commitChangeOwner(date, task, data);
       return;
     }
     // 未完了 → 完了で未チェックのステップが残っていれば、先に確認する
-    if (this.maybeConfirmRemainingSteps(date, task, data, wasDone)) return;
-    await this.performUpdate(date, task, data, wasDone);
+    if (this.maybeConfirmRemainingSteps(date, task, data, wasDone, before)) return;
+    await this.performUpdate(date, task, data, wasDone, before);
   }
 
   /**
@@ -5273,7 +5390,13 @@ export class DayTimelineView extends ItemView {
    * 「残:」を書かずに完了にすると、日報などの下流で残件が完了扱いのまま埋もれてしまうため。
    * ダイアログを出したら true（続きは選択に応じて performUpdate / commitCarryOver が行う）
    */
-  private maybeConfirmRemainingSteps(date: Date, task: Task, data: TaskDraft, wasDone: boolean): boolean {
+  private maybeConfirmRemainingSteps(
+    date: Date,
+    task: Task,
+    data: TaskDraft,
+    wasDone: boolean,
+    before?: BattleSnapshot
+  ): boolean {
     if (!this.plugin.blockStoreFor(task.owner)) return false; // ブロック形式のみ
     if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
     const steps = data.steps ?? task.steps;
@@ -5285,14 +5408,20 @@ export class DayTimelineView extends ItemView {
     new RemainingStepsModal(this.app, {
       taskTitle: stripTags(data.title || task.title),
       steps: unchecked,
-      onComplete: (rem) => this.performUpdate(date, task, rem ? { ...data, remaining: rem } : data, wasDone),
+      onComplete: (rem) => this.performUpdate(date, task, rem ? { ...data, remaining: rem } : data, wasDone, before),
       onCarryOver: !task.forwarded ? () => this.commitCarryOver(date, task, "next-day") : undefined,
       onCarryOverSameDay: !task.forwarded ? () => this.commitCarryOver(date, task, "same-day") : undefined,
     }).open();
     return true;
   }
 
-  private async performUpdate(date: Date, task: Task, data: TaskDraft, wasDone = task.done): Promise<void> {
+  private async performUpdate(
+    date: Date,
+    task: Task,
+    data: TaskDraft,
+    wasDone = task.done,
+    before: BattleSnapshot = snapshotOf(task)
+  ): Promise<void> {
     // 未完了 → 完了で実績が空なら、自動で実績を入れる
     const auto = this.autoActual(date, task, data, wasDone);
     if (auto) data = { ...data, actual: auto };
@@ -5307,6 +5436,7 @@ export class DayTimelineView extends ItemView {
     }
     await this.reload();
     if (updated) {
+      this.playBattleFor(task, data, before, this.storeOf(task).pathFor(date));
       const prompted = this.maybePromptRetrospective(date, task, data, wasDone);
       // ふりかえりのポップアップが出ないときは、自動記録したことだけ知らせる
       if (auto && !prompted) {
@@ -5736,14 +5866,18 @@ export class DayTimelineView extends ItemView {
   private async commitInboxUpdate(task: Task, data: TaskDraft): Promise<void> {
     const inbox = this.plugin.inbox;
     if (!inbox) return;
+    const before = snapshotOf(task);
+    let updated = false;
     try {
       const ok = await inbox.update(INBOX_DATE, task, { ...data, start: null, end: null });
       if (!ok) new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
+      updated = !!ok;
     } catch (e) {
       console.error(e);
       new Notice("タスクを保存できませんでした: " + String(e));
     }
     await this.reload();
+    if (updated) this.playBattleFor(task, { ...data, start: null, end: null }, before, inbox.pathFor(INBOX_DATE));
   }
 
   private async commitInboxDelete(task: Task): Promise<void> {

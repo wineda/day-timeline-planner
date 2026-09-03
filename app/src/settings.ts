@@ -635,6 +635,14 @@ export interface DayTimelineSettings {
   summaryCollapsed: boolean;
   /** 連続達成（ストリーク）に数える1日の達成率（%）。予定時間ベース（予定の無い日は件数ベース）。0 なら連続達成を出さない */
   summaryStreakPercent: number;
+  /** プロジェクトパネルをボス戦（モンスター＋HP バー、完了時の演出）として表示するか */
+  bossBattle: boolean;
+  /** ボス戦の演出に効果音を付けるか */
+  bossBattleSound: boolean;
+  /** 予定時間の合計がこの時間以上なら中級のモンスター */
+  bossRankMidHours: number;
+  /** 予定時間の合計がこの時間以上ならボス */
+  bossRankBossHours: number;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
@@ -704,6 +712,10 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showTodaySummary: true,
   summaryCollapsed: false,
   summaryStreakPercent: 80,
+  bossBattle: true,
+  bossBattleSound: true,
+  bossRankMidHours: 10,
+  bossRankBossHours: 40,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -805,6 +817,11 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   s.summaryStreakPercent = Number.isFinite(s.summaryStreakPercent)
     ? Math.min(100, Math.max(0, Math.round(s.summaryStreakPercent)))
     : DEFAULT_SETTINGS.summaryStreakPercent;
+  if (typeof s.bossBattle !== "boolean") s.bossBattle = DEFAULT_SETTINGS.bossBattle;
+  if (typeof s.bossBattleSound !== "boolean") s.bossBattleSound = DEFAULT_SETTINGS.bossBattleSound;
+  s.bossRankMidHours = Number.isFinite(s.bossRankMidHours) && s.bossRankMidHours >= 0 ? s.bossRankMidHours : DEFAULT_SETTINGS.bossRankMidHours;
+  s.bossRankBossHours =
+    Number.isFinite(s.bossRankBossHours) && s.bossRankBossHours >= 0 ? s.bossRankBossHours : DEFAULT_SETTINGS.bossRankBossHours;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   s.settingsVersion = SETTINGS_VERSION;
@@ -1592,6 +1609,57 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             s.summaryStreakPercent = v;
             await save();
+          })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトをボス戦として表示")
+      .setDesc(
+        "プロジェクトパネルの各行にモンスターと HP バーを出します。HP は子タスクの予定時間の合計で、ステップをチェックすると小さな一撃、" +
+          "タスクを完了にすると大きな一撃、最後のタスクを完了すると討伐の演出が入ります。モンスターはプロジェクト名から自動で決まり、" +
+          "プロジェクトノートに「- モンスター: ドラゴン」の行を書けば選べます。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.bossBattle).onChange(async (v) => {
+          s.bossBattle = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("ボス戦の効果音")
+      .setDesc("一撃と討伐のときに短い打撃音を鳴らします。")
+      .addToggle((t) =>
+        t.setValue(s.bossBattleSound).onChange(async (v) => {
+          s.bossBattleSound = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("中級・ボスになる予定時間")
+      .setDesc(
+        "子タスクの予定時間の合計（時間）がこの値以上なら中級（★★）・ボス（★★★）のモンスターになります。それ未満は雑魚（★）。時刻の無いタスクは「既定の長さ」で数えます。"
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("中級 10")
+          .setValue(String(s.bossRankMidHours))
+          .onChange(async (v) => {
+            const n = Number(v);
+            if (Number.isFinite(n) && n >= 0) {
+              s.bossRankMidHours = n;
+              await save();
+            }
+          })
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("ボス 40")
+          .setValue(String(s.bossRankBossHours))
+          .onChange(async (v) => {
+            const n = Number(v);
+            if (Number.isFinite(n) && n >= 0) {
+              s.bossRankBossHours = n;
+              await save();
+            }
           })
       );
     new Setting(containerEl)
