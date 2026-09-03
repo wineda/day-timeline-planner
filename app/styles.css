@@ -795,16 +795,15 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* 子タスクのタグ: タイムラインと同じ色の枠 + 左の帯（塗りつぶすと行が重くなるので枠だけ） */
+/* 子タスクのタグ: タイムラインと同じ色の均一な枠と文字（日付バッジと同じ形。塗りつぶし・帯は付けない） */
 .dt-project-child-tag {
   flex: 0 1 auto;
   max-width: 40%;
-  padding: 0 5px 0 7px;
-  border: 1px solid var(--dt-chip-color, var(--background-modifier-border));
-  border-radius: var(--radius-l);
-  box-shadow: inset 3px 0 0 var(--dt-chip-color, transparent);
-  color: var(--text-muted);
-  font-size: 0.82em;
+  padding: 0 4px;
+  border: 1px solid var(--dt-chip-color, var(--text-faint));
+  border-radius: var(--radius-s);
+  color: var(--dt-chip-color, var(--text-muted));
+  font-size: 0.9em;
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
