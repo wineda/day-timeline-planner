@@ -74,7 +74,10 @@ let petPos: PetPosition | null = null;
 let sound = false;
 
 const page = (document.querySelector<HTMLElement>(".mock-root") ?? document.body).createDiv("mock-page");
-page.createEl("h1", { text: "ペットの演出モック" });
+const h1 = page.createEl("h1");
+const h1mon = h1.createSpan("mock-h1-mon");
+h1mon.innerHTML = monsterSVG(monsterOf(soloSummary(makeTask("h", "ペットの演出モック", 45, []), "x", null), rules), 1, 28);
+h1.createSpan({ text: "ペットの演出モック" });
 const lead = page.createEl("p", { cls: "mock-lead" });
 lead.innerHTML =
   "「編集」でダイアログを開き、<b>ステップにチェック</b>を入れるか<b>完了</b>にして保存すると、右下のペットがゆっくり中央へ来て一撃を受けます。" +
@@ -100,6 +103,7 @@ bar.createSpan({ text: "ランク: 1 時間以内 = 雑魚 / 3 時間以内 = �
 
 const listEl = page.createDiv("mock-tasks");
 const logEl = page.createDiv("mock-log");
+logEl.createDiv({ cls: "mock-log-title", text: "ログ" });
 
 function log(text: string, head = false): void {
   const t = new Date();
@@ -130,11 +134,13 @@ function render(): void {
     const icon = row.createDiv("mock-task-mon");
     icon.innerHTML = monsterSVG(mon, hpRatio(hp), 30);
     const body = row.createDiv("mock-task-body");
-    body.createDiv({ cls: "mock-task-title", text: t.title });
+    const titleEl = body.createDiv("mock-task-title");
+    titleEl.createSpan({ cls: "mock-task-rank", text: `${mon.rank} ${"★".repeat(mon.rank === "雑魚" ? 1 : mon.rank === "中級" ? 2 : 3)}` });
+    titleEl.createSpan({ text: t.title });
     const done = t.steps.filter((s) => s.done).length;
     body.createDiv({
       cls: "mock-task-meta",
-      text: `${mon.rank} ${mon.name} · 予定 ${hmm(t.end! - t.start!)} · HP ${hmm(hp.remain)} / ${hmm(hp.total)}` +
+      text: `${mon.name} · 予定 ${hmm(t.end! - t.start!)} · HP ${hmm(hp.remain)} / ${hmm(hp.total)}` +
         (t.steps.length ? ` · ステップ ${done}/${t.steps.length}` : " · ステップなし") +
         (m === focus ? " · ペットの相手" : ""),
     });

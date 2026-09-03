@@ -1,4 +1,5 @@
 <title>ペットの演出モック</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">
 <style>
 /* ===== Day Timeline Planner ===== */
 
@@ -5211,18 +5212,19 @@ body.is-mobile .modal.dt-modal .modal-content {
   }
 }
 
-/* Obsidian のテーマ変数の代わり（ライト） */
+/* モックの見た目: ドット絵のモンスターに合わせ、見出しだけドットフォント。本文は角ゴシック。
+   Obsidian のテーマ変数の代わりもここで定義する（ライト / ダーク） */
 :root {
-  --background-primary: #ffffff;
-  --background-secondary: #f5f5f7;
-  --background-modifier-border: #d9d9de;
-  --background-modifier-hover: #ececf1;
-  --text-normal: #202024;
-  --text-muted: #6b6b75;
-  --text-accent: #6c5ce7;
-  --interactive-accent: #6c5ce7;
+  --background-primary: #fbfaf7;
+  --background-secondary: #f1efe9;
+  --background-modifier-border: #d8d4c8;
+  --background-modifier-hover: #e8e4da;
+  --text-normal: #26241f;
+  --text-muted: #6f6a5e;
+  --text-accent: #4f5fb8;
+  --interactive-accent: #4f5fb8;
   --radius-s: 6px;
-  --shadow-s: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --shadow-s: 0 2px 8px rgba(40, 35, 20, 0.12);
   --font-ui-small: 13px;
   --font-ui-smaller: 12px;
   --color-red: #c04545;
@@ -5231,30 +5233,38 @@ body.is-mobile .modal.dt-modal .modal-content {
   --color-orange: #e07a2f;
   --layer-notice: 60;
   --layer-popover: 30;
+  --mock-display: "DotGothic16", "Zen Kaku Gothic New", "Hiragino Sans", sans-serif;
+  --mock-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --background-primary: #1e1e22;
-    --background-secondary: #2a2a30;
-    --background-modifier-border: #3d3d45;
-    --background-modifier-hover: #34343c;
-    --text-normal: #e6e6ea;
-    --text-muted: #9a9aa5;
+    --background-primary: #1d1c1a;
+    --background-secondary: #292826;
+    --background-modifier-border: #3f3d38;
+    --background-modifier-hover: #34322e;
+    --text-normal: #ebe8e1;
+    --text-muted: #a19c90;
+    --text-accent: #9aa6ea;
+    --interactive-accent: #6b7bd6;
+    --shadow-s: 0 2px 8px rgba(0, 0, 0, 0.45);
   }
 }
 :root[data-theme="dark"] {
-  --background-primary: #1e1e22;
-  --background-secondary: #2a2a30;
-  --background-modifier-border: #3d3d45;
-  --background-modifier-hover: #34343c;
-  --text-normal: #e6e6ea;
-  --text-muted: #9a9aa5;
+  --background-primary: #1d1c1a;
+  --background-secondary: #292826;
+  --background-modifier-border: #3f3d38;
+  --background-modifier-hover: #34322e;
+  --text-normal: #ebe8e1;
+  --text-muted: #a19c90;
+  --text-accent: #9aa6ea;
+  --interactive-accent: #6b7bd6;
+  --shadow-s: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
 body {
   margin: 0;
   background: var(--background-primary);
   color: var(--text-normal);
-  font: 14px/1.5 -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font: 14px/1.6 var(--mock-body);
 }
 .mock-page {
   max-width: 720px;
@@ -5262,12 +5272,29 @@ body {
   padding: 24px 20px 120px;
 }
 .mock-page h1 {
-  font-size: 18px;
-  margin: 0 0 4px;
+  font-family: var(--mock-display);
+  font-weight: 400;
+  font-size: 26px;
+  letter-spacing: 0.02em;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+.mock-page h1 .mock-h1-mon {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  vertical-align: -6px;
+  margin-right: 8px;
+  line-height: 0;
+}
+.mock-page h1 .mock-h1-mon svg {
+  width: 100%;
+  height: 100%;
 }
 .mock-lead {
   color: var(--text-muted);
   font-size: 13px;
+  max-width: 62ch;
   margin: 0 0 18px;
 }
 .mock-lead b {
@@ -5312,7 +5339,14 @@ body {
   min-width: 0;
 }
 .mock-task-title {
-  font-weight: 600;
+  font-weight: 700;
+}
+.mock-task-rank {
+  font-family: var(--mock-display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-accent);
+  margin-right: 6px;
 }
 .mock-task-meta {
   font-size: 12px;
@@ -5364,8 +5398,31 @@ body {
 }
 .mock-log .is-head {
   color: var(--text-normal);
-  font-weight: 600;
+  font-weight: 700;
   margin-top: 8px;
+}
+.mock-log-title {
+  font-family: var(--mock-display);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.mock-dialog h2 {
+  font-family: var(--mock-display);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-pet.is-traveling {
+    transition-duration: 0.01s;
+  }
 }
 
 /* 編集ダイアログの模型 */
@@ -7076,7 +7133,10 @@ body {
   var sound = false;
   var _a;
   var page = ((_a = document.querySelector(".mock-root")) != null ? _a : document.body).createDiv("mock-page");
-  page.createEl("h1", { text: "\u30DA\u30C3\u30C8\u306E\u6F14\u51FA\u30E2\u30C3\u30AF" });
+  var h1 = page.createEl("h1");
+  var h1mon = h1.createSpan("mock-h1-mon");
+  h1mon.innerHTML = monsterSVG(monsterOf(soloSummary(makeTask("h", "\u30DA\u30C3\u30C8\u306E\u6F14\u51FA\u30E2\u30C3\u30AF", 45, []), "x", null), rules), 1, 28);
+  h1.createSpan({ text: "\u30DA\u30C3\u30C8\u306E\u6F14\u51FA\u30E2\u30C3\u30AF" });
   var lead = page.createEl("p", { cls: "mock-lead" });
   lead.innerHTML = "\u300C\u7DE8\u96C6\u300D\u3067\u30C0\u30A4\u30A2\u30ED\u30B0\u3092\u958B\u304D\u3001<b>\u30B9\u30C6\u30C3\u30D7\u306B\u30C1\u30A7\u30C3\u30AF</b>\u3092\u5165\u308C\u308B\u304B<b>\u5B8C\u4E86</b>\u306B\u3057\u3066\u4FDD\u5B58\u3059\u308B\u3068\u3001\u53F3\u4E0B\u306E\u30DA\u30C3\u30C8\u304C\u3086\u3063\u304F\u308A\u4E2D\u592E\u3078\u6765\u3066\u4E00\u6483\u3092\u53D7\u3051\u307E\u3059\u3002\u307E\u3060\u6B8B\u3063\u3066\u3044\u308C\u3070\u5143\u306E\u4F4D\u7F6E\u3078\u623B\u308A\u3001\u5B8C\u4E86\u306A\u3089\u8A0E\u4F10\u3057\u3066\u6D88\u3048\u3001\u6B21\u306E\u30BF\u30B9\u30AF\u306E\u30E2\u30F3\u30B9\u30BF\u30FC\u304C\u5143\u306E\u4F4D\u7F6E\u306B\u73FE\u308C\u307E\u3059\u3002\u30DA\u30C3\u30C8\u306F\u30C9\u30E9\u30C3\u30B0\u3067\u52D5\u304B\u305B\u307E\u3059\uFF08\u4F4D\u7F6E\u306F\u8A18\u61B6\uFF09\u3002";
   var bar = page.createDiv("mock-bar");
@@ -7098,6 +7158,7 @@ body {
   bar.createSpan({ text: "\u30E9\u30F3\u30AF: 1 \u6642\u9593\u4EE5\u5185 = \u96D1\u9B5A / 3 \u6642\u9593\u4EE5\u5185 = \u4E2D\u7D1A / \u305D\u308C\u4EE5\u4E0A = \u30DC\u30B9" });
   var listEl = page.createDiv("mock-tasks");
   var logEl = page.createDiv("mock-log");
+  logEl.createDiv({ cls: "mock-log-title", text: "\u30ED\u30B0" });
   function log(text, head = false) {
     const t = /* @__PURE__ */ new Date();
     const hh = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
@@ -7125,11 +7186,13 @@ body {
       const icon = row.createDiv("mock-task-mon");
       icon.innerHTML = monsterSVG(mon, hpRatio(hp), 30);
       const body = row.createDiv("mock-task-body");
-      body.createDiv({ cls: "mock-task-title", text: t.title });
+      const titleEl = body.createDiv("mock-task-title");
+      titleEl.createSpan({ cls: "mock-task-rank", text: `${mon.rank} ${"\u2605".repeat(mon.rank === "\u96D1\u9B5A" ? 1 : mon.rank === "\u4E2D\u7D1A" ? 2 : 3)}` });
+      titleEl.createSpan({ text: t.title });
       const done = t.steps.filter((s) => s.done).length;
       body.createDiv({
         cls: "mock-task-meta",
-        text: `${mon.rank} ${mon.name} \xB7 \u4E88\u5B9A ${hmm2(t.end - t.start)} \xB7 HP ${hmm2(hp.remain)} / ${hmm2(hp.total)}` + (t.steps.length ? ` \xB7 \u30B9\u30C6\u30C3\u30D7 ${done}/${t.steps.length}` : " \xB7 \u30B9\u30C6\u30C3\u30D7\u306A\u3057") + (m === focus ? " \xB7 \u30DA\u30C3\u30C8\u306E\u76F8\u624B" : "")
+        text: `${mon.name} \xB7 \u4E88\u5B9A ${hmm2(t.end - t.start)} \xB7 HP ${hmm2(hp.remain)} / ${hmm2(hp.total)}` + (t.steps.length ? ` \xB7 \u30B9\u30C6\u30C3\u30D7 ${done}/${t.steps.length}` : " \xB7 \u30B9\u30C6\u30C3\u30D7\u306A\u3057") + (m === focus ? " \xB7 \u30DA\u30C3\u30C8\u306E\u76F8\u624B" : "")
       });
       const btn = row.createEl("button", { text: "\u7DE8\u96C6" });
       btn.addEventListener("click", () => openDialog(m));

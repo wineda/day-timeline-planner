@@ -21,7 +21,9 @@ const result = await esbuild.build({
 const js = result.outputFiles[0].text;
 const css = readFileSync(resolve(app, "styles.css"), "utf8") + "\n" + readFileSync(resolve(here, "mock.css"), "utf8");
 const html =
-  `<title>ペットの演出モック</title>\n<style>\n${css}\n</style>\n` +
+  `<title>ペットの演出モック</title>\n` +
+  `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">\n` +
+  `<style>\n${css}\n</style>\n` +
   // body ができてからスクリプトを動かす（head の中で実行されると document.body が無い）
   `<div class="mock-root"></div>\n<script>\n${js.replace(/<\/script/g, "<\\/script")}\n</script>\n`;
 writeFileSync(resolve(out, "pet-mock.html"), html);
