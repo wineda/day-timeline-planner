@@ -1615,29 +1615,20 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
-/* 日付ヘッダーの予実合計。背景のピルは付けず、実績と差異「14.1 +1.6」を小さな1行に、
-   その下に予定に対する実績の割合を示す細いバーを置く（超過は赤）。
-   予定の時間そのものは幅を取るので出さない。列が狭ければ差異が2行目へ折り返す */
+/* 日付ヘッダーの予実合計。背景のピルやバーは付けず、実績と差異「14.1 +1.6」を
+   小さな1行で出すだけ（超過は赤）。予定の時間そのものは幅を取るので出さない */
 .dt-day-total {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  width: 100%; /* 数字が無い日（バーだけ）でもバーが列幅に広がるように */
+  align-items: baseline;
+  justify-content: center;
+  column-gap: 5px;
+  max-width: 100%;
   min-width: 0;
+  white-space: nowrap;
   font-size: 0.72em;
   line-height: 1.2;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-}
-.dt-day-total .dt-day-total-line {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: baseline;
-  column-gap: 5px;
-  row-gap: 1px;
-  max-width: 100%;
 }
 .dt-day-total .dt-day-total-act {
   color: var(--text-normal);
@@ -1646,26 +1637,9 @@
 }
 .dt-day-total .dt-day-total-diff {
   font-size: 0.9em;
-  white-space: nowrap;
 }
 .dt-day-total .dt-day-total-diff.is-over {
   color: var(--color-red);
-}
-.dt-day-total .dt-day-total-bar {
-  width: 100%;
-  max-width: 56px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--background-modifier-border);
-  overflow: hidden;
-}
-.dt-day-total .dt-day-total-bar > div {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--interactive-accent);
-}
-.dt-day-total .dt-day-total-bar > div.is-over {
-  background: var(--color-red);
 }
 
 .dt-day-header.is-other-month .dt-day-header-num {
@@ -3941,7 +3915,7 @@ body.is-mobile .dt-project-group-count {
 }
 
 /* スマホの日付ヘッダー: 列が狭く縦の場所も貴重なので、
-   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実の数字とバーは一段小さく。
+   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実の数字は一段小さく。
    （タブレットは列が広いのでデスクトップと同じ縦積みのまま） */
 body.is-phone .dt-day-header {
   padding: 4px 1px 5px;
@@ -3964,21 +3938,13 @@ body.is-phone .dt-day-header-num {
   line-height: 24px;
   font-size: 13px;
 }
+/* 狭い列でも「14.1 +1.6」が1行に収まるよう、実績の文字を差異と同じ大きさにして間を詰める */
 body.is-phone .dt-day-total {
   font-size: 0.66em;
-  gap: 2px;
+  column-gap: 2px;
 }
-body.is-phone .dt-day-total .dt-day-total-line {
-  column-gap: 3px;
-}
-/* 差異は必ず2行目に置く（列によって1行に収まったり折り返したりすると、
-   隣の列とバーの高さがずれて見えるため） */
-body.is-phone .dt-day-total .dt-day-total-diff {
-  flex-basis: 100%;
-  text-align: center;
-}
-body.is-phone .dt-day-total .dt-day-total-bar {
-  max-width: 40px;
+body.is-phone .dt-day-total .dt-day-total-act {
+  font-size: 1em;
 }
 
 /* 週表示・月表示は 7 列で 1 マスが狭いので、上の基準サイズ引き上げの対象から
