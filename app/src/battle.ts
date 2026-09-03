@@ -194,6 +194,8 @@ export interface BattleStageOptions {
   anchor: HTMLElement | null;
   /** ビューの内容（行が見えているかの判定と、隅に出すときの位置に使う） */
   host: HTMLElement;
+  /** 一撃ごとに呼ぶ（ペットを合わせて動かす） */
+  onHit?: (kind: "small" | "big" | "kill") => void;
 }
 
 /**
@@ -277,6 +279,7 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     replay(slashS, "is-on");
     pop(`−${hmm(ev.smallDamage)}`, false);
     if (o.sound) hitSound("small");
+    o.onHit?.("small");
     draw();
     await wait(110);
   }
@@ -289,6 +292,7 @@ export async function playBattle(o: BattleStageOptions): Promise<void> {
     replay(slashC, "is-on");
     pop(`−${hmm(ev.bigDamage)}`, true);
     if (o.sound) hitSound(kill ? "kill" : "big");
+    o.onHit?.(kill ? "kill" : "big");
     draw(kill ? 0.05 : undefined);
   }
   if (kill) {

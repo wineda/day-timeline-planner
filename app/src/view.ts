@@ -63,6 +63,7 @@ import {
   MIN_HOUR_HEIGHT,
   type Member,
   type PlanActualMode,
+  type ProjectsFilter,
   type SidebarTab,
   type ViewMode,
 } from "./settings";
@@ -82,6 +83,7 @@ import {
   type BattleSnapshot,
 } from "./battle";
 import { monsterSVG } from "./bestiary";
+import { PetWidget, type PetInfo } from "./pet";
 import {
   addDays,
   clamp,
@@ -258,6 +260,8 @@ export class DayTimelineView extends ItemView {
   private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
   /** サイドバーの下の「本日のサマリー」の器。出していないときは null */
   private summaryEl: HTMLElement | null = null;
+  /** ペット（対応中のプロジェクトのモンスター）。設定でオフなら null */
+  private pet: PetWidget | null = null;
   /** プロジェクトの集計（パネル用のキャッシュ） */
   private projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
@@ -410,6 +414,8 @@ export class DayTimelineView extends ItemView {
   async onClose(): Promise<void> {
     this.closeMemoPopover();
     DropdownMenu.closeAll();
+    this.pet?.destroy();
+    this.pet = null;
     this.contentEl.empty();
   }
 
@@ -1627,6 +1633,7 @@ export class DayTimelineView extends ItemView {
     // 本日のサマリーも同じタイミング（計測の開始・終了、30 秒ごと）で描き直す。
     // 「いま / 次」のタスクと計測ボタンの状態が時刻・計測状態で変わるため
     this.renderSummary();
+    this.updatePet();
     if (!this.trackingEl) return;
     const tr = this.plugin.settings.tracking;
     this.trackingEl.toggleClass("is-visible", !!tr);
@@ -1721,6 +1728,7 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const inbox = this.plugin.inbox;
     this.inboxEl.empty();
+    this.updatePet(); // パネルと同じデータ（今日のタスク・プロジェクトの集計）で描き直す
     const showInbox = !!inbox && s.showInbox;
     const showProjects = !!this.plugin.projects && s.showProjects;
     const reschedule = this.rescheduleGroups();
@@ -1990,6 +1998,24 @@ export class DayTimelineView extends ItemView {
   }
 
   /** プロジェクト一覧をグループごとのツリー ⇄ 階層なしのフラットな一覧で切り替える（パネルのボタン・コマンドから） */
+  /** プロジェクト一覧の絞り込み（すべて ⇄ 本日タスクあり）を切り替える（パネルの切替・コマンドから） */
+  toggleProjectsFilter(): void {
+    this.setProjectsFilter(this.plugin.settings.projectsFilter === "today" ? "all" : "today");
+  }
+
+  private setProjectsFilter(f: ProjectsFilter): void {
+    if (this.plugin.settings.projectsFilter === f) return;
+    this.plugin.settings.projectsFilter = f;
+    void this.plugin.persistSettings();
+    this.renderInbox();
+  }
+
+  /** そのプロジェクトに今日のタスク（自分・メンバー問わず）があるか */
+  private projectHasToday(sum: ProjectSummary): boolean {
+    const today = startOfDay(new Date());
+    return sum.children.some((c) => c.date !== null && isSameDay(c.date, today));
+  }
+
   toggleProjectsFlatList(): void {
     this.plugin.settings.projectsFlatList = !this.plugin.settings.projectsFlatList;
     void this.plugin.persistSettings();
@@ -2067,16 +2093,36 @@ export class DayTimelineView extends ItemView {
 
   /** プロジェクトのタブの中身（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない。
    * ⋮（ケバブ）メニューはパネルのヘッダー側に出る */
-  private renderProjects(active: ProjectSummary[]): void {
-    const hiddenDone = this.projectData.length - active.length;
+  private renderProjects(all: ProjectSummary[]): void {
+    const hiddenDone = this.projectData.length - all.length;
     const wrap = this.inboxEl.createDiv("dt-projects");
+    // 絞り込みの切替（すべて / 本日タスクあり）。よく使うので ⋮ メニューではなく一覧の上に出す
+    const filter = this.plugin.settings.projectsFilter;
+    const todayOnes = all.filter((s) => this.projectHasToday(s));
+    if (all.length) {
+      const seg = wrap.createDiv("dt-projects-filter");
+      seg.setAttr("role", "tablist");
+      const chip = (id: ProjectsFilter, label: string, count: number, tip: string) => {
+        const b = seg.createEl("button", { cls: "dt-projects-filter-chip", text: label });
+        b.createSpan({ cls: "dt-projects-filter-count", text: String(count) });
+        b.toggleClass("is-active", filter === id);
+        b.setAttr("aria-pressed", String(filter === id));
+        b.setAttr("aria-label", tip);
+        b.addEventListener("click", () => this.setProjectsFilter(id));
+      };
+      chip("all", "すべて", all.length, "進行中のプロジェクトをすべて表示");
+      chip("today", "本日", todayOnes.length, "今日のタスクがあるプロジェクトだけを表示");
+    }
+    const active = filter === "today" ? todayOnes : all;
     const list = wrap.createDiv("dt-projects-list");
     if (!active.length) {
       list.createSpan({
         cls: "dt-tray-empty",
-        text: hiddenDone
-          ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
-          : "上の ⋮ メニューの「新しいプロジェクトを作成」、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
+        text: all.length
+          ? "今日のタスクがあるプロジェクトはありません（「すべて」で全部を表示）。"
+          : hiddenDone
+            ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
+            : "上の ⋮ メニューの「新しいプロジェクトを作成」、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
       });
       return;
     }
@@ -2365,15 +2411,15 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     if (!s.bossBattle || !s.showProjects) return;
     const link = data.project !== undefined ? data.project : task.project;
-    if (!link) return;
-    const dest = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
-    const key = dest?.path ?? link + ".md";
-    const sum = this.projectData.find((x) => !x.done && x.ref.linktext + ".md" === key);
+    const sum = this.projectSummaryFor(link, sourcePath);
     if (!sum) return;
     const rules = this.battleRules();
     const ev = battleEvent(before, task, data, rules);
     if (!ev.smallHits && !ev.bigDamage) return;
-    const anchor = this.inboxEl?.querySelector<HTMLElement>(`.dt-project-row[data-dt-project="${CSS.escape(sum.ref.linktext)}"]`) ?? null;
+    const anchor =
+      this.inboxEl?.querySelector<HTMLElement>(`.dt-project-row[data-dt-project="${CSS.escape(sum.ref.linktext)}"]`) ??
+      null;
+    const petSame = this.petInfo?.projectLink === sum.ref.linktext;
     void playBattle({
       monster: monsterOf(sum, rules),
       title: sum.ref.name,
@@ -2383,7 +2429,89 @@ export class DayTimelineView extends ItemView {
       sound: s.bossBattleSound,
       anchor,
       host: this.contentEl,
+      onHit: petSame ? (kind) => this.pet?.react(kind) : undefined,
     });
+  }
+
+  /** タスクのプロジェクトリンクを、パネルの集計（projectData）の1件に照合する。進行中のものだけ */
+  private projectSummaryFor(link: string | null | undefined, sourcePath: string): ProjectSummary | null {
+    if (!link) return null;
+    const dest = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
+    const key = dest?.path ?? link + ".md";
+    return this.projectData.find((x) => !x.done && x.ref.linktext + ".md" === key) ?? null;
+  }
+
+  // ---------- ペット（対応中のプロジェクトのモンスター） ----------
+
+  /** いまペットが表しているもの（演出の照合に使う） */
+  private petInfo: PetInfo | null = null;
+
+  /**
+   * ペットの対象: 計測中のタスク → 今日の「いま / 次 / 未了 / 未定」のうちプロジェクトに結びついたもの。
+   * 見つからなければ null（ペットは出さない）
+   */
+  private petTarget(): { date: Date; task: Task; label: string } | null {
+    const tr = this.plugin.settings.tracking;
+    if (tr) {
+      const date = parseDateKey(tr.date);
+      const t = date ? this.tasksOn(date)?.find((x) => x.blockId === tr.blockId && (x.owner ?? null) === tr.owner) : null;
+      if (date && t && t.project) return { date, task: t, label: "計測中" };
+    }
+    const today = startOfDay(new Date());
+    const all = this.tasksOn(today) ?? [];
+    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded && !!t.project);
+    const pick = this.pickFocusTask(undone);
+    return pick ? { date: today, task: pick.task, label: pick.label } : null;
+  }
+
+  /** ペットを描き直す（再読み込み・30 秒ごと・計測の開始と終了で呼ぶ） */
+  private updatePet(): void {
+    const s = this.plugin.settings;
+    if (!s.petEnabled || !s.bossBattle || !s.showProjects || !this.plugin.projects) {
+      this.pet?.destroy();
+      this.pet = null;
+      this.petInfo = null;
+      return;
+    }
+    const target = this.petTarget();
+    const sum = target ? this.projectSummaryFor(target.task.project, this.storeOf(target.task).pathFor(target.date)) : null;
+    if (!target || !sum) {
+      this.petInfo = null;
+      this.pet?.update(null);
+      return;
+    }
+    const rules = this.battleRules();
+    const info: PetInfo = {
+      monster: monsterOf(sum, rules),
+      hp: projectHp(sum, rules),
+      projectLink: sum.ref.linktext,
+      projectName: sum.ref.name,
+      taskTitle: this.displayTitle(target.task),
+      label: target.label,
+    };
+    this.petInfo = info;
+    if (!this.pet) {
+      this.pet = new PetWidget({
+        getPosition: () => this.plugin.settings.petPos,
+        setPosition: (p) => {
+          this.plugin.settings.petPos = p;
+          void this.plugin.persistSettings();
+        },
+        onClick: () => {
+          const t = this.petTarget();
+          if (t) this.openEditModal(t.date, t.task);
+        },
+        onOpenProject: () => {
+          if (this.petInfo) void this.plugin.openProject(this.petInfo.projectLink);
+        },
+        onHide: () => {
+          this.plugin.settings.petEnabled = false;
+          void this.plugin.persistSettings();
+          this.updatePet();
+        },
+      });
+    }
+    this.pet.update(info);
   }
 
   /**
@@ -3213,33 +3341,27 @@ export class DayTimelineView extends ItemView {
    * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
    * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
    */
-  private renderSummaryNext(parent: HTMLElement, today: Date, all: Task[]): void {
-    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded);
-    if (!undone.length) return;
+  /**
+   * 今日の未完了タスクから「いま取り組む1件」を選ぶ: 現在時刻にかかっているもの → これから始まるもの →
+   * 時刻を過ぎて残っているもの → 時刻未定、の順（サマリーの「いま / 次」とペットで共用）
+   */
+  private pickFocusTask(undone: Task[]): { task: Task; label: string; kind: string } | null {
+    if (!undone.length) return null;
     const now = nowMinutes();
     const scheduled = undone.filter(isScheduled).sort((a, b) => a.start - b.start || a.end - b.end);
-    let task: Task;
-    let label: string;
-    let kind: string;
     const current = scheduled.find((t) => t.start <= now && now < t.end);
     const upcoming = scheduled.find((t) => t.start > now);
-    if (current) {
-      task = current;
-      label = "いま";
-      kind = "now";
-    } else if (upcoming) {
-      task = upcoming;
-      label = "次";
-      kind = "next";
-    } else if (scheduled.length) {
-      task = scheduled[0];
-      label = "未了";
-      kind = "overdue";
-    } else {
-      task = undone[0];
-      label = "未定";
-      kind = "unscheduled";
-    }
+    if (current) return { task: current, label: "いま", kind: "now" };
+    if (upcoming) return { task: upcoming, label: "次", kind: "next" };
+    if (scheduled.length) return { task: scheduled[0], label: "未了", kind: "overdue" };
+    return { task: undone[0], label: "未定", kind: "unscheduled" };
+  }
+
+  private renderSummaryNext(parent: HTMLElement, today: Date, all: Task[]): void {
+    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded);
+    const pick = this.pickFocusTask(undone);
+    if (!pick) return;
+    const { task, label, kind } = pick;
     const t = task;
     const row = parent.createDiv("dt-summary-next");
     row.addClass(`is-${kind}`);
@@ -6001,6 +6123,14 @@ export class DayTimelineView extends ItemView {
 /** 分を "6:30" のような時:分表示に（日ヘッダーの予実合計用） */
 function hmm(min: number): string {
   return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+}
+
+/** "YYYY-MM-DD" の日付キーを Date に戻す（読めなければ null） */
+function parseDateKey(key: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 /** 分を "6.5" のような小数1桁の時間表示に（日ヘッダーの予実合計用）。"9.0" は "9" に詰める */

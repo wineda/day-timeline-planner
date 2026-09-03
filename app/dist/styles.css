@@ -5022,3 +5022,122 @@ body.is-mobile .modal.dt-modal .modal-content {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* プロジェクト一覧の絞り込み（すべて / 本日）。よく使うので ⋮ メニューではなく一覧の上に出す */
+.dt-projects-filter {
+  display: flex;
+  gap: 4px;
+  padding: 4px 4px 2px;
+}
+.dt-projects-filter-chip {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 11px;
+  box-shadow: none;
+  cursor: pointer;
+}
+.dt-projects-filter-chip:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.dt-projects-filter-chip.is-active {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  font-weight: 600;
+}
+.dt-projects-filter-count {
+  font-size: 10px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ペット: いま対応中のタスクのプロジェクトのモンスター。画面のどこにでも置ける */
+.dt-pet {
+  position: fixed;
+  z-index: var(--layer-popover, 30);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.dt-pet.is-dragging {
+  cursor: grabbing;
+}
+.dt-pet-sprite {
+  line-height: 0;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+  animation: dt-pet-bob 2.4s ease-in-out infinite;
+}
+.dt-pet-sprite svg {
+  width: 100%;
+  height: 100%;
+}
+.dt-pet-sprite.is-flinch {
+  animation: dt-battle-flinch 0.14s ease-out;
+}
+.dt-pet-sprite.is-shake {
+  animation: dt-battle-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+.dt-pet-bubble {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, 4px);
+  min-width: 140px;
+  max-width: 240px;
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.dt-pet:hover .dt-pet-bubble,
+.dt-pet.is-dragging .dt-pet-bubble {
+  opacity: 1;
+  transform: translate(-50%, -2px);
+}
+.dt-pet-bubble-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-pet-bubble-project {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes dt-pet-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-pet-sprite,
+  .dt-pet-sprite.is-flinch,
+  .dt-pet-sprite.is-shake {
+    animation: none;
+  }
+}
