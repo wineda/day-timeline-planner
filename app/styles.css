@@ -4659,3 +4659,340 @@ body.is-mobile .modal.dt-modal .modal-content {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* ===========================================================================
+   プロジェクト＝ボス戦（設定「プロジェクトをボス戦として表示」）
+   行の左にモンスター、右を「名前の行」と「HP バーの行」の2段にする。
+   演出（一撃・討伐）は行を作り直しても途切れないよう、ビューに重ねた .dt-battle で再生する
+   =========================================================================== */
+.dt-project-row.is-boss {
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px;
+}
+.dt-boss-sprite {
+  flex: 0 0 auto;
+  line-height: 0;
+  align-self: flex-end;
+}
+.dt-boss-sprite svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.dt-boss-sprite.is-small {
+  width: 20px;
+  height: 20px;
+  align-self: center;
+  margin-right: 2px;
+}
+.dt-boss-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dt-boss-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.dt-boss-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.dt-boss-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-green, #4caf50);
+  transition: width 0.25s ease;
+}
+.dt-boss-fill.is-mid {
+  background: var(--color-yellow, #e0a800);
+}
+.dt-boss-fill.is-low {
+  background: var(--color-red, #c04545);
+}
+.dt-boss-hpt {
+  flex: 0 0 auto;
+  font-size: 0.7em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dt-boss-hp.is-dead .dt-boss-hpt {
+  color: var(--color-yellow, #e0a800);
+}
+
+/* --- 演出のオーバーレイ --- */
+.dt-battle {
+  position: fixed;
+  z-index: var(--layer-notice, 60);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  box-sizing: border-box;
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  pointer-events: none;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  transition: opacity 0.3s ease;
+}
+.dt-battle.is-floating {
+  min-height: 60px;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+  padding: 8px 10px;
+}
+.dt-battle.is-out {
+  opacity: 0;
+}
+.dt-battle.is-shake {
+  animation: dt-battle-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+.dt-battle-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff3b0;
+  opacity: 0;
+  pointer-events: none;
+}
+.dt-battle-flash.is-on {
+  animation: dt-battle-flash 0.28s ease-out;
+}
+.dt-battle-mon-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.dt-battle-mon {
+  line-height: 0;
+  transform-origin: 50% 50%;
+}
+.dt-battle-mon svg {
+  display: block;
+}
+.dt-battle-mon.is-flinch {
+  animation: dt-battle-flinch 0.14s ease-out;
+}
+.dt-battle-mon.is-tremble {
+  animation: dt-battle-tremble 0.05s linear 18;
+}
+.dt-battle-mon.is-fall {
+  animation: dt-battle-fall 0.55s cubic-bezier(0.3, 1.4, 0.6, 1) forwards;
+}
+.dt-battle-slash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 120%;
+  height: 4px;
+  margin-left: -60%;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, #fff 30%, #fff 70%, transparent);
+  filter: drop-shadow(0 0 3px #fff);
+  opacity: 0;
+  transform: rotate(-35deg) scaleX(0);
+}
+.dt-battle-slash.is-on {
+  animation: dt-battle-slash 0.22s ease-out;
+}
+.dt-battle-slash.is-big {
+  height: 7px;
+  margin-top: -3px;
+  width: 150%;
+  margin-left: -75%;
+  background: linear-gradient(90deg, transparent, #fff3b0 25%, #fff 50%, #fff3b0 75%, transparent);
+}
+.dt-battle-slash.is-big.is-on {
+  animation: dt-battle-slash-big 0.34s ease-out;
+}
+.dt-battle-slash.is-big.is-cross {
+  transform: rotate(35deg) scaleX(0);
+}
+.dt-battle-slash.is-big.is-cross.is-on {
+  animation: dt-battle-slash-cross 0.34s ease-out 0.06s;
+}
+.dt-battle-dmg {
+  position: absolute;
+  left: 50%;
+  top: 20%;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-orange, #e07a2f);
+  white-space: nowrap;
+  opacity: 0;
+  text-shadow: 0 1px 0 var(--background-primary);
+  font-variant-numeric: tabular-nums;
+}
+.dt-battle-dmg.is-on {
+  animation: dt-battle-dmg 0.7s ease-out forwards;
+}
+.dt-battle-dmg.is-big {
+  font-size: 18px;
+  top: 0;
+  color: var(--color-yellow, #e0a800);
+}
+.dt-battle-dmg.is-big.is-on {
+  animation: dt-battle-dmg-big 0.9s ease-out forwards;
+}
+.dt-battle-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dt-battle-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-battle-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.dt-battle-ghost {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-red, #c04545);
+  opacity: 0.55;
+  transition: width 0.6s ease 0.35s;
+}
+.dt-battle-fill {
+  position: relative;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-green, #4caf50);
+  transition: width 0.12s linear, background 0.3s;
+}
+.dt-battle-fill.is-mid {
+  background: var(--color-yellow, #e0a800);
+}
+.dt-battle-fill.is-low {
+  background: var(--color-red, #c04545);
+}
+.dt-battle-hpt {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dt-battle.is-dead .dt-battle-hpt {
+  color: var(--color-yellow, #e0a800);
+}
+.dt-battle.is-dead .dt-battle-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.dt-battle-stamp {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%) rotate(-12deg) scale(3);
+  opacity: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-red, #c04545);
+  border: 3px solid var(--color-red, #c04545);
+  padding: 0 6px;
+  border-radius: 4px;
+  letter-spacing: 0.1em;
+  line-height: 1.3;
+  background: var(--background-secondary);
+}
+.dt-battle-stamp.is-on {
+  animation: dt-battle-stamp 0.3s cubic-bezier(0.2, 1.6, 0.5, 1) forwards;
+}
+.dt-battle-confetti {
+  position: absolute;
+  left: 28px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  pointer-events: none;
+}
+@keyframes dt-battle-flinch {
+  0% { transform: translateX(0); }
+  30% { transform: translateX(-4px) skewX(6deg); }
+  60% { transform: translateX(3px); }
+  100% { transform: translateX(0); }
+}
+@keyframes dt-battle-shake {
+  10%, 90% { transform: translate(-1px, 0); }
+  20%, 80% { transform: translate(3px, 1px); }
+  30%, 50%, 70% { transform: translate(-5px, -1px); }
+  40%, 60% { transform: translate(5px, 1px); }
+}
+@keyframes dt-battle-flash {
+  0% { opacity: 0.75; }
+  100% { opacity: 0; }
+}
+@keyframes dt-battle-slash {
+  0% { opacity: 1; transform: rotate(-35deg) scaleX(0); }
+  40% { opacity: 1; transform: rotate(-35deg) scaleX(1); }
+  100% { opacity: 0; transform: rotate(-35deg) scaleX(1.1); }
+}
+@keyframes dt-battle-slash-big {
+  0% { opacity: 1; transform: rotate(-35deg) scaleX(0) scaleY(1.6); }
+  35% { opacity: 1; transform: rotate(-35deg) scaleX(1) scaleY(1); }
+  100% { opacity: 0; transform: rotate(-35deg) scaleX(1.15); }
+}
+@keyframes dt-battle-slash-cross {
+  0% { opacity: 1; transform: rotate(35deg) scaleX(0) scaleY(1.6); }
+  35% { opacity: 1; transform: rotate(35deg) scaleX(1); }
+  100% { opacity: 0; transform: rotate(35deg) scaleX(1.15); }
+}
+@keyframes dt-battle-dmg {
+  0% { opacity: 0; transform: translate(-50%, 6px) scale(0.6); }
+  20% { opacity: 1; transform: translate(-50%, -4px) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -28px) scale(1); }
+}
+@keyframes dt-battle-dmg-big {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(0.4); }
+  15% { opacity: 1; transform: translate(-50%, -6px) scale(1.35); }
+  35% { transform: translate(-50%, -8px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -40px) scale(1); }
+}
+@keyframes dt-battle-tremble {
+  0% { transform: translate(-2px, 0); }
+  25% { transform: translate(2px, 1px); }
+  50% { transform: translate(-2px, -1px); }
+  75% { transform: translate(2px, 0); }
+  100% { transform: translate(-2px, 1px); }
+}
+@keyframes dt-battle-fall {
+  0% { transform: rotate(0) translateY(0); }
+  60% { transform: rotate(96deg) translateY(2px); }
+  100% { transform: rotate(90deg) translateY(0); filter: grayscale(1); }
+}
+@keyframes dt-battle-stamp {
+  0% { opacity: 0; transform: translateY(-50%) rotate(-12deg) scale(3); }
+  70% { opacity: 1; transform: translateY(-50%) rotate(-12deg) scale(0.92); }
+  100% { opacity: 1; transform: translateY(-50%) rotate(-12deg) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-battle.is-shake,
+  .dt-battle-mon.is-flinch,
+  .dt-battle-mon.is-tremble {
+    animation: none;
+  }
+  .dt-battle-mon.is-fall,
+  .dt-battle-slash.is-on,
+  .dt-battle-slash.is-big.is-on {
+    animation-duration: 0.01s;
+  }
+}
