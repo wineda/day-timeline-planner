@@ -4642,3 +4642,25 @@ button.dt-daily-summary-export {
 button.dt-daily-summary-export {
   margin-top: 12px;
 }
+
+/* ---------- モバイルのポップアップ（ボトムシート） ----------
+   Obsidian 本体のモバイルのモーダルは画面の上端近くまで伸びるので、
+   TickTick の詳細シートのように下から出して高さを画面の 78% までに留め、
+   上に元の画面が少し見えるようにする（このプラグインのダイアログだけ） */
+body.is-mobile .modal.dt-modal {
+  top: auto;
+  bottom: 0;
+  height: auto;
+  max-height: 78vh;
+  max-height: 78dvh;
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+body.is-mobile .modal.dt-modal .modal-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
