@@ -27,7 +27,13 @@ import {
   serializeListNote,
 } from "./markdown/legacy";
 import { migrateListToBlocks } from "./markdown/migrate";
-import { extractTags, startOfDay } from "./util";
+import { extractTags, minutesToHHMM, startOfDay } from "./util";
+
+/** 削除ログ（<フォルダ>/Log.md）を新規作成するときの中身 */
+const DELETION_LOG_HEADER = `# 操作ログ
+
+Day Timeline Planner がタスクを削除したときの記録です。「消えたタスク」が意図した削除だったかを後から確かめられます（設定「削除したタスクの記録を残す」でオフにできます）。
+`;
 
 /** 日付 → ノートの対応と、ノートの作成。保存形式によらず共通 */
 abstract class NoteStore implements TaskSource {
@@ -120,7 +126,7 @@ abstract class NoteStore implements TaskSource {
     return ok;
   }
 
-  private async ensureFolder(dir: string): Promise<void> {
+  protected async ensureFolder(dir: string): Promise<void> {
     if (!dir) return;
     const parts = normalizePath(dir).split("/");
     let cur = "";
@@ -212,6 +218,17 @@ export class BlockTaskStore extends NoteStore {
       doneCondition: t.doneCondition,
       steps: t.steps,
       retrospective: t.retrospective,
+      result: t.result,
+      remaining: t.remaining,
+      cause: t.cause,
+      judgment: t.judgment,
+      others: t.others,
+      answer: t.answer,
+      status: t.status,
+      ownerName: t.ownerName,
+      due: t.due,
+      nextAction: t.nextAction,
+      registered: t.registered,
       actual: t.actual,
       project: t.project,
       forwarded: !t.done && t.checkChar === ">",
@@ -229,13 +246,18 @@ export class BlockTaskStore extends NoteStore {
     return task.ref;
   }
 
+  /** 新規タスクの下書きを書き込む前に整える（Inbox は登録日を刻む） */
+  protected prepareDraft(draft: TaskDraft): TaskDraft {
+    return draft;
+  }
+
   async create(date: Date, draft: TaskDraft): Promise<boolean> {
-    return this.process(date, (c) => insertTask(c, draft, this.options()));
+    return this.process(date, (c) => insertTask(c, this.prepareDraft(draft), this.options()));
   }
 
   /** ブロックID を指定してタスクを作る（定期タスクが後から追跡できるように） */
   async createWithId(date: Date, draft: TaskDraft, id: string): Promise<boolean> {
-    return this.process(date, (c) => insertTask(c, { ...draft, id }, this.options()));
+    return this.process(date, (c) => insertTask(c, { ...this.prepareDraft(draft), id }, this.options()));
   }
 
   /**
@@ -266,10 +288,52 @@ export class BlockTaskStore extends NoteStore {
   }
 
   async remove(date: Date, task: Task): Promise<boolean> {
-    return this.process(date, (c) => {
+    const ok = await this.process(date, (c) => {
       const r = removeTask(c, this.refOf(task), this.options());
       return r ? r.content : null;
     });
+    if (ok) await this.logDeletion(date, task);
+    return ok;
+  }
+
+  /**
+   * 削除の記録を <フォルダ>/Log.md に1行残す。
+   * ノートからブロックが消えたとき、「意図して消した」のか「事故で消えた」のかを
+   * 後から（日報や記録チェックの AI も）区別できるようにする。設定でオフ可
+   */
+  protected async logDeletion(date: Date, task: Task): Promise<void> {
+    const s = this.getSettings();
+    if (!s.deletionLog) return;
+    try {
+      const path = normalizePath((s.folder ? s.folder + "/" : "") + "Log.md");
+      const time =
+        task.start !== null && task.end !== null
+          ? `・予定 ${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}`
+          : "";
+      const act = task.actual.length
+        ? `・実績 ${task.actual.map((r) => `${minutesToHHMM(r.start)} - ${minutesToHHMM(r.end)}`).join(" / ")}`
+        : "";
+      const id = task.blockId ? ` ^${task.blockId}` : "";
+      const ownerName = task.owner ? s.members.find((m) => m.id === task.owner)?.name : null;
+      const who = ownerName ? `・${ownerName}の予定` : "";
+      const title = (task.title || "(無題)").replace(/\s+/g, " ").trim();
+      const line = `- ${moment().format("YYYY-MM-DD HH:mm")} 削除: 「${title}」${id}（${this.pathFor(date)}${time}${act}${who}）`;
+
+      let file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+        await this.ensureFolder(dir);
+        try {
+          file = await this.app.vault.create(path, DELETION_LOG_HEADER);
+        } catch (_e) {
+          file = this.app.vault.getAbstractFileByPath(path); // 直前に他の処理で作られた場合
+        }
+      }
+      if (!(file instanceof TFile)) return;
+      await this.app.vault.process(file, (c) => c.replace(/\s+$/, "") + "\n" + line + "\n");
+    } catch (e) {
+      console.error(e); // ログが書けなくても削除自体は成功している
+    }
   }
 
   /** ブロックごと別の日のノートへ移す */
@@ -357,6 +421,11 @@ export class InboxStore extends BlockTaskStore {
     if (!p.toLowerCase().endsWith(".md")) p += ".md";
     return normalizePath(p);
   }
+
+  /** Inbox に入れた日を「- 登録日: YYYY-MM-DD」として刻む（滞留日数を後から判定できるように） */
+  protected prepareDraft(draft: TaskDraft): TaskDraft {
+    return { ...draft, registered: moment().format("YYYY-MM-DD") };
+  }
 }
 
 /** 他の人の予定（メンバーごとのフォルダに、自分と同じ形式で保存する） */
@@ -420,6 +489,17 @@ export class ListTaskStore extends NoteStore {
       doneCondition: "",
       steps: [],
       retrospective: "",
+      result: "",
+      remaining: "",
+      cause: "",
+      judgment: "",
+      others: [],
+      answer: "",
+      status: "",
+      ownerName: "",
+      due: "",
+      nextAction: "",
+      registered: "",
       actual: [],
       project: null,
       forwarded: false,

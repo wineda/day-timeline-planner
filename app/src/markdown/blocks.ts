@@ -57,6 +57,56 @@ export interface TaskBlock {
   retrospective: string;
   /** ふりかえりの行番号（無ければ null） */
   retrospectiveLine: number | null;
+  /** 結果 = 何がどこまで終わったか（本文中の「- 結果: …」行）。無ければ "" */
+  result: string;
+  /** 結果の行番号（無ければ null） */
+  resultLine: number | null;
+  /** 残 = 完了後に残った作業（本文中の「- 残: …」行）。無ければ "" */
+  remaining: string;
+  /** 残の行番号（無ければ null） */
+  remainingLine: number | null;
+  /** 原因 = 障害・バグの原因（本文中の「- 原因: …」行）。無ければ "" */
+  cause: string;
+  /** 原因の行番号（無ければ null） */
+  causeLine: number | null;
+  /** 判断 = どう判断したか（本文中の「- 判断: …」行）。無ければ "" */
+  judgment: string;
+  /** 判断の行番号（無ければ null） */
+  judgmentLine: number | null;
+  /**
+   * 他者 = ボールが相手にあるもの（本文中の「- 他者: 相手 / 内容」行）。
+   * 唯一の複数行フィールド。1タスクに何件でも書ける
+   */
+  others: string[];
+  /** 他者の行番号（文書順。無ければ []） */
+  othersLines: number[];
+  /** 回答 = 質問に回答が付いたか（本文中の「- 回答: 済 / 未」行）。無ければ "" */
+  answer: string;
+  /** 回答の行番号（無ければ null） */
+  answerLine: number | null;
+  /** 状態 = 中断などの状態（本文中の「- 状態: 中断(理由)」行の値）。無ければ "" */
+  status: string;
+  /** 状態の行番号（無ければ null） */
+  statusLine: number | null;
+  /**
+   * Owner = タスクのオーナー（本文中の「- Owner: 名前」行）。無ければ ""。
+   * 「誰の予定か」（どのメンバーのノートにあるか）とは別の、記録上の担当者
+   */
+  ownerName: string;
+  /** Owner の行番号（無ければ null） */
+  ownerNameLine: number | null;
+  /** 期限（本文中の「- 期限: YYYY-MM-DD」行。旧表記の「期日:」も読む）。無ければ "" */
+  due: string;
+  /** 期限の行番号（無ければ null） */
+  dueLine: number | null;
+  /** 次アクション = 次にやること（本文中の「- 次アクション: …」行）。無ければ "" */
+  nextAction: string;
+  /** 次アクションの行番号（無ければ null） */
+  nextActionLine: number | null;
+  /** 登録日（本文中の「- 登録日: YYYY-MM-DD」行。Inbox の滞留日数の判定用）。無ければ "" */
+  registered: string;
+  /** 登録日の行番号（無ければ null） */
+  registeredLine: number | null;
   /** 実績（本文中の「- 実績: …」行）。無ければ [] */
   actual: ActualRange[];
   /** 実績の行番号（無ければ null） */
@@ -150,6 +200,28 @@ export interface MetaSource {
   steps?: TaskStep[];
   /** ふりかえり（新規ブロックを組み立てるときだけ使う） */
   retrospective?: string;
+  /** 結果（新規ブロックを組み立てるときだけ使う） */
+  result?: string;
+  /** 残（新規ブロックを組み立てるときだけ使う） */
+  remaining?: string;
+  /** 原因（新規ブロックを組み立てるときだけ使う） */
+  cause?: string;
+  /** 判断（新規ブロックを組み立てるときだけ使う） */
+  judgment?: string;
+  /** 他者（新規ブロックを組み立てるときだけ使う。1件 = 1行） */
+  others?: string[];
+  /** 回答（新規ブロックを組み立てるときだけ使う） */
+  answer?: string;
+  /** 状態（新規ブロックを組み立てるときだけ使う） */
+  status?: string;
+  /** Owner（新規ブロックを組み立てるときだけ使う） */
+  ownerName?: string;
+  /** 期限（新規ブロックを組み立てるときだけ使う） */
+  due?: string;
+  /** 次アクション（新規ブロックを組み立てるときだけ使う） */
+  nextAction?: string;
+  /** 登録日（新規ブロックを組み立てるときだけ使う） */
+  registered?: string;
   /** 実績（新規ブロックを組み立てるときだけ使う） */
   actual?: ActualRange[];
   /** プロジェクト（新規ブロックを組み立てるときだけ使う） */
@@ -212,6 +284,209 @@ export function renderRetrospectiveLine(text: string): string {
   return "- ふりかえり: " + text.trim();
 }
 
+/** 結果の行（例: "- 結果: 実装完了、テスト修正まで" / "結果：…"）。何がどこまで終わったかの記録 */
+const RESULT_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?結果(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 結果の行なら中身を返す（空でも ""）。違えば null */
+export function parseResultLine(line: string): string | null {
+  const m = RESULT_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderResultLine(text: string): string {
+  return "- 結果: " + text.trim();
+}
+
+/** 残の行（例: "- 残: 結合環境に投入"）。完了にした後に残っている作業の記録 */
+const REMAINING_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?残(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 残の行なら中身を返す（空でも ""）。違えば null */
+export function parseRemainingLine(line: string): string | null {
+  const m = REMAINING_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderRemainingLine(text: string): string {
+  return "- 残: " + text.trim();
+}
+
+/** 原因の行（例: "- 原因: 排他制御の考慮漏れ"）。障害・バグの原因の記録 */
+const CAUSE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?原因(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 原因の行なら中身を返す（空でも ""）。違えば null */
+export function parseCauseLine(line: string): string | null {
+  const m = CAUSE_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderCauseLine(text: string): string {
+  return "- 原因: " + text.trim();
+}
+
+/** 判断の行（例: "- 判断: 恒久対応は次スプリントで実施"）。どう判断したかの記録 */
+const JUDGMENT_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?判断(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 判断の行なら中身を返す（空でも ""）。違えば null */
+export function parseJudgmentLine(line: string): string | null {
+  const m = JUDGMENT_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderJudgmentLine(text: string): string {
+  return "- 判断: " + text.trim();
+}
+
+/**
+ * 他者の行（例: "- 他者: 田中 / レビュー依頼中"）。ボールが相手にあるものの記録。
+ * 唯一の複数行フィールドで、1タスクに何件でも書ける
+ */
+const OTHERS_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?他者(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 他者の行なら中身を返す（空でも ""）。違えば null */
+export function parseOthersLine(line: string): string | null {
+  const m = OTHERS_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderOthersLine(text: string): string {
+  return "- 他者: " + text.trim();
+}
+
+/** 他者の1件（「相手 / 内容」）を相手と内容に分ける。区切りが無ければ全体を内容として扱う */
+export function splitOtherEntry(value: string): { who: string; what: string } {
+  const v = value.trim();
+  const m = /^(.*?)\s+\/\s+(.*)$/.exec(v);
+  if (m) return { who: m[1].trim(), what: m[2].trim() };
+  return { who: "", what: v };
+}
+
+/** 相手と内容から他者の1件を組み立てる（片方だけならその値。両方空なら ""） */
+export function joinOtherEntry(who: string, what: string): string {
+  const a = who.trim();
+  const b = what.trim();
+  if (a && b) return `${a} / ${b}`;
+  return a || b;
+}
+
+/** 次アクションの行（例: "- 次アクション: 恒久対応案をシン会議に持ち込む"）。未完了事項の次の一手 */
+const NEXT_ACTION_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?次アクション(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 次アクションの行なら中身を返す（空でも ""）。違えば null */
+export function parseNextActionLine(line: string): string | null {
+  const m = NEXT_ACTION_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderNextActionLine(text: string): string {
+  return "- 次アクション: " + text.trim();
+}
+
+/** 回答の行（例: "- 回答: 済" / "- 回答: 未"）。質問に回答が付いたかの記録 */
+const ANSWER_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?回答(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 回答の行なら中身を返す（空でも ""）。違えば null */
+export function parseAnswerLine(line: string): string | null {
+  const m = ANSWER_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderAnswerLine(text: string): string {
+  return "- 回答: " + text.trim();
+}
+
+/** 状態の行（例: "- 状態: 中断(会議で離席)"）。中断したタスクの理由の記録 */
+const STATUS_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?状態(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 状態の行なら中身を返す（空でも ""）。違えば null */
+export function parseStatusLine(line: string): string | null {
+  const m = STATUS_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderStatusLine(text: string): string {
+  return "- 状態: " + text.trim();
+}
+
+/**
+ * 状態の値（Rules/Timeline記録ルール.md・Work共通ルール.md の「状態」）。
+ * 中断だけは「中断(理由)」のように理由を付けられる
+ */
+export const STATUS_KINDS = ["未着手", "進行中", "中断", "回答待ち", "期限未定"] as const;
+
+/** 状態の値を「種類」と「中断理由」に分ける（「中断(理由)」以外は種類 = 値そのもの） */
+export function parseStatusValue(value: string): { kind: string; reason: string } {
+  const v = value.trim();
+  const m = /^中断\s*[(（](.*)[)）]\s*$/.exec(v);
+  if (m) return { kind: "中断", reason: m[1].trim() };
+  return { kind: v, reason: "" };
+}
+
+/** 種類と中断理由から状態の値を組み立てる（種類が空なら ""） */
+export function buildStatusValue(kind: string, reason: string): string {
+  const k = kind.trim();
+  if (!k) return "";
+  const r = reason.trim();
+  return k === "中断" && r ? `中断(${r})` : k;
+}
+
+/** 状態の値から中断理由を取り出す（「中断(理由)」形式でなければ値をそのまま返す） */
+export function statusReason(value: string): string {
+  const m = /^中断\s*[（(](.*)[）)]\s*$/.exec(value.trim());
+  return m ? m[1].trim() : value.trim();
+}
+
+/** 中断理由から状態の値を組み立てる（既に「中断(…)」形式ならそのまま。空なら ""） */
+export function renderStatusValue(reason: string): string {
+  const t = reason.trim();
+  if (!t) return "";
+  return /^中断\s*[（(]/.test(t) ? t : `中断(${t})`;
+}
+
+/**
+ * Owner の行（例: "- Owner: 田中"）。タスクのオーナーの記録。
+ * 「誰の予定か」（どのメンバーのノートにあるか）とは別
+ */
+const OWNER_NAME_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?owner(?:\*\*)?\s*[:：]\s*(.*?)\s*$/i;
+
+/** Owner の行なら中身を返す（空でも ""）。違えば null */
+export function parseOwnerNameLine(line: string): string | null {
+  const m = OWNER_NAME_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderOwnerNameLine(text: string): string {
+  return "- Owner: " + text.trim();
+}
+
+/**
+ * 期限の行（例: "- 期限: 2026-09-30"）。記録ルールの表記は「期限」で、
+ * 旧表記の「期日」もパースだけ通す（出力は「期限」に統一する）
+ */
+const DUE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:期限|期日)(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 期限の行なら中身を返す（空でも ""）。違えば null */
+export function parseDueLine(line: string): string | null {
+  const m = DUE_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderDueLine(text: string): string {
+  return "- 期限: " + text.trim();
+}
+
+/** 登録日の行（例: "- 登録日: 2026-08-31"）。Inbox に入れた日の記録で、滞留日数の判定に使える */
+const REGISTERED_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?登録日(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+
+/** 登録日の行なら中身を返す（空でも ""）。違えば null */
+export function parseRegisteredLine(line: string): string | null {
+  const m = REGISTERED_RE.exec(line);
+  return m ? m[1] : null;
+}
+
+export function renderRegisteredLine(text: string): string {
+  return "- 登録日: " + text.trim();
+}
+
 /** 実績の時間帯（0:00 からの分）。予定とは別に「実際に作業した時間」を記録する */
 export interface ActualRange {
   start: number;
@@ -249,6 +524,32 @@ export function renderActualLine(ranges: ActualRange[]): string {
 /** 実績の合計（分） */
 export function actualTotal(ranges: ActualRange[]): number {
   return ranges.reduce((n, r) => n + (r.end - r.start), 0);
+}
+
+/**
+ * 候補の時間帯から、others と重なる部分を取り除く（1分未満のかけらは捨てる）。
+ * 完了時の実績の自動記録が、同じ日の他タスクの実績と重ならないようにするために使う
+ */
+export function subtractActualRanges(candidate: ActualRange[], others: ActualRange[]): ActualRange[] {
+  const blocks = [...others].sort((a, b) => a.start - b.start);
+  const out: ActualRange[] = [];
+  for (const c of candidate) {
+    let segs: ActualRange[] = [{ start: c.start, end: c.end }];
+    for (const b of blocks) {
+      const next: ActualRange[] = [];
+      for (const s of segs) {
+        if (b.end <= s.start || b.start >= s.end) {
+          next.push(s);
+          continue;
+        }
+        if (b.start > s.start) next.push({ start: s.start, end: b.start });
+        if (b.end < s.end) next.push({ start: b.end, end: s.end });
+      }
+      segs = next;
+    }
+    out.push(...segs.filter((s) => s.end - s.start >= 1));
+  }
+  return out;
 }
 
 /** プロジェクト（大きなタスク）への参照行（例: "- プロジェクト: [[Timeline/Projects/環境構築]]"） */
@@ -493,11 +794,33 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
     const meta = mi < end ? parseMetaLine(lines[mi]) : null;
     if (!meta) continue;
 
-    // 本文の中の「完了条件」「ふりかえり」「実績」「プロジェクト」行（コードブロック内は除く）
+    // 本文の中の「完了条件」「ふりかえり」「結果」「残」「登録日」「実績」「プロジェクト」などの行（コードブロック内は除く）
     let doneCondition = "";
     let doneConditionLine: number | null = null;
     let retrospective = "";
     let retrospectiveLine: number | null = null;
+    let result = "";
+    let resultLine: number | null = null;
+    let remaining = "";
+    let remainingLine: number | null = null;
+    let cause = "";
+    let causeLine: number | null = null;
+    let judgment = "";
+    let judgmentLine: number | null = null;
+    const others: string[] = [];
+    const othersLines: number[] = [];
+    let answer = "";
+    let answerLine: number | null = null;
+    let status = "";
+    let statusLine: number | null = null;
+    let ownerName = "";
+    let ownerNameLine: number | null = null;
+    let due = "";
+    let dueLine: number | null = null;
+    let nextAction = "";
+    let nextActionLine: number | null = null;
+    let registered = "";
+    let registeredLine: number | null = null;
     let actual: ActualRange[] = [];
     let actualLine: number | null = null;
     let project: string | null = null;
@@ -553,6 +876,95 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           continue;
         }
       }
+      if (resultLine === null) {
+        const rs = parseResultLine(lines[k]);
+        if (rs !== null) {
+          result = rs;
+          resultLine = k;
+          continue;
+        }
+      }
+      if (remainingLine === null) {
+        const rm = parseRemainingLine(lines[k]);
+        if (rm !== null) {
+          remaining = rm;
+          remainingLine = k;
+          continue;
+        }
+      }
+      if (registeredLine === null) {
+        const rg = parseRegisteredLine(lines[k]);
+        if (rg !== null) {
+          registered = rg;
+          registeredLine = k;
+          continue;
+        }
+      }
+      if (causeLine === null) {
+        const cs = parseCauseLine(lines[k]);
+        if (cs !== null) {
+          cause = cs;
+          causeLine = k;
+          continue;
+        }
+      }
+      if (judgmentLine === null) {
+        const jd = parseJudgmentLine(lines[k]);
+        if (jd !== null) {
+          judgment = jd;
+          judgmentLine = k;
+          continue;
+        }
+      }
+      // 他者だけは複数行になりうるので、最初の1行で止めずに全部拾う
+      {
+        const ot = parseOthersLine(lines[k]);
+        if (ot !== null) {
+          others.push(ot);
+          othersLines.push(k);
+          continue;
+        }
+      }
+      if (answerLine === null) {
+        const an = parseAnswerLine(lines[k]);
+        if (an !== null) {
+          answer = an;
+          answerLine = k;
+          continue;
+        }
+      }
+      if (statusLine === null) {
+        const st = parseStatusLine(lines[k]);
+        if (st !== null) {
+          status = st;
+          statusLine = k;
+          continue;
+        }
+      }
+      if (ownerNameLine === null) {
+        const ow = parseOwnerNameLine(lines[k]);
+        if (ow !== null) {
+          ownerName = ow;
+          ownerNameLine = k;
+          continue;
+        }
+      }
+      if (dueLine === null) {
+        const du = parseDueLine(lines[k]);
+        if (du !== null) {
+          due = du;
+          dueLine = k;
+          continue;
+        }
+      }
+      if (nextActionLine === null) {
+        const na = parseNextActionLine(lines[k]);
+        if (na !== null) {
+          nextAction = na;
+          nextActionLine = k;
+          continue;
+        }
+      }
       if (retrospectiveLine === null) {
         const rt = parseRetrospectiveLine(lines[k]);
         if (rt !== null) {
@@ -560,46 +972,40 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
           retrospectiveLine = k;
         }
       }
-      if (
-        doneConditionLine !== null &&
-        retrospectiveLine !== null &&
-        actualLine !== null &&
-        projectLine !== null &&
-        carryToLine !== null &&
-        carryFromLine !== null
-      )
-        break;
+      // 「他者」は何行でも現れうるので、全フィールドが出そろっても走査は最後まで続ける
     }
 
-    // ステップ: メタ行（と完了条件・実績行）の直後に続くチェックリスト。空行が来るまで
+    // 特別なフィールド行か（ステップと詳細の領域を決めるときに読み飛ばす）
+    const isFieldLine = (k: number) =>
+      k === doneConditionLine ||
+      k === retrospectiveLine ||
+      k === resultLine ||
+      k === remainingLine ||
+      k === causeLine ||
+      k === judgmentLine ||
+      k === answerLine ||
+      k === statusLine ||
+      k === ownerNameLine ||
+      k === dueLine ||
+      k === nextActionLine ||
+      k === registeredLine ||
+      k === actualLine ||
+      k === projectLine ||
+      k === carryToLine ||
+      k === carryFromLine ||
+      othersLines.includes(k);
+
+    // ステップ: メタ行（と完了条件・実績などのフィールド行）の直後に続くチェックリスト。空行が来るまで
     const steps: TaskStep[] = [];
     let stepsStart: number | null = null;
     let stepsEnd = mi + 1;
     {
       let k = mi + 1;
-      while (
-        k < end &&
-        (lines[k].trim() === "" ||
-          k === doneConditionLine ||
-          k === retrospectiveLine ||
-          k === actualLine ||
-          k === projectLine ||
-          k === carryToLine ||
-          k === carryFromLine)
-      )
-        k++;
+      while (k < end && (lines[k].trim() === "" || isFieldLine(k))) k++;
       if (k < end && !FENCE_RE.test(lines[k]) && parseStepLine(lines[k])) {
         stepsStart = k;
         while (k < end) {
-          if (
-            k === doneConditionLine ||
-            k === retrospectiveLine ||
-            k === actualLine ||
-            k === projectLine ||
-            k === carryToLine ||
-            k === carryFromLine
-          )
-            break;
+          if (isFieldLine(k)) break;
           const st = parseStepLine(lines[k]);
           if (st) {
             steps.push({ text: st.text, done: st.done, children: [] });
@@ -614,17 +1020,12 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       }
     }
 
-    // 詳細の領域: メタ行直下の「完了条件・ステップ・ふりかえり・空行」のかたまりの後ろから、ブロック末尾まで
+    // 詳細の領域: メタ行直下の「フィールド行・ステップ・空行」のかたまりの後ろから、ブロック末尾まで
     let detailsStart = mi + 1;
     while (detailsStart < end) {
       const k = detailsStart;
       if (
-        k === doneConditionLine ||
-        k === retrospectiveLine ||
-        k === actualLine ||
-        k === projectLine ||
-        k === carryToLine ||
-        k === carryFromLine ||
+        isFieldLine(k) ||
         (stepsStart !== null && k >= stepsStart && k < stepsEnd) ||
         lines[k].trim() === ""
       ) {
@@ -649,6 +1050,28 @@ export function parseBlockDocument(content: string, opts: BlockOptions): BlockDo
       doneConditionLine,
       retrospective,
       retrospectiveLine,
+      result,
+      resultLine,
+      remaining,
+      remainingLine,
+      cause,
+      causeLine,
+      judgment,
+      judgmentLine,
+      others,
+      othersLines,
+      answer,
+      answerLine,
+      status,
+      statusLine,
+      ownerName,
+      ownerNameLine,
+      due,
+      dueLine,
+      nextAction,
+      nextActionLine,
+      registered,
+      registeredLine,
       actual,
       actualLine,
       project,
@@ -717,8 +1140,19 @@ export function renderTaskBlock(
   if (t.actual?.length) out.push(renderActualLine(t.actual));
   if (t.carryFrom) out.push(renderCarryFromLine(t.carryFrom));
   if (t.carryTo) out.push(renderCarryToLine(t.carryTo));
+  if (t.registered && t.registered.trim()) out.push(renderRegisteredLine(t.registered));
+  if (t.due && t.due.trim()) out.push(renderDueLine(t.due));
   if (t.doneCondition && t.doneCondition.trim()) out.push(renderDoneConditionLine(t.doneCondition));
   if (t.steps?.length) out.push(...renderStepLines(t.steps));
+  if (t.result && t.result.trim()) out.push(renderResultLine(t.result));
+  if (t.cause && t.cause.trim()) out.push(renderCauseLine(t.cause));
+  if (t.judgment && t.judgment.trim()) out.push(renderJudgmentLine(t.judgment));
+  if (t.remaining && t.remaining.trim()) out.push(renderRemainingLine(t.remaining));
+  for (const o of t.others ?? []) if (o.trim()) out.push(renderOthersLine(o));
+  if (t.answer && t.answer.trim()) out.push(renderAnswerLine(t.answer));
+  if (t.status && t.status.trim()) out.push(renderStatusLine(t.status));
+  if (t.ownerName && t.ownerName.trim()) out.push(renderOwnerNameLine(t.ownerName));
+  if (t.nextAction && t.nextAction.trim()) out.push(renderNextActionLine(t.nextAction));
   if (t.retrospective && t.retrospective.trim()) out.push(renderRetrospectiveLine(t.retrospective));
   const body = trimBlankLines(t.body ?? []);
   if (body.length) out.push("", ...body);
@@ -732,6 +1166,7 @@ export function bodyPreview(body: string[], max = 60): string {
     if (parseActualLine(raw) !== null) continue; // 実績はバーとして出す
     if (parseProjectLine(raw) !== null) continue; // プロジェクトはバッジとして出す
     if (parseCarryToLine(raw) !== null || parseCarryFromLine(raw) !== null) continue; // 持ち越しもバッジ
+    if (parseRegisteredLine(raw) !== null) continue; // 登録日はただのメタ情報
     const line = raw
       .replace(/^\s*[-*+]\s+(?:\[.\]\s*)?/, "") // リスト記号とチェックボックス
       .replace(/^\s*>\s?/, "") // 引用

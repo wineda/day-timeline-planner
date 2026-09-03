@@ -31,10 +31,41 @@
   min-height: 0;
   line-height: 1.6;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 /* 今日が画面に映っている間は押す意味がないので出さない（そのぶん日付に幅を回す） */
 .dt-today-btn.is-hidden {
   display: none;
+}
+/* 「今日」のアイコン版（カレンダーの枠 + 今日の日付。TickTick 風）。
+   出すのは狭い画面のときだけで、広い画面では文字の「今日」を出す */
+.dt-today-icon {
+  display: none;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+}
+.dt-today-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-today-num {
+  position: absolute;
+  /* カレンダーの枠線（上部の帯より下）の真ん中に数字を置く */
+  left: 0;
+  right: 0;
+  top: 38%;
+  bottom: 4%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .dt-date {
@@ -44,8 +75,8 @@
   position: relative;
 }
 
-/* 日付は「押せるラベル」。塗りを持つとモードの「選択中」と見分けが付かないので、
-   背景・枠を持たない見出しとして扱う */
+/* 日付は「押せる月タイトル」（TickTick 風にヘッダーの主役として大きく出す）。
+   塗りを持つとモードの「選択中」と見分けが付かないので、背景・枠を持たない見出しとして扱う */
 .dt-date-label {
   background: transparent;
   border: none;
@@ -53,8 +84,9 @@
   padding: 2px 6px;
   height: auto;
   min-height: 0;
-  font-size: var(--font-ui-medium);
-  font-weight: 600;
+  font-size: var(--font-ui-large, 20px);
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--text-normal);
   cursor: pointer;
   border-radius: var(--radius-s);
@@ -117,37 +149,32 @@
   display: inline-block;
 }
 
-/* 狭い画面で日/3日/週/月 のセグメントの代わりに出す「週 ▾」ドロップダウン */
+/* 狭い画面で日/3日/週/月 のセグメントの代わりに出す切替ボタン。
+   TickTick 風にアイコンだけの枠なしボタンにする（いまの単位はメニュー内のチェックと
+   画面の列の並びで分かる） */
 .dt-mode-menu-btn {
   display: none; /* 出すのは狭い画面のときだけ（.dt-view.is-narrow で切り替える） */
   align-items: center;
-  gap: 2px;
+  justify-content: center;
   flex: 0 0 auto;
   height: auto;
   min-height: 0;
-  padding: 2px 6px 2px 10px;
-  line-height: 1.6;
-  /* いま何の単位で見ているかを示す表示なので、押せるうえに読める濃さにする */
-  font-size: var(--font-ui-small);
-  border: 1px solid var(--background-modifier-border);
+  padding: 4px 6px;
+  border: none;
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--text-normal);
+  color: var(--icon-color, var(--text-muted));
   box-shadow: none;
   cursor: pointer;
 }
 .dt-mode-menu-btn:hover {
   background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  color: var(--icon-color-hover, var(--text-normal));
   box-shadow: none;
 }
-.dt-menu-caret {
-  display: flex;
-  align-items: center;
-}
-.dt-menu-caret svg {
-  width: 12px;
-  height: 12px;
+.dt-mode-menu-btn svg {
+  width: var(--icon-size, 18px);
+  height: var(--icon-size, 18px);
 }
 
 /* 予実モードの予定バー: 輪郭 + 薄い塗りにして「枠」に見せる（実績が主役） */
@@ -661,6 +688,13 @@
   white-space: nowrap;
   font-size: var(--font-ui-small);
 }
+/* プロジェクト名の Ctrl/Cmd + クリックで出すプロジェクトノートのプレビュー（ページプレビューのポップアップ）。
+   ノートのタスク一覧（表）やメモが読みやすいよう、通常のプレビュー（既定 450×400px）より一回り大きくする。
+   クラスは view.ts の ProjectHoverParent がポップアップに付ける（タスクブロックのプレビューは対象外） */
+.popover.hover-popover.dt-project-preview {
+  --popover-width: 640px;
+  --popover-height: 560px;
+}
 .dt-project-stats {
   flex: 0 0 auto;
   font-size: 0.72em;
@@ -730,16 +764,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dt-project-row .dt-icon-btn {
-  padding: 1px;
-}
-.dt-project-row .dt-icon-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.dt-project-done-btn:hover {
-  color: var(--color-green);
-}
 .dt-project-children {
   margin: 0 0 4px 16px;
   border-left: 1px solid var(--background-modifier-border);
@@ -757,6 +781,11 @@
 .dt-project-child:hover {
   background: var(--background-modifier-hover);
 }
+/* クリックして選択中の子タスク（タイムラインの対応するブロックと同じアクセント色で結び付ける） */
+.dt-project-child.is-selected {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
 .dt-project-child.is-done .dt-tray-title {
   text-decoration: line-through;
   color: var(--text-faint);
@@ -766,7 +795,50 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* 日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
+/* 子タスクのタグ: タイムラインと同じ色の均一な枠と文字（日付バッジと同じ形。塗りつぶし・帯は付けない） */
+.dt-project-child-tag {
+  flex: 0 1 auto;
+  max-width: 40%;
+  padding: 0 4px;
+  border: 1px solid var(--dt-chip-color, var(--text-faint));
+  border-radius: var(--radius-s);
+  color: var(--dt-chip-color, var(--text-muted));
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-project-child.is-done .dt-project-child-tag,
+.dt-project-child-trow.is-done .dt-project-child-tag {
+  opacity: 0.6;
+}
+/* テーブル表示のタグ列 */
+.dt-projects-table .dt-ptc-tag {
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 8px;
+}
+.dt-projects-table td.dt-ptc-tag .dt-project-child-tag {
+  max-width: 9em;
+}
+/* テーブル表示の子タスクの期日: 本日 = 青の●、未定 = オレンジの● */
+.dt-project-child-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.dt-project-child-dot.is-today {
+  background: var(--color-blue, #4a7fd0);
+}
+.dt-project-child-dot.is-undated,
+.dt-project-child-dot.is-unscheduled {
+  background: var(--color-orange, #e0a030);
+}
+/* 本日・日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
+.dt-project-child-date.is-today,
 .dt-project-child-date.is-undated,
 .dt-project-child-date.is-unscheduled {
   border: 1px solid var(--text-faint);
@@ -774,6 +846,12 @@
   padding: 0 4px;
   font-size: 0.9em;
   line-height: 1.5;
+}
+/* 今日のタスクは青のバッジ（未定・遅れと色で見分けられるように） */
+.dt-project-child-date.is-today {
+  color: var(--color-blue, #4a7fd0);
+  border-color: color-mix(in srgb, var(--color-blue, #4a7fd0) 60%, transparent);
+  font-weight: 600;
 }
 /* 日付ごと未定はアクセント色で一段目立たせる */
 .dt-project-child-date.is-undated {
@@ -797,11 +875,158 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dt-project-child-times {
-  flex: 0 0 auto;
+
+/* ---------- プロジェクトのテーブル表示（期日・進捗・予定・実績を列で見比べる） ---------- */
+/* リスト自体を余白なしのスクロール領域にして、表をパネルの幅いっぱいに使う */
+.dt-projects-list.is-table {
+  padding: 0 0 8px;
+  overflow: auto; /* 列が収まらない幅では横スクロール */
+}
+.dt-projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+}
+.dt-projects-table th,
+.dt-projects-table td {
+  padding: 3px 6px;
+  white-space: nowrap;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+/* 見出し行は縦スクロールしても上に貼り付く */
+.dt-projects-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--background-secondary);
   color: var(--text-muted);
-  font-size: 0.9em;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+/* 名前の列に余りを全部渡し、収まらない名前は省略記号にする（max-width: 0 は table のための定石） */
+.dt-projects-table .dt-ptc-name {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-projects-table .dt-ptc-num {
+  text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.dt-projects-table td.dt-ptc-num {
+  color: var(--text-muted);
+}
+.dt-projects-table td.dt-ptc-due .dt-project-due {
+  border: none;
+  padding: 0;
+  font-size: 1em;
+}
+/* 名前セルの中身（チェブロン + 名前 + チケット）と子タスクセル（チェック + タイトル） */
+.dt-ptc-name-wrap,
+.dt-ptc-child {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.dt-ptc-child {
+  padding-left: 14px; /* 親の名前より一段下げて、子タスクだと分かるように */
+}
+/* 「進捗」の列: バーの長さを行どうしで見比べられるよう、幅を固定する */
+.dt-projects-table th.dt-ptc-progress,
+.dt-projects-table td.dt-ptc-progress {
+  width: 76px;
+  min-width: 76px;
+}
+/* 見出しは他の列と同じく左寄せ（セルの中身はバーが幅いっぱいなので右寄せのまま） */
+.dt-projects-table th.dt-ptc-progress {
+  text-align: left;
+}
+/* タスクのステップの消化率（バー + %）。プロジェクトの行は今までどおり件数だけ出す */
+.dt-progress {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.dt-progress-bar {
+  flex: 1 1 auto;
+  min-width: 20px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.dt-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  transition: width 120ms ease;
+}
+.dt-progress-text {
+  flex: 0 0 auto;
+  /* 「100%」でも幅が変わらないようにして、行どうしでバーの左端・右端を揃える */
+  min-width: 3em;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+/* 全部終わったものは緑にして、ひと目で片付いたと分かるように */
+.dt-progress.is-complete .dt-progress-fill {
+  background: var(--color-green, #4caf50);
+}
+.dt-progress.is-complete .dt-progress-text {
+  color: var(--color-green, #4caf50);
+}
+/* プロジェクトの行: ツリーと同じくつかんでタイムラインへドラッグできる */
+.dt-project-trow {
+  cursor: grab;
+  user-select: none;
+}
+.dt-project-trow:hover > td {
+  background: var(--background-modifier-hover);
+}
+.dt-project-trow.is-dragging {
+  opacity: 0.5;
+}
+/* 子タスクの行 */
+.dt-project-child-trow {
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+}
+.dt-project-child-trow:hover > td {
+  background: var(--background-modifier-hover);
+}
+/* クリックして選択中の子タスクの行（ツリー表示の .dt-project-child.is-selected と同じ印） */
+.dt-project-child-trow.is-selected > td {
+  background: var(--background-modifier-hover);
+}
+.dt-project-child-trow.is-selected > td:first-child {
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
+.dt-project-child-trow.is-dragging {
+  opacity: 0.6;
+}
+.dt-project-child-trow.is-done .dt-tray-title {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+.dt-project-child-trow .dt-tray-title {
+  flex: 1 1 auto;
+}
+/* グループの見出し行・展開中の詳細行（ドキュメント・空の案内）は表の線を出さない */
+.dt-project-group-trow td {
+  padding: 2px 2px 0;
+  border-bottom: none;
+}
+.dt-project-detail-trow td {
+  padding: 2px 6px 2px 20px;
+  border-bottom: none;
 }
 
 /* ---------- 再スケジュールのタブの中身（時刻を決めていないタスク） ---------- */
@@ -831,6 +1056,305 @@
 }
 .dt-reschedule-item .dt-project-child-date {
   align-self: center;
+}
+
+/* ---------- 本日のサマリー（サイドバーのタブの下に常に出す） ---------- */
+.dt-summary {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* 見出し「本日 9/2 (水) … 折り返し ⌄」。クリックで畳む / 開く */
+.dt-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px 4px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dt-summary-head:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-summary-title {
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.dt-summary-date {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-brief {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92em;
+}
+.dt-summary.is-complete .dt-summary-brief {
+  color: var(--color-green);
+  font-weight: 600;
+}
+.dt-summary-chevron {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.dt-summary-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 7px;
+}
+.dt-summary-empty {
+  white-space: normal;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+/* 件数・時間のメーター: ラベル | バー | 値 | % */
+.dt-summary-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dt-summary-meter-label {
+  flex: 0 0 3.6em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-bar {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 24px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+/* タスクごとの区切り。幅は flex-grow（件数なら 1、時間なら予定の分）に比例。
+   2つ目からの左端の細い線がタスクの境目（サイドバーの背景色で抜く） */
+.dt-summary-seg {
+  flex: 1 0 0;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--background-modifier-border);
+}
+.dt-summary-seg + .dt-summary-seg {
+  border-left: 1px solid var(--background-secondary);
+}
+.dt-summary-seg.is-done {
+  background: var(--interactive-accent);
+}
+.dt-summary-meter.is-complete .dt-summary-seg.is-done {
+  background: var(--color-green);
+}
+/* 区切りが多すぎるときの1本の棒 */
+.dt-summary-seg.is-plain {
+  border-radius: 4px;
+  transition: flex-basis 0.3s ease;
+}
+.dt-summary-meter-value {
+  flex: 0 0 auto;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.dt-summary-meter-pct {
+  flex: 0 0 2.8em;
+  text-align: right;
+  white-space: nowrap;
+}
+.dt-summary-meter.is-complete .dt-summary-meter-pct {
+  color: var(--color-green);
+  font-weight: 600;
+}
+.dt-summary-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* いま / 次にやる1件 */
+.dt-summary-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 4px 6px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  cursor: pointer;
+}
+.dt-summary-next:hover {
+  background: var(--background-modifier-hover);
+}
+.dt-summary-next-label {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: var(--radius-l);
+  font-size: 0.85em;
+  line-height: 1.5;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dt-summary-next.is-now .dt-summary-next-label {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.dt-summary-next.is-overdue .dt-summary-next-label {
+  background: var(--color-red);
+  color: #fff;
+}
+.dt-summary-next.is-unscheduled .dt-summary-next-label {
+  background: transparent;
+  border: 1px dashed var(--color-orange);
+  color: var(--color-orange);
+  line-height: 1.3;
+}
+.dt-summary-next-time {
+  flex: 0 0 auto;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+.dt-summary-next-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-normal);
+}
+.dt-summary-next-dur {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-next-play {
+  flex: 0 0 auto;
+  padding: 2px;
+}
+/* いまのタスクのステップ（2行目）: 小さなバー + 2/4 + 次のステップ */
+.dt-summary-next-steps {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 1px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+.dt-summary-next-steps .dt-summary-bar {
+  flex: 0 0 48px;
+  height: 5px;
+}
+.dt-summary-next-steps-count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.dt-summary-next-steps-sep {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.dt-summary-next-steps-next {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-summary-next-play svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-summary-next-play.is-tracking {
+  color: var(--color-red);
+}
+
+/* 連続達成と今週の棒グラフ */
+.dt-summary-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.dt-summary-streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dt-summary-streak.is-active {
+  color: var(--color-orange);
+  font-weight: 600;
+}
+.dt-summary-streak-icon {
+  display: flex;
+}
+.dt-summary-streak-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.dt-summary-week {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+  margin-left: auto;
+}
+.dt-summary-week-day {
+  position: relative;
+  width: 8px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+  cursor: pointer;
+}
+.dt-summary-week-day > div {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+.dt-summary-week-day.is-hit > div {
+  background: var(--interactive-accent);
+}
+.dt-summary-week-day.is-today {
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+.dt-summary-week-day.is-future {
+  opacity: 0.4;
+  cursor: default;
+}
+.dt-summary-week-day.is-empty {
+  opacity: 0.6;
+}
+.dt-summary-note {
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.dt-summary-note:hover {
+  color: var(--text-muted);
+  text-decoration: underline;
 }
 
 .dt-tray-color {
@@ -897,21 +1421,34 @@
 
 /* ---------- 狭い画面（スマホなど）: タイムライン ⇄ パネルの切り替え ---------- */
 /* 幅が足りないとサイドバーとタイムラインが共倒れになるので、
-   ヘッダーの切替ボタン（is-narrow のときだけ表示）で片方だけを全面に出す。
-   2つ並べるとツールバーが1行に収まらないので、押すたびに入れ替わる1つのトグルにする */
+   ヘッダーの切替（is-narrow のときだけ表示）で片方だけを全面に出す。
+   タイムラインとツリーの両方のアイコンを並べ、表示中の面（is-active）を色で示す。
+   ヘッダーを軽く見せるため、セグメントの箱（枠・塗り）は持たせない（TickTick 風） */
 .dt-pane {
   display: none;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
 }
 .dt-view.is-narrow .dt-pane.is-available {
   display: inline-flex;
+}
+.dt-pane .dt-icon-btn {
+  padding: 4px 6px;
+  color: var(--text-faint);
+}
+/* 表示中の面はアクセント色（薄い塗り + アイコン色）で示す */
+.dt-pane .dt-icon-btn.is-active,
+.dt-pane .dt-icon-btn.is-active:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+  color: var(--interactive-accent);
 }
 /* タイムライン表示中はサイドバーを隠す（畳んだ細い帯も出さない） */
 .dt-view.is-narrow.is-pane-timeline .dt-inbox {
   display: none;
 }
 /* パネル表示中はタイムライン（ツールバーごと）を隠し、サイドバーを全幅に広げる。
-   タイムラインへはパネルのヘッダーの戻るボタンで切り替える */
+   タイムラインへはパネルのヘッダー左端の同じ切替で戻る（位置はツールバーと同じ） */
 .dt-view.is-narrow.is-pane-panel .dt-main {
   display: none;
 }
@@ -958,7 +1495,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   padding: 4px 2px 5px;
   border-left: 1px solid var(--background-modifier-border);
   cursor: pointer;
@@ -968,8 +1505,16 @@
 .dt-day-header:hover {
   background: var(--background-modifier-hover);
 }
+/* 曜日 + 日付のまとまり（スマホでは横並びにする） */
+.dt-day-header-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
 .dt-day-header-dow {
   font-size: var(--font-ui-smaller);
+  letter-spacing: 0.04em;
 }
 .dt-day-header-num {
   font-size: var(--font-ui-medium);
@@ -990,20 +1535,54 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
-/* 日付ヘッダーの予実合計（予 6:00 実 6:45 (+0:45)） */
+/* 日付ヘッダーの予実合計。「実績/予定」と差異を1つのピルにまとめ、
+   下端の極小バーで予定に対する実績の割合を示す（超過は赤）。
+   列が広ければ1行に並び、狭ければ差異が2行目へ折り返す */
 .dt-day-total {
+  position: relative;
   display: flex;
-  gap: 5px;
-  justify-content: center;
   flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  column-gap: 4px;
+  overflow: hidden;
+  max-width: 100%;
+  padding: 1px 7px 4px;
+  border-radius: 8px;
+  background: var(--background-secondary);
   font-size: 0.72em;
-  line-height: 1.2;
+  line-height: 1.25;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  margin-top: 1px;
+}
+.dt-day-total .dt-day-total-nums {
+  white-space: nowrap;
+}
+.dt-day-total .dt-day-total-act {
+  color: var(--text-normal);
+  font-weight: 600;
+}
+.dt-day-total .dt-day-total-diff {
+  font-size: 0.9em;
+  white-space: nowrap;
 }
 .dt-day-total .dt-day-total-diff.is-over {
   color: var(--color-red);
+}
+.dt-day-total .dt-day-total-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--background-modifier-border);
+}
+.dt-day-total .dt-day-total-bar > div {
+  height: 100%;
+  background: var(--interactive-accent);
+}
+.dt-day-total .dt-day-total-bar > div.is-over {
+  background: var(--color-red);
 }
 
 .dt-day-header.is-other-month .dt-day-header-num {
@@ -1013,6 +1592,10 @@
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   opacity: 1;
+}
+.dt-day-header.is-today .dt-day-header-dow {
+  color: var(--interactive-accent);
+  font-weight: 600;
 }
 
 .dt-grid {
@@ -1242,7 +1825,9 @@
   border: 1px dotted var(--background-modifier-border);
   cursor: default;
 }
-.dt-month-item.is-active-in-note {
+/* エディタのカーソルが乗っているタスク / パネルでクリックして選んだタスク */
+.dt-month-item.is-active-in-note,
+.dt-month-item.is-selected {
   box-shadow:
     0 0 0 2px var(--background-primary),
     0 0 0 4px var(--interactive-accent);
@@ -1310,12 +1895,31 @@
 .dt-event.is-done .dt-event-title {
   text-decoration: line-through;
 }
-/* エディタのカーソルが乗っているタスク */
-.dt-event.is-active-in-note {
+/* エディタのカーソルが乗っているタスク / パネル（プロジェクト一覧）でクリックして選んだタスク */
+.dt-event.is-active-in-note,
+.dt-event.is-selected {
   box-shadow:
     0 0 0 2px var(--background-primary),
     0 0 0 4px var(--interactive-accent);
   z-index: 4;
+}
+/* パネルで選んだ直後: 輪を2回またたかせて、どのブロックかを目で追えるようにする */
+.dt-event.is-just-selected,
+.dt-month-item.is-just-selected {
+  animation: dt-selected-pulse 0.7s ease-out 2;
+}
+@keyframes dt-selected-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px var(--background-primary),
+      0 0 0 4px var(--interactive-accent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--background-primary),
+      0 0 0 8px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  }
 }
 
 .dt-event-time {
@@ -1679,9 +2283,300 @@
   border-color: var(--interactive-accent);
   background: var(--background-modifier-hover);
 }
+/* 選択中のタグの「候補」フィールドのチップ（先頭に並ぶ）は少し目立たせる */
+.dt-modal .dt-add-field-chip.is-suggested {
+  color: var(--text-normal);
+  border-style: solid;
+  border-color: var(--interactive-accent);
+}
+/* タグ別スキーマで必須になった欄のラベルのマーク */
+.dt-required-mark {
+  color: var(--color-red, #e06c75);
+  margin-left: 4px;
+  font-size: 0.7em;
+  vertical-align: 2px;
+}
+/* 必須なのに空のまま保存しようとした欄 */
+.dt-modal .setting-item.dt-field-invalid,
+.dt-modal .dt-steps.dt-field-invalid {
+  box-shadow: inset 3px 0 0 var(--color-red, #e06c75);
+  padding-left: 8px;
+  border-radius: var(--radius-s);
+}
 .dt-modal .dt-tag-setting .setting-item-control {
   flex-wrap: wrap;
   justify-content: flex-start;
+  flex-direction: column;
+  align-items: stretch;
+}
+/* タグ欄の「文言一覧」リンク */
+.dt-modal .dt-tag-ph-link {
+  margin-left: 8px;
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--text-accent);
+}
+/* サブタグの段（親タグを選ぶと出る） */
+.dt-modal .dt-tag-subs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+.dt-modal .dt-tag-subs.is-hidden,
+.dt-modal .dt-tag-hint.is-hidden,
+.dt-modal .dt-status-reason.is-hidden,
+.dt-modal .dt-modal-pane.is-hidden {
+  display: none;
+}
+.dt-modal .dt-tag-subs-lead {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.dt-modal .dt-tag-hint {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+/* 「記録 / 作業メモ」タブ */
+.dt-modal .dt-modal-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+}
+.dt-modal .dt-modal-tab {
+  height: auto;
+  min-height: 0;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.dt-modal .dt-modal-tab.is-active {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+}
+.dt-modal .dt-modal-tab-sub {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-muted);
+}
+.dt-modal .dt-modal-tab-badge {
+  font-size: var(--font-ui-smaller);
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-l);
+  padding: 0 7px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dt-modal .dt-modal-tab-badge:empty {
+  display: none;
+}
+.dt-modal .dt-memo-lead {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 8px 0 4px;
+  line-height: 1.6;
+}
+/* ラベル横の小さな補足（判断: PLとして / 他者: 相手のボール） */
+.dt-modal .dt-field-note {
+  margin-left: 6px;
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-muted);
+}
+/* 欄の下の注意（記録チェックで指摘される条件） */
+.dt-modal .setting-item-description.dt-desc-warn {
+  color: var(--color-orange, #d9a21b);
+}
+/* 状態: 中断のときだけ出る理由欄 */
+.dt-modal .dt-status-setting .setting-item-control {
+  flex-wrap: wrap;
+}
+.dt-modal .dt-status-reason {
+  margin-top: 6px;
+  flex-basis: 100%;
+}
+/* 他者: 相手 + 内容の行 */
+.dt-modal .dt-others-setting .setting-item-control {
+  justify-content: flex-start;
+}
+.dt-modal .dt-others {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.dt-modal .dt-others-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 28px;
+  gap: 6px;
+  align-items: center;
+}
+.dt-modal .dt-others-row input {
+  width: 100%;
+}
+.dt-modal .dt-others-del {
+  height: auto;
+  min-height: 0;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dt-modal .dt-others-del:hover {
+  color: var(--color-red, #e06c75);
+}
+.dt-modal .dt-others-add {
+  align-self: flex-start;
+  height: auto;
+  min-height: 0;
+  padding: 3px 9px;
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+/* 未完了セット（Owner・期限・完了条件・次アクション） */
+.dt-modal .dt-open-set {
+  margin: 8px 0 2px;
+  padding: 8px 12px 2px;
+  border: 1px dashed var(--background-modifier-border-hover);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+.dt-modal .dt-open-set-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.dt-modal .dt-open-set-title {
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+/* 「その他 N」チップ（候補以外の欄をまとめて畳む） */
+.dt-modal .dt-add-field-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-style: solid;
+}
+.dt-modal .dt-add-field-more.is-open {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.dt-modal .dt-add-field-more-icon svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+.dt-modal .dt-add-field-more.is-open .dt-add-field-more-icon svg {
+  transform: rotate(180deg);
+}
+.dt-modal .dt-add-field-more-count {
+  font-size: 0.85em;
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-l);
+  padding: 0 6px;
+}
+.dt-modal .dt-add-field-more-box {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+/* 完了ポップアップ: チェック済みのステップから結果の下書き */
+.dt-retro-from-steps {
+  height: auto;
+  min-height: 0;
+  margin-top: 4px;
+  padding: 2px 9px;
+  font-size: var(--font-ui-smaller);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+/* タグ別の文言一覧 */
+.dt-ph-modal .dt-ph-group {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+.dt-ph-modal .dt-ph-group.is-current {
+  border-color: var(--interactive-accent);
+}
+.dt-ph-modal summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.dt-ph-modal .dt-ph-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--background-modifier-border);
+}
+.dt-ph-modal .dt-ph-current {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-accent);
+}
+.dt-ph-modal .dt-ph-list {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 2px 8px;
+  font-size: var(--font-ui-smaller);
+  margin: 6px 0 2px;
+}
+.dt-ph-modal .dt-ph-list dt {
+  color: var(--text-muted);
+}
+.dt-ph-modal .dt-ph-list dd {
+  margin: 0;
+}
+.dt-ph-modal .dt-ph-list dd.is-inherited {
+  color: var(--text-muted);
+}
+/* 設定: タグの説明・文言の入力欄 */
+.dt-tag-color-row .dt-tag-hint-input {
+  min-width: 220px;
+}
+.dt-tag-schema-ph-row .dt-schema-ph {
+  width: 100%;
+  min-width: 320px;
+  font-size: var(--font-ui-smaller);
 }
 
 /* ---------- スマホ（Obsidian の .is-phone）のダイアログ調整 ----------
@@ -1701,6 +2596,131 @@
   width: auto;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* ---------- モバイルの編集ダイアログ（TickTick 風のシンプル表示） ----------
+   上段は「丸い完了チェック + 日時サマリー」の1行だけ。日付・時間・実績の入力欄は
+   サマリーのタップで開閉し、空の任意項目は「＋ 項目を追加」のメニューにまとまる
+   （.dt-modal-mobile は modal.ts が Platform.isMobile のときに付ける） */
+.dt-modal-mobile .dt-m-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0 4px;
+}
+/* 丸い完了チェック（TickTick のチェック円と同じ役割） */
+.dt-modal-mobile button.dt-m-done {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--text-faint);
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent; /* 未完了はチェックを見せない */
+  cursor: pointer;
+}
+.dt-modal-mobile button.dt-m-done svg {
+  width: 15px;
+  height: 15px;
+}
+.dt-modal-mobile button.dt-m-done.is-done {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+/* 日時サマリー（アクセント色の1行。タップで編集欄を開閉） */
+.dt-modal-mobile button.dt-m-sched {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-accent);
+  font-size: var(--font-ui-medium);
+  cursor: pointer;
+}
+.dt-modal-mobile .dt-m-sched-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-modal-mobile button.dt-m-sched.is-error .dt-m-sched-text {
+  color: var(--text-error);
+}
+.dt-modal-mobile .dt-m-sched-chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+}
+.dt-modal-mobile .dt-m-sched-chevron svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 120ms ease;
+}
+.dt-modal-mobile button.dt-m-sched.is-open .dt-m-sched-chevron svg {
+  transform: rotate(180deg);
+}
+/* 開いた日付・時間・実績の欄はひとつの枠にまとめる */
+.dt-modal-mobile .dt-m-sched-body {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 2px 10px;
+  margin-bottom: 8px;
+}
+/* タイトルはラベルを出さず、大きめの枠なし入力に */
+.dt-modal-mobile .dt-title-setting .setting-item-info {
+  display: none;
+}
+.dt-modal-mobile .dt-title-setting input.dt-title-input {
+  font-size: 1.25em;
+  font-weight: 600;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding-left: 0;
+  padding-right: 0;
+}
+/* タグもラベルなしでチップだけを並べる */
+.dt-modal-mobile .dt-tag-setting .setting-item-info {
+  display: none;
+}
+/* 行間は少し詰める */
+.dt-modal-mobile .setting-item {
+  padding: 6px 0;
+}
+/* 「＋ 項目を追加」ボタン（チップの羅列の代わり。Obsidian のスマホCSSの幅100%を戻す） */
+.dt-modal-mobile .dt-add-fields {
+  border-top: none;
+  padding-top: 4px;
+}
+.dt-modal-mobile button.dt-add-field-menu-btn {
+  width: auto !important;
+  flex: 0 1 auto !important;
+  min-height: 0;
+  padding: 6px 14px;
+}
+/* 「削除」「ノートで開く」のアイコンボタン */
+.dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn {
+  width: auto !important;
+  flex: 0 0 auto !important;
+  padding: 6px 12px;
+}
+.dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 .dt-tag-chips {
   display: flex;
@@ -2002,6 +3022,7 @@
 }
 .dt-modal-buttons .setting-item-control {
   gap: 8px;
+  flex-wrap: wrap; /* ボタンが多いダイアログ（未完了ステップの確認など）でも収まるように */
 }
 /* 自動保存の状態（ボタン行の左側に出す） */
 .dt-modal .dt-modal-buttons .setting-item-description.dt-autosave-error {
@@ -2045,10 +3066,18 @@
   min-height: 140px;
 }
 
-/* ふりかえりの入力促進ポップアップ */
+/* 結果とふりかえりの入力促進ポップアップ */
 .dt-retro-modal {
   width: 560px;
   max-width: 90vw;
+}
+/* 未完了ステップの確認ダイアログの一覧 */
+.dt-remaining-list {
+  margin: 8px 0 4px;
+  padding-inline-start: 22px;
+}
+.dt-remaining-list li {
+  line-height: 1.6;
 }
 .dt-retro-lead {
   line-height: 1.6;
@@ -2199,6 +3228,13 @@
 }
 .dt-tracker-row .dt-tracker-url {
   width: 280px;
+}
+/* タグ別フィールドの設定行（タグ / 必須 / 候補の3入力） */
+.dt-tag-schema-row .dt-schema-tag {
+  width: 110px;
+}
+.dt-tag-schema-row .dt-schema-fields {
+  width: 190px;
 }
 
 .dt-setting-preview {
@@ -2585,9 +3621,11 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
   background: color-mix(in srgb, currentColor 45%, transparent);
 }
 
-/* 狭い画面: ツールバーを1行に収める。
-   折り返すと（日付の文字数で折り返し位置が変わり）ヘッダーの高さも中身の並びも
-   その都度変わっていたので、折り返さず、あふれるときは日付を「…」で詰める。
+/* 狭い画面: ツールバーを TickTick 風のシンプルなヘッダーにする。
+   左にタイムライン ⇄ パネルの切替と「9月」の月タイトル、右にアイコンだけを並べ、
+   ◀ ▶ の矢印は出さない（前後へは横スワイプで移動する）。折り返すと（文字数で折り返し
+   位置が変わり）ヘッダーの高さも中身の並びもその都度変わっていたので、折り返さず、
+   あふれるときはタイトルとチップを「…」で詰める。
    範囲の予実合計は出さず、＋は右下の FAB に置き換える */
 .dt-view.is-narrow .dt-range-total {
   display: none;
@@ -2597,19 +3635,85 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
 }
 .dt-view.is-narrow .dt-toolbar {
   flex-wrap: nowrap;
-  gap: 2px 3px;
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 6px 8px 4px 8px;
 }
-/* 日付に使える幅を1pxでも増やす（切り詰められるのは日付だけなので効く） */
+/* パネルを全面表示中のヘッダーも、ツールバーと同じ高さ・余白・並び
+   （左に面の切替と見出し、右に操作）にそろえる。切替のアイコンが両方の面で
+   同じ場所に留まるので、行き来するときに指を動かさずに済む */
+.dt-view.is-narrow.is-pane-panel .dt-inbox-head {
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 6px 8px 4px 8px;
+}
+/* 左端の切替は、続く見出しと近すぎないよう少し離す */
+.dt-view.is-narrow .dt-pane {
+  margin-right: 6px;
+}
+/* パネルの見出し（Inbox / プロジェクト / 再スケジュール）はツールバーの月タイトルと同じ見た目に */
+.dt-view.is-narrow.is-pane-panel .dt-inbox-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 2px 4px 2px 0;
+  font-size: var(--font-ui-large, 20px);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-normal);
+  cursor: default;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 見出しと右端の操作の間の伸びる余白（狭い画面のパネルのヘッダーだけ） */
+.dt-inbox-spacer {
+  flex: 1 1 0;
+}
+.dt-view.is-narrow.is-pane-panel .dt-inbox-open {
+  margin-left: 0;
+}
+/* 3日・週表示はすぐ下に曜日ヘッダーの帯が続くので、境目の線は引かず1枚に見せる */
+.dt-view.is-narrow.is-multi-day .dt-toolbar {
+  border-bottom: none;
+}
+/* タイトルに使える幅を1pxでも増やす（切り詰められるのはタイトルだけなので効く） */
 .dt-view.is-narrow .dt-date-label {
-  padding-left: 4px;
+  padding-left: 0;
   padding-right: 4px;
 }
-.dt-view.is-narrow .dt-today-btn {
-  padding-left: 7px;
-  padding-right: 7px;
+/* ◀ ▶ の矢印は出さず、「今日」だけを右側のアイコン群へ回す（order で右端側に寄せる。
+   DOM の並びは広い画面のまま「タイトル・移動・…・⋮」なので、右側に置きたいものへ順に番号を振る） */
+.dt-view.is-narrow .dt-nav .dt-icon-btn {
+  display: none;
 }
-/* 4つ並ぶセグメントは幅を取りすぎるので、狭い画面ではドロップダウンに畳む */
+.dt-view.is-narrow .dt-nav {
+  order: 4;
+}
+.dt-view.is-narrow .dt-toolbar .dt-mode-menu-btn {
+  order: 5;
+}
+.dt-view.is-narrow .dt-toolbar .dt-kebab-btn {
+  order: 6;
+}
+/* 「今日」は文字ではなく「カレンダーの枠 + 今日の日付」のアイコンで出す（枠なしのボタン） */
+.dt-view.is-narrow .dt-toolbar button.dt-today-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 4px 6px;
+  color: var(--icon-color, var(--text-muted));
+}
+.dt-view.is-narrow .dt-toolbar button.dt-today-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--icon-color-hover, var(--text-normal));
+}
+.dt-view.is-narrow .dt-today-btn .dt-today-text {
+  display: none;
+}
+.dt-view.is-narrow .dt-today-btn .dt-today-icon {
+  display: inline-flex;
+}
+/* 4つ並ぶセグメントは幅を取りすぎるので、狭い画面ではアイコンのメニューに畳む */
 .dt-view.is-narrow .dt-mode {
   display: none;
 }
@@ -2629,13 +3733,64 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
   text-overflow: ellipsis;
 }
 
-/* モバイルはタップの的を大きく */
+/* モバイルはタップの的を大きく（パネルを全面表示中のヘッダーもツールバーと同じ高さに） */
 body.is-mobile .dt-toolbar .dt-mode-btn,
 body.is-mobile .dt-toolbar .dt-today-btn,
 body.is-mobile .dt-toolbar .dt-icon-btn,
 body.is-mobile .dt-toolbar .dt-mode-menu-btn,
-body.is-mobile .dt-toolbar .dt-date-label {
+body.is-mobile .dt-toolbar .dt-date-label,
+body.is-mobile .dt-view.is-pane-panel .dt-inbox-head .dt-icon-btn,
+body.is-mobile .dt-view.is-pane-panel .dt-inbox-head .dt-inbox-label {
   min-height: 34px;
+}
+/* Obsidian モバイルの button 既定スタイル（背景色・影・余白・高さ）は単独のクラスより
+   詳細度が高く、月タイトルと表示の単位のアイコンにグレーの箱が付き、チップの色も
+   上書きされていた。FAB と同じく、詳細度を上げたセレクタで打ち消す */
+body.is-mobile .dt-view .dt-toolbar button.dt-date-label,
+body.is-mobile .dt-view .dt-toolbar button.dt-mode-menu-btn,
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-today-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  height: auto;
+  min-height: 34px;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-date-label {
+  padding: 2px 6px;
+  color: var(--text-normal);
+}
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-date-label {
+  padding-left: 0;
+  padding-right: 4px;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-mode-menu-btn,
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-today-btn {
+  padding: 4px 6px;
+  color: var(--icon-color, var(--text-muted));
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-date-label:hover,
+body.is-mobile .dt-view .dt-toolbar button.dt-mode-menu-btn:hover,
+body.is-mobile .dt-view.is-narrow .dt-toolbar button.dt-today-btn:hover {
+  background: var(--background-modifier-hover);
+}
+/* 計測中・タイマーのチップの色・丸み・高さも同様に守る */
+body.is-mobile .dt-view .dt-toolbar button.dt-tracking-chip,
+body.is-mobile .dt-view .dt-toolbar button.dt-timer-chip {
+  height: auto;
+  min-height: 0;
+  padding: 2px 10px;
+  border: none;
+  border-radius: var(--radius-l);
+  box-shadow: none;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-tracking-chip,
+body.is-mobile .dt-view .dt-toolbar button.dt-timer-chip.is-finished {
+  background: var(--color-red);
+  color: #fff;
+}
+body.is-mobile .dt-view .dt-toolbar button.dt-timer-chip {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
 
 /* スマホでは UI の文字が小さすぎて読みにくいので、プラグイン内の基準サイズを引き上げる。
@@ -2645,6 +3800,8 @@ body.is-mobile .dt-view {
   --font-ui-smaller: 13px;
   --font-ui-small: 15px;
   --font-ui-medium: 16px;
+  /* ヘッダーの月タイトル（.dt-date-label）用。TickTick のヘッダーと同じくらいの大きさ */
+  --font-ui-large: 21px;
 }
 /* パネルのタブはスマホでは主要なナビ。タップの的も兼ねて一段大きく */
 body.is-mobile .dt-panel-tab {
@@ -2668,6 +3825,34 @@ body.is-mobile .dt-project-stats,
 body.is-mobile .dt-project-ticket,
 body.is-mobile .dt-project-group-count {
   font-size: 0.8em;
+}
+
+/* スマホの日付ヘッダー: 列が狭く縦の場所も貴重なので、
+   曜日 + 日付を「火 1」の横並び1行にして高さを詰め、予実のピルは一段小さく。
+   （タブレットは列が広いのでデスクトップと同じ縦積みのまま） */
+body.is-phone .dt-day-header {
+  padding: 3px 1px 4px;
+  gap: 2px;
+}
+body.is-phone .dt-day-header-date {
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+body.is-phone .dt-day-header-dow {
+  font-size: 10px;
+  letter-spacing: 0;
+}
+body.is-phone .dt-day-header-num {
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  font-size: var(--font-ui-small);
+}
+body.is-phone .dt-day-total {
+  font-size: 0.68em;
+  padding: 1px 5px 4px;
+  column-gap: 3px;
 }
 
 /* 週表示・月表示は 7 列で 1 マスが狭いので、上の基準サイズ引き上げの対象から
@@ -2718,4 +3903,242 @@ body.is-mobile .dt-view.is-month .dt-month-item .dt-owner-label {
 .dt-fab svg {
   width: 26px;
   height: 26px;
+}
+
+/* ---------- スマホのヘッダー用ドロップダウン ----------
+   Obsidian の Menu はスマホでは画面下のシートとして出るので、ヘッダー（上端）のボタンから
+   開くと選択肢が指から遠い。押したボタンの真下に付く小さなメニューで出す（TickTick 風）。
+   要素は body 直下に置く（ビューの overflow で切れないように） */
+.dt-dropdown-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-menu, 65);
+  background: transparent;
+}
+.dt-dropdown {
+  position: fixed;
+  z-index: calc(var(--layer-menu, 65) + 1);
+  box-sizing: border-box;
+  min-width: 190px;
+  max-width: min(360px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px;
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-l, 0 8px 24px rgba(0, 0, 0, 0.25));
+  font-size: var(--font-ui-medium, 15px);
+  color: var(--text-normal);
+  transform-origin: top left;
+  animation: dt-dropdown-in 120ms ease-out;
+}
+.dt-dropdown.is-align-right {
+  transform-origin: top right;
+}
+@keyframes dt-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 1行 = 1項目。指で押しやすい高さにし、Obsidian モバイルの button 既定スタイル
+   （背景色・影・高さ）は詳細度を上げたセレクタで打ち消す */
+body .dt-dropdown button.dt-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  margin: 0;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-s, 4px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: inherit;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+body .dt-dropdown button.dt-dropdown-item:hover,
+body .dt-dropdown button.dt-dropdown-item:active {
+  background: var(--background-modifier-hover);
+}
+body .dt-dropdown button.dt-dropdown-item.is-checked {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+/* アイコンの列（アイコン付きの項目が1つでもあるメニューだけ幅を確保し、文字の頭をそろえる） */
+.dt-dropdown-icon {
+  display: none;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.dt-dropdown.has-icons .dt-dropdown-icon {
+  display: inline-flex;
+}
+.dt-dropdown-icon svg,
+.dt-dropdown-check svg {
+  width: 18px;
+  height: 18px;
+}
+/* 長い項目名は切らずに折り返す（スマホでは「…」で切れると何の項目か分からない） */
+.dt-dropdown-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.dt-dropdown-check {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--interactive-accent);
+}
+/* 小見出し（「一度に表示する時間」など。Obsidian の Menu の disabled 項目に相当） */
+.dt-dropdown-label {
+  padding: 8px 12px 2px;
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dt-dropdown-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--background-modifier-border);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dt-dropdown {
+    animation: none;
+  }
+}
+
+/* ---------- 作業メモのポップアップ（タスクを Ctrl/Cmd + クリック） ---------- */
+.dt-memo-popover {
+  position: fixed;
+  z-index: var(--layer-popover, 30);
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
+}
+.dt-memo-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.dt-memo-pop-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dt-memo-pop-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+}
+.dt-memo-pop-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-memo-pop-actions {
+  display: flex;
+  gap: 2px;
+}
+.dt-memo-pop-btn {
+  height: auto;
+  min-height: 0;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+.dt-memo-pop-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.dt-memo-pop-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.dt-memo-pop-body {
+  overflow: auto;
+  padding: 6px 12px 10px;
+}
+.dt-memo-pop-sec {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 6px 0 4px;
+}
+.dt-memo-pop-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.dt-memo-pop-bar div {
+  height: 100%;
+  background: var(--interactive-accent);
+}
+.dt-memo-pop-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  padding: 2px 0;
+}
+.dt-memo-pop-step input[type="checkbox"] {
+  margin: 3px 0 0;
+}
+.dt-memo-pop-step.is-done .dt-memo-pop-step-text {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.dt-memo-pop-step-sub {
+  grid-column: 2;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.dt-memo-pop-md {
+  font-size: var(--font-ui-small);
+}
+.dt-memo-pop-md > :first-child,
+.dt-memo-pop-step-sub > :first-child {
+  margin-top: 0;
+}
+.dt-memo-pop-md > :last-child,
+.dt-memo-pop-step-sub > :last-child {
+  margin-bottom: 0;
+}
+.dt-memo-pop-empty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 6px 0;
 }

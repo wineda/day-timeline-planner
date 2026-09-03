@@ -26,7 +26,7 @@ import {
   type ProjectSummary,
 } from "./project";
 import { newBlockId } from "./markdown/id";
-import { DayTimelineView, VIEW_TYPE_DAY_TIMELINE } from "./view";
+import { DayTimelineView, PROJECT_HOVER_SOURCE, VIEW_TYPE_DAY_TIMELINE } from "./view";
 
 export default class DayTimelinePlugin extends Plugin {
   settings: DayTimelineSettings = { ...DEFAULT_SETTINGS };
@@ -51,6 +51,14 @@ export default class DayTimelinePlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_DAY_TIMELINE, (leaf) => new DayTimelineView(leaf, this));
     this.registerView(VIEW_TYPE_RECURRING, (leaf) => new RecurringManagerView(leaf, this));
+
+    // プロジェクト名の Ctrl/Cmd + クリックでノートをページプレビュー表示するための登録。
+    // ビュー側が Ctrl/Cmd + クリックのときだけ hover-link を投げる（ホバーでは投げない）ので、
+    // defaultMod: true にしておけばページプレビュー側の修飾キー判定もそのまま通る
+    this.registerHoverLinkSource(PROJECT_HOVER_SOURCE, {
+      display: "タイムスケジュール: プロジェクト名",
+      defaultMod: true,
+    });
 
     this.addRibbonIcon("calendar-clock", "タイムスケジュールを開く", () => {
       void this.activateView();
@@ -98,6 +106,11 @@ export default class DayTimelinePlugin extends Plugin {
       "timeline-projects-toggle-flat",
       "タイムスケジュール: プロジェクト一覧のフラット表示（グループの見出しなし）を切り替える",
       (v) => v.toggleProjectsFlatList()
+    );
+    viewCommand(
+      "timeline-projects-toggle-style",
+      "タイムスケジュール: プロジェクト一覧のツリー表示 / テーブル表示を切り替える",
+      (v) => v.toggleProjectsViewStyle()
     );
     viewCommand(
       "timeline-toggle-pane",
@@ -308,6 +321,9 @@ export default class DayTimelinePlugin extends Plugin {
       allowUnscheduled: true,
       dateLabel: "Inbox",
       tagChoices: this.settings.tagColors,
+      tagFieldSchema: this.settings.tagFieldSchema,
+      validateRequiredOnSave: this.settings.validateRequiredOnSave,
+      memberNames: this.settings.members.map((m) => m.name),
       showDoneCondition: true,
       trackers: this.settings.trackers,
       projects: this.projects?.list(),

@@ -39,6 +39,28 @@ export interface Task {
   steps: TaskStep[];
   /** ふりかえり（ブロック形式のみ。無ければ ""） */
   retrospective: string;
+  /** 結果 = 何がどこまで終わったか（ブロック形式のみ。無ければ ""） */
+  result: string;
+  /** 残 = 完了後に残った作業（ブロック形式のみ。無ければ ""） */
+  remaining: string;
+  /** 原因 = 障害・バグの原因（ブロック形式のみ。無ければ ""） */
+  cause: string;
+  /** 判断 = どう判断したか（ブロック形式のみ。無ければ ""） */
+  judgment: string;
+  /** 他者 = ボールが相手にあるもの（ブロック形式のみ。1件 = 1行。無ければ []） */
+  others: string[];
+  /** 回答 = 質問に回答が付いたか（"済" / "未" など。ブロック形式のみ。無ければ ""） */
+  answer: string;
+  /** 状態 = 中断などの状態（「中断(理由)」の値。ブロック形式のみ。無ければ ""） */
+  status: string;
+  /** Owner = タスクのオーナー名（「誰の予定か」とは別の記録上の担当。無ければ ""） */
+  ownerName: string;
+  /** 期限（「- 期限: YYYY-MM-DD」行。旧表記「期日:」も読む。無ければ ""） */
+  due: string;
+  /** 次アクション = 未完了事項の次の一手（「- 次アクション: …」行。無ければ ""） */
+  nextAction: string;
+  /** 登録日（Inbox に入れた日。ブロック形式のみ。無ければ ""） */
+  registered: string;
   /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
   actual: ActualRange[];
   /** プロジェクト（大きなタスク）ノートへのリンク先（ブロック形式のみ。無ければ null） */
@@ -68,6 +90,36 @@ export function isScheduled(t: Task): t is ScheduledTask {
   return t.start !== null && t.end !== null;
 }
 
+/** ステップの消化度（完了数・件数・割合 0〜1） */
+export interface StepProgress {
+  done: number;
+  total: number;
+  ratio: number;
+}
+
+/**
+ * タスクのステップの消化度。中身が空の行は数えない。
+ * ステップが1件も無ければ null（＝進捗バーを出さない）
+ */
+export function stepProgress(t: Task): StepProgress | null {
+  const steps = (t.steps ?? []).filter((st) => st.text.trim());
+  if (!steps.length) return null;
+  const done = steps.filter((st) => st.done).length;
+  return { done, total: steps.length, ratio: done / steps.length };
+}
+
+/**
+ * 進捗バーに出すタスクの消化度。ステップが1件も無いタスクは「ステップ1件」と数え、
+ * タスク自体を完了にすれば 1/1 = 100% になる。
+ * ステップがあるタスクも、完了にすれば残りは持ち越し済みとみなして 100% で出す
+ */
+export function taskProgress(t: Task): StepProgress {
+  const sp = stepProgress(t);
+  const total = sp ? sp.total : 1;
+  const done = t.done ? total : sp ? sp.done : 0;
+  return { done, total, ratio: done / total };
+}
+
 /** 追加・編集フォームの内容 */
 export interface TaskDraft {
   title: string;
@@ -82,6 +134,28 @@ export interface TaskDraft {
   steps?: TaskStep[];
   /** undefined = 変更しない */
   retrospective?: string;
+  /** 結果。undefined = 変更しない / "" = 消す */
+  result?: string;
+  /** 残。undefined = 変更しない / "" = 消す */
+  remaining?: string;
+  /** 原因。undefined = 変更しない / "" = 消す */
+  cause?: string;
+  /** 判断。undefined = 変更しない / "" = 消す */
+  judgment?: string;
+  /** 他者（1件 = 1行）。undefined = 変更しない / [] = 全部消す */
+  others?: string[];
+  /** 回答。undefined = 変更しない / "" = 消す */
+  answer?: string;
+  /** 状態。undefined = 変更しない / "" = 消す */
+  status?: string;
+  /** Owner。undefined = 変更しない / "" = 消す */
+  ownerName?: string;
+  /** 期限。undefined = 変更しない / "" = 消す */
+  due?: string;
+  /** 次アクション。undefined = 変更しない / "" = 消す */
+  nextAction?: string;
+  /** 登録日。undefined = 変更しない / "" = 消す */
+  registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
   actual?: ActualRange[];
   /** プロジェクト。undefined = 変更しない / null = 外す */

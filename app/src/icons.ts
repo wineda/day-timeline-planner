@@ -14,6 +14,10 @@ const ICON_RENAMES: Record<string, string[]> = {
   "check-circle-2": ["circle-check-big", "circle-check"],
   "check-square": ["square-check-big", "square-check"],
   "more-vertical": ["ellipsis-vertical"],
+  "stop-circle": ["circle-stop"],
+  // 表示モードの切替（週の列を模したアイコン）。どの名前も無い環境でも
+  // 最後の calendar-days で必ず何かが描画されるようにしておく
+  columns: ["columns-3", "columns-2", "calendar-days"],
 };
 
 /** 解決結果のキャッシュ（同梱アイコンは実行中に変わらない） */
