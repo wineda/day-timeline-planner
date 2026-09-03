@@ -1,7 +1,7 @@
 {
   "id": "day-timeline-planner",
   "name": "Day Timeline Planner",
-  "version": "2.105.0",
+  "version": "2.107.0",
   "minAppVersion": "1.5.0",
   "description": "Googleカレンダーのように時間帯をクリック／ドラッグしてタスクを作れるタイムライン（日表示・週表示）。タスクはノート内の Markdown ブロック（見出し + 本文）として保存され、タグで色分けでき、タスク単位でリンク・ジャンプできます。",
   "author": "",
