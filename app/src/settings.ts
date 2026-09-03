@@ -7,7 +7,7 @@ import { requestNotificationPermission, showAlert } from "./notify";
 export type ViewLocation = "tab" | "right" | "left";
 export type StorageFormat = "block" | "list";
 export type InsertPosition = "time" | "end";
-export type ViewMode = "day" | "3day" | "week" | "month";
+export type ViewMode = "day" | "3day" | "week" | "2week" | "month";
 /** 左サイドバーのタブ */
 export type SidebarTab = "inbox" | "projects" | "reschedule";
 
@@ -553,6 +553,8 @@ export interface DayTimelineSettings {
   hourHeight: number;
   /** タイムラインに一度に表示する時間の幅（4 / 8 / 12 時間）。0 = 「1時間あたりの高さ」に従う */
   zoomHours: number;
+  /** 2週間表示で、今週・来週の2段が1画面に収まるよう縮尺を自動で決める（ズームを手で変えると外れる） */
+  twoWeekFit: boolean;
   /** タイムラインに出すバー（予定 / 予実 / 実績） */
   paMode: PlanActualMode;
   /** 未完了→完了にしたとき、実績が空なら自動で記録する */
@@ -658,6 +660,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   endHour: 22,
   hourHeight: 60,
   zoomHours: 0,
+  twoWeekFit: true,
   paMode: "plan",
   autoRecordActual: true,
   projectsFolder: "",
@@ -1016,12 +1019,13 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("既定の表示")
       .setDesc(
-        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 月」でいつでも切り替えられます。" +
+        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 2週 / 月」でいつでも切り替えられます。" +
           "スマホでは画面が狭いため表示を別に記憶します（既定は日表示。ツールバーで切り替えるとそれを覚えます）。"
       )
       .addDropdown((d) =>
         d
           .addOption("week", "週（7日）")
+          .addOption("2week", "2週間（今週・来週の2段）")
           .addOption("3day", "3日")
           .addOption("day", "日（1日）")
           .addOption("month", "月（カレンダー）")
