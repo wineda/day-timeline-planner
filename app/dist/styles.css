@@ -813,6 +813,30 @@
 .dt-project-child-trow.is-done .dt-project-child-tag {
   opacity: 0.6;
 }
+/* テーブル表示のタグ列 */
+.dt-projects-table .dt-ptc-tag {
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 8px;
+}
+.dt-projects-table td.dt-ptc-tag .dt-project-child-tag {
+  max-width: 9em;
+}
+/* テーブル表示の子タスクの期日: 本日 = 青の●、未定 = オレンジの● */
+.dt-project-child-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.dt-project-child-dot.is-today {
+  background: var(--color-blue, #4a7fd0);
+}
+.dt-project-child-dot.is-undated,
+.dt-project-child-dot.is-unscheduled {
+  background: var(--color-orange, #e0a030);
+}
 /* 本日・日時が決まっていない子タスク: 枠付きのバッジ（塗りつぶすと目に付きすぎるので枠 + 色文字） */
 .dt-project-child-date.is-today,
 .dt-project-child-date.is-undated,

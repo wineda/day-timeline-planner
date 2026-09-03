@@ -146,7 +146,7 @@ const SIDEBAR_MIN_WIDTH = 160;
 const SIDEBAR_MAX_WIDTH = 800;
 
 /** プロジェクトのテーブル表示の列数（名前・期日・進捗・予定・実績） */
-const PROJECT_TABLE_COLS = 5;
+const PROJECT_TABLE_COLS = 6;
 
 /** 本日のサマリーのバーをタスクごとに区切る上限。これより多いと区切り線だけになるので1本の棒にする */
 const MAX_SUMMARY_SEGMENTS = 40;
@@ -1976,6 +1976,7 @@ export class DayTimelineView extends ItemView {
     const table = list.createEl("table", { cls: "dt-projects-table" });
     const headRow = table.createEl("thead").createEl("tr");
     headRow.createEl("th", { text: "プロジェクト", cls: "dt-ptc-name" });
+    headRow.createEl("th", { text: "タグ", cls: "dt-ptc-tag" });
     headRow.createEl("th", { text: "期日", cls: "dt-ptc-due" });
     headRow.createEl("th", { text: "進捗", cls: "dt-ptc-num dt-ptc-progress" });
     headRow.createEl("th", { text: "予定", cls: "dt-ptc-num" });
@@ -2006,6 +2007,7 @@ export class DayTimelineView extends ItemView {
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
     const fields = sum.fields;
     if (fields?.ticket) this.renderProjectTicketBadge(nameWrap, fields.ticket);
+    tr.createEl("td", { cls: "dt-ptc-tag" }); // タグの列はタスクの行だけ
     const dueTd = tr.createEl("td", { cls: "dt-ptc-due" });
     if (fields?.due) {
       const dueEl = dueTd.createSpan({ cls: "dt-project-due", text: this.projectDueLabel(fields) });
@@ -2045,9 +2047,9 @@ export class DayTimelineView extends ItemView {
     const wrap = tr.createEl("td", { cls: "dt-ptc-name" }).createDiv("dt-ptc-child");
     this.renderChildCheckbox(wrap, child);
     wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-    this.renderChildTagBadge(wrap, t);
-    const dateTd = tr.createEl("td", { cls: "dt-ptc-due" });
-    this.renderChildDateBadge(dateTd, child);
+    this.renderChildTagBadge(tr.createEl("td", { cls: "dt-ptc-tag" }), t);
+    // 期日の列: タスクは「本日（青）」「未定（オレンジ）」の印だけ。日付そのものは行のツールチップで
+    this.renderChildDateDot(tr.createEl("td", { cls: "dt-ptc-due" }), child);
     // 進捗の列: ステップが記録されたタスクだけ、消化率をバーと % で見せる（無ければ空のまま）
     this.renderStepProgressBar(tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" }), t);
     const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
@@ -2275,6 +2277,30 @@ export class DayTimelineView extends ItemView {
     if (child.date === null) dateEl.addClass("is-undated");
     else if (!scheduled) dateEl.addClass("is-unscheduled"); // 時刻未定（＝遅れ）は今日でもオレンジのまま
     else if (today) dateEl.addClass("is-today");
+  }
+
+  /**
+   * テーブル表示の子タスクの期日セル: 今日のタスクは青の●、日付未定・時刻未定（＝遅れ）はオレンジの●。
+   * それ以外の日付は出さない（一覧で見たいのは「今日やるか、まだ決めていないか」だけなので）
+   */
+  private renderChildDateDot(td: HTMLElement, child: ProjectChild): void {
+    const t = child.task;
+    const scheduled = t.start !== null && t.end !== null;
+    const today = !!child.date && isToday(child.date);
+    let cls = "";
+    let label = "";
+    if (child.date === null) {
+      cls = "is-undated";
+      label = "日付未定";
+    } else if (!scheduled) {
+      cls = "is-unscheduled";
+      label = `時刻未定（${child.date.getMonth() + 1}/${child.date.getDate()}）`;
+    } else if (today) {
+      cls = "is-today";
+      label = "本日";
+    }
+    if (!cls) return;
+    td.createSpan({ cls: "dt-project-child-dot " + cls, attr: { title: label, "aria-label": label } });
   }
 
   /** 子タスク行のふるまい（ツールチップ・ドラッグ・クリック・右クリックメニュー）。ツリー・テーブル共通 */
