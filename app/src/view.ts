@@ -27,7 +27,7 @@ import {
   type OtherActual,
   type RetroExtraField,
 } from "./modal";
-import { subtractActualRanges, type ActualRange, type TicketRef } from "./markdown/blocks";
+import { subtractActualRanges, type ActualRange, type TaskStep, type TicketRef } from "./markdown/blocks";
 import {
   groupProjects,
   knownGroupNames,
@@ -135,6 +135,9 @@ const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 
 /** 再スケジュール欄のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
 const RESCHEDULE_LOOKBACK_DAYS = 30;
+
+/** 残件の持ち越し先: 翌日 / 当日（同じノートに続きを作る） / Inbox */
+type CarryDest = "next-day" | "same-day" | "inbox";
 
 /** ビューの幅（px）がこれ未満なら「狭い画面」（スマホなど）。
  * サイドバーとタイムラインを並べると共倒れになるので、片方だけを全面に出して切り替える */
@@ -2756,9 +2759,8 @@ export class DayTimelineView extends ItemView {
       // 件数と時間の2本のメーター。件数だけだと短いタスクを片付けたくなるので、
       // 予定時間ベース（完了したタスクの予定時間 / 今日の予定時間）も並べる。
       // バーはタスクごとに区切る（件数は等分、時間は予定の長さに比例）ので、1つのタスクの大きさが見える
-      const own = all
-        .filter((t) => !t.owner && !t.forwarded)
-        .sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity));
+      const mine = all.filter((t) => !t.owner).sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity));
+      const own = mine.filter((t) => !t.forwarded);
       const segTip = (t: Task) =>
         [
           this.displayTitle(t),
@@ -2774,16 +2776,19 @@ export class DayTimelineView extends ItemView {
       );
       if (steps.total > 0) {
         // ステップ: タスクをまたいで1ステップ = 1区切り。区切りにマウスを乗せると「タスク名 / ステップ」
+        //（持ち越し済み [>] のタスクはチェック済みのステップだけ。stepStats と同じ数え方）
         this.summaryMeter(
           body,
           "ステップ",
-          own.flatMap((t) =>
-            t.steps
-              .filter((sp) => sp.text.trim())
-              .map((sp) => ({ weight: 1, done: sp.done, tip: `${this.displayTitle(t)}\n${sp.text}${sp.done ? " · 完了" : ""}` }))
+          mine.flatMap((t) =>
+            countedSteps(t).map((sp) => ({
+              weight: 1,
+              done: sp.done,
+              tip: `${this.displayTitle(t)}\n${sp.text}${sp.done ? " · 完了" : ""}`,
+            }))
           ),
           `${steps.done}/${steps.total}`,
-          `チェック済み ${steps.done} ステップ / 全 ${steps.total} ステップ（今日のタスクに書いた「- [ ] …」の合計）`
+          `チェック済み ${steps.done} ステップ / 全 ${steps.total} ステップ（今日のタスクに書いた「- [ ] …」の合計。持ち越し済み [>] はチェック済みだけ）`
         );
       }
       if (st.plan > 0) {
@@ -3259,8 +3264,14 @@ export class DayTimelineView extends ItemView {
         else void this.plugin.openProject(link);
       });
     }
-    if (task.carryFrom) this.carryBadge(el, "◀ 前日から", task.carryFrom, "持ち越し元のブロックを開く");
-    if (task.carryTo) this.carryBadge(el, "▶ 持ち越し先", task.carryTo, "持ち越し先のブロックを開く");
+    if (task.carryFrom) {
+      const same = this.isSameNoteLink(col.date, task, task.carryFrom);
+      this.carryBadge(el, same ? "◀ 前回から" : "◀ 前日から", task.carryFrom, same ? "当日の前回のブロック（持ち越し元）を開く" : "持ち越し元のブロックを開く");
+    }
+    if (task.carryTo) {
+      const same = this.isSameNoteLink(col.date, task, task.carryTo);
+      this.carryBadge(el, same ? "▶ 続き（当日）" : "▶ 持ち越し先", task.carryTo, same ? "当日の続きのブロック（持ち越し先）を開く" : "持ち越し先のブロックを開く");
+    }
     const handle = el.createDiv("dt-event-resize");
 
     this.attachEventInteractions(el, timeEl, handle, col, task);
@@ -3433,6 +3444,18 @@ export class DayTimelineView extends ItemView {
       this.showTaskMenu(col.date, task, e);
     });
     this.attachHoverPreview(el, col.date, task);
+  }
+
+  /**
+   * 持ち越しのリンク先が、そのタスクの入っているノート自身か（＝当日内の持ち越し）。
+   * リンクは "path#^id"（.md 無し）なので、パス部分をそのタスクのノートのパスと比べる
+   */
+  private isSameNoteLink(date: Date, task: Task, linktext: string): boolean {
+    const store = this.plugin.blockStoreFor(task.owner);
+    if (!store) return false;
+    const own = store.pathFor(date).replace(/\.md$/, "");
+    const target = linktext.split("#")[0].trim().replace(/\.md$/, "");
+    return !!target && target === own;
   }
 
   /** 持ち越し元・先へのリンクバッジ */
@@ -4587,6 +4610,12 @@ export class DayTimelineView extends ItemView {
           .setIcon("corner-down-right")
           .onClick(() => void this.commitCarryOver(date, task, "next-day"))
       );
+      menu.addItem((i) =>
+        i
+          .setTitle("当日内で続きを作る（記録を残す）")
+          .setIcon("repeat")
+          .onClick(() => void this.commitCarryOver(date, task, "same-day"))
+      );
       if (!task.owner && this.plugin.inbox) {
         menu.addItem((i) =>
           i
@@ -4937,6 +4966,7 @@ export class DayTimelineView extends ItemView {
       steps: unchecked,
       onComplete: (rem) => this.performUpdate(date, task, rem ? { ...data, remaining: rem } : data, wasDone),
       onCarryOver: !task.forwarded ? () => this.commitCarryOver(date, task, "next-day") : undefined,
+      onCarryOverSameDay: !task.forwarded ? () => this.commitCarryOver(date, task, "same-day") : undefined,
     }).open();
     return true;
   }
@@ -5204,9 +5234,11 @@ export class DayTimelineView extends ItemView {
 
   /**
    * 残件の持ち越し: タスクは動かさず、今日のブロックを [>] で閉じて
-   * 続きのブロックを翌日（または Inbox）に作る。実績・本文は今日の記録として残る
+   * 続きのブロックを翌日・当日（同じノート）・Inbox のどれかに作る。実績・本文は今日の記録として残る。
+   * 当日内は「1回目が終わらず、同じ日にもう一度取り組む」ためのもので、続きは未スケジュールで
+   * 同じノートの末尾に入る（再スケジュールのトレイからタイムラインへドラッグして2回目の時刻を決める）
    */
-  private async commitCarryOver(date: Date, task: Task, dest: "next-day" | "inbox"): Promise<void> {
+  private async commitCarryOver(date: Date, task: Task, dest: CarryDest): Promise<void> {
     const store = this.plugin.blockStoreFor(task.owner);
     const inbox = this.plugin.inbox;
     if (!store || (dest === "inbox" && (!inbox || task.owner))) {
@@ -5234,7 +5266,7 @@ export class DayTimelineView extends ItemView {
         .map((st) => ({ ...st, children: [...(st.children ?? [])] }));
       const newId = newBlockId();
       const toStore = dest === "inbox" ? inbox! : store;
-      const toDate = dest === "inbox" ? INBOX_DATE : addDays(date, 1);
+      const toDate = dest === "inbox" ? INBOX_DATE : dest === "same-day" ? date : addDays(date, 1);
       const toLink = `${toStore.pathFor(toDate).replace(/\.md$/, "")}#^${newId}`;
       await toStore.createWithId(toDate, {
         title: task.title,
@@ -5264,13 +5296,14 @@ export class DayTimelineView extends ItemView {
       });
       if (!ok) new Notice("持ち越し先は作りましたが、元のタスクを閉じられませんでした");
       else {
+        const name = stripTags(task.title) || "(無題)";
+        const rem = remaining.length ? `（残ステップ ${remaining.length} 件）` : "";
         new Notice(
           dest === "inbox"
-            ? `「${stripTags(task.title) || "(無題)"}」を Inbox へ持ち越しました` +
-              (remaining.length ? `（残ステップ ${remaining.length} 件）` : "")
-            : `「${stripTags(task.title) || "(無題)"}」を翌日へ持ち越しました` +
-              (remaining.length ? `（残ステップ ${remaining.length} 件）` : "") +
-              "。明日の未スケジュールのトレイに入ります"
+            ? `「${name}」を Inbox へ持ち越しました${rem}`
+            : dest === "same-day"
+              ? `「${name}」の続きを当日に作りました${rem}。再スケジュールのトレイからタイムラインへドラッグして2回目の時刻を決められます`
+              : `「${name}」を翌日へ持ち越しました${rem}。明日の未スケジュールのトレイに入ります`
         );
       }
     } catch (e) {
@@ -5509,7 +5542,7 @@ interface DayStats {
   /** 予定時間の合計と、そのうち完了したタスクぶん（分。時刻のあるタスクだけ） */
   plan: number;
   donePlan: number;
-  /** 実績の合計（分） */
+  /** 実績の合計（分）。持ち越し済み [>] のブロックに残した実績も、その日に働いた時間なので含める */
   actual: number;
   /** 達成率 0〜1。予定時間があれば時間ベース、無ければ件数ベース。タスクが無ければ null */
   ratio: number | null;
@@ -5526,7 +5559,11 @@ function dayStats(tasks: Task[]): DayStats {
   let donePlan = 0;
   let actual = 0;
   for (const t of tasks) {
-    if (t.owner || t.forwarded) continue;
+    if (t.owner) continue;
+    // 持ち越し済み [>] は件数・予定からは外すが、実績はその日に働いた時間なので足す
+    //（当日内の持ち越しだと、1回目の実績が消えて見えるのが目立つ）
+    actual += t.actual.reduce((m, r) => m + (r.end - r.start), 0);
+    if (t.forwarded) continue;
     total++;
     const p = isScheduled(t) ? t.end - t.start : 0;
     plan += p;
@@ -5534,20 +5571,28 @@ function dayStats(tasks: Task[]): DayStats {
       done++;
       donePlan += p;
     }
-    actual += t.actual.reduce((m, r) => m + (r.end - r.start), 0);
   }
   const ratio = plan > 0 ? donePlan / plan : total > 0 ? done / total : null;
   return { total, done, plan, donePlan, actual, ratio };
 }
 
-/** 今日の自分のタスクに書かれたステップの消化（持ち越し済み [>] は除く。空のステップ行は数えない） */
+/**
+ * サマリーのステップの区切りに数えるステップ。空のステップ行は数えない。
+ * 持ち越し済み [>] のタスクはチェック済みのステップだけ数える: 未チェックのものは続きのブロックへ
+ * 引き継がれている（当日内なら同じ日に並ぶ）ので、両方数えると二重になる。
+ * チェック済みのほうはその日にこなした分なので、持ち越しても消えないようにする
+ */
+function countedSteps(t: Task): TaskStep[] {
+  return t.steps.filter((sp) => sp.text.trim() && (!t.forwarded || sp.done));
+}
+
+/** 今日の自分のタスクに書かれたステップの消化（持ち越し済み [>] はチェック済みだけ数える） */
 function stepStats(tasks: Task[]): { total: number; done: number } {
   let total = 0;
   let done = 0;
   for (const t of tasks) {
-    if (t.owner || t.forwarded) continue;
-    for (const sp of t.steps) {
-      if (!sp.text.trim()) continue;
+    if (t.owner) continue;
+    for (const sp of countedSteps(t)) {
       total++;
       if (sp.done) done++;
     }
