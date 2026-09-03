@@ -2580,6 +2580,8 @@ export interface RemainingStepsOptions {
   onComplete: (remaining: string | null) => void | Promise<void>;
   /** 「翌日へ持ち越す」を選んだとき（完了にはしない）。無ければボタンを出さない */
   onCarryOver?: () => void | Promise<void>;
+  /** 「当日内で続きを作る」を選んだとき（完了にはせず、同じ日に続きのブロックを作る）。無ければボタンを出さない */
+  onCarryOverSameDay?: () => void | Promise<void>;
 }
 
 /**
@@ -2620,6 +2622,18 @@ export class RemainingStepsModal extends Modal {
           .onClick(async () => {
             this.close();
             await onCarryOver();
+          })
+      );
+    }
+    if (this.opts.onCarryOverSameDay) {
+      const onSameDay = this.opts.onCarryOverSameDay;
+      buttons.addButton((b) =>
+        b
+          .setButtonText("当日内で続きを作る")
+          .setTooltip("完了にせず、残ステップを引き継いだ続きのブロックを同じ日に作ります（時刻は未定。再スケジュールのトレイから割り当て）")
+          .onClick(async () => {
+            this.close();
+            await onSameDay();
           })
       );
     }
