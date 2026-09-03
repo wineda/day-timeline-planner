@@ -1581,16 +1581,16 @@
 .dt-day-header.is-saturday .dt-day-header-num {
   color: var(--color-blue);
 }
-/* 日付ヘッダーの予実合計。背景のピルは付けず、「実績/予定」と差異を小さな1行に、
+/* 日付ヘッダーの予実合計。背景のピルは付けず、実績と差異「14.1 +1.6」を小さな1行に、
    その下に予定に対する実績の割合を示す細いバーを置く（超過は赤）。
-   列が狭ければ差異が2行目へ折り返す */
+   予定の時間そのものは幅を取るので出さない。列が狭ければ差異が2行目へ折り返す */
 .dt-day-total {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
+  width: 100%; /* 数字が無い日（バーだけ）でもバーが列幅に広がるように */
   min-width: 0;
-  max-width: 100%;
   font-size: 0.72em;
   line-height: 1.2;
   color: var(--text-muted);
@@ -1604,9 +1604,6 @@
   column-gap: 5px;
   row-gap: 1px;
   max-width: 100%;
-}
-.dt-day-total .dt-day-total-nums {
-  white-space: nowrap;
 }
 .dt-day-total .dt-day-total-act {
   color: var(--text-normal);
