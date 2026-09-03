@@ -513,6 +513,8 @@ export interface RecurringInstance {
 
 /** 既定の保存フォルダ（空欄にはできない） */
 export const DEFAULT_FOLDER = "Timeline";
+/** 日報ノートのフォルダの既定 */
+export const DEFAULT_DAILY_REPORT_FOLDER = "daily";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
@@ -525,6 +527,11 @@ export interface DayTimelineSettings {
   folder: string;
   /** ファイル名の日付形式（Moment.js 形式） */
   dateFormat: string;
+  /**
+   * 日報ノート（AI などが書いたもの）を置くフォルダ。日付ヘッダーの日付クリックで、
+   * ここにあるファイル名に YYYY-MM-DD を含むノートをその日の日報として表示する
+   */
+  dailyReportFolder: string;
   /** 旧リスト形式で予定を書き込む見出し（例: "## タイムスケジュール"）。移行元にもなる */
   heading: string;
   /** ノート新規作成時に使うテンプレートのパス（任意） */
@@ -645,6 +652,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   settingsVersion: SETTINGS_VERSION,
   folder: DEFAULT_FOLDER,
   dateFormat: "YYYY-MM-DD",
+  dailyReportFolder: DEFAULT_DAILY_REPORT_FOLDER,
   heading: "## タイムスケジュール",
   templatePath: "",
   storageFormat: "block",
@@ -721,6 +729,9 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
     }
   }
   if (!s.folder.trim()) s.folder = DEFAULT_FOLDER;
+  if (typeof s.dailyReportFolder !== "string" || !s.dailyReportFolder.trim()) {
+    s.dailyReportFolder = DEFAULT_DAILY_REPORT_FOLDER;
+  }
   if (!Array.isArray(s.tagColors)) s.tagColors = [];
   s.tagColors = s.tagColors
     .filter((r) => !!r && typeof r === "object" && typeof r.tag === "string")
@@ -864,6 +875,23 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           await save();
         })
     );
+
+    new Setting(containerEl)
+      .setName("日報のフォルダ")
+      .setDesc(
+        `AI などが書いた日報ノートを置くフォルダ（既定: ${DEFAULT_DAILY_REPORT_FOLDER}）。` +
+          "日付ヘッダーの日付をクリックすると、このフォルダ（下の階層も含む）でファイル名に " +
+          "YYYY-MM-DD を含むノートを探して、その日の日報として表示します。"
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder(DEFAULT_DAILY_REPORT_FOLDER)
+          .setValue(s.dailyReportFolder)
+          .onChange(async (v) => {
+            s.dailyReportFolder = v.trim().replace(/^\/+|\/+$/g, "") || DEFAULT_DAILY_REPORT_FOLDER;
+            await save();
+          })
+      );
 
     new Setting(containerEl)
       .setName("新規ノートのテンプレート")

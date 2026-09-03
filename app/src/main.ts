@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Editor, MarkdownView, Notice, Plugin, TFile, TFolder, Vault, WorkspaceLeaf, moment, normalizePath } from "obsidian";
 import {
   DEFAULT_SETTINGS,
   DayTimelineSettingTab,
@@ -16,7 +16,7 @@ import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
-import { DailyReportModal } from "./report-modal";
+import { DailyReportModal, type DailyDay, type DailyNote } from "./report-modal";
 import {
   ProjectStore,
   buildTaskListSection,
@@ -264,7 +264,7 @@ export default class DayTimelinePlugin extends Plugin {
     });
     this.addCommand({
       id: "daily-report-note",
-      name: "日報をノートに書き出す（表示中の日）",
+      name: "日報（タスクの集計）をノートに書き出す（表示中の日）",
       checkCallback: (checking) => {
         if (!this.blockStore()) return false;
         if (!checking) void this.createDailyReport(this.getTimelineView()?.getDate() ?? new Date());
@@ -302,7 +302,43 @@ export default class DayTimelinePlugin extends Plugin {
   }
 
   /**
+   * 日報ノートのフォルダ（設定「日報のフォルダ」。既定 daily）
+   */
+  dailyReportFolder(): string {
+    return normalizePath(this.settings.dailyReportFolder.trim().replace(/^\/+|\/+$/g, "") || "daily");
+  }
+
+  /**
+   * その日の日報ノート（AI などが書いたもの）を探す。
+   * 日報のフォルダ（下の階層も含む）で、ファイル名に YYYY-MM-DD（またはノートの日付形式）を
+   * 含む .md を候補にし、日付そのものがファイル名のものを優先。無ければ null
+   */
+  findDailyNote(date: Date): TFile | null {
+    const dir = this.app.vault.getAbstractFileByPath(this.dailyReportFolder());
+    if (!(dir instanceof TFolder)) return null;
+    const keys = [dateKey(date), moment(date).format(this.settings.dateFormat)];
+    const found: TFile[] = [];
+    Vault.recurseChildren(dir, (f) => {
+      if (f instanceof TFile && f.extension === "md" && keys.some((k) => f.basename.includes(k))) found.push(f);
+    });
+    found.sort(
+      (a, b) =>
+        Number(!keys.includes(a.basename)) - Number(!keys.includes(b.basename)) ||
+        a.path.localeCompare(b.path)
+    );
+    return found[0] ?? null;
+  }
+
+  /** その日の日報ノートと本文（無ければ null） */
+  private async readDailyNote(date: Date): Promise<DailyNote | null> {
+    const file = this.findDailyNote(date);
+    if (!file) return null;
+    return { file, content: await this.app.vault.cachedRead(file) };
+  }
+
+  /**
    * その日の日報をポップアップで見せる（日付ヘッダーの日付のクリック / コマンド）。
+   * 日報のフォルダにあるノートを描画する。無い日は案内と、代わりのタスクの集計。
    * ノートを読み直してから出すので、他の端末で書いた分もそのまま反映される
    */
   async openDailyReport(date: Date): Promise<void> {
@@ -312,14 +348,19 @@ export default class DayTimelinePlugin extends Plugin {
       return;
     }
     const day = startOfDay(date);
+    const loadDay = async (d: Date): Promise<DailyDay> => ({
+      note: await this.readDailyNote(d),
+      tasks: (await store.load(d)).tasks,
+    });
     try {
-      const tasks = (await store.load(day)).tasks;
       new DailyReportModal(this.app, {
         date: day,
-        tasks,
-        loadTasks: async (d) => (await store.load(d)).tasks,
+        day: await loadDay(day),
+        loadDay,
+        noteFolder: this.dailyReportFolder(),
         ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
         colorOfTags: (tags) => colorForTags(tags, this.settings.tagColors),
+        onOpenNote: (file) => void this.app.workspace.getLeaf("tab").openFile(file),
         onExport: (d) => void this.createDailyReport(d),
         onSelectTask: (d, task) => this.getTimelineView()?.revealTask(d, task),
       }).open();

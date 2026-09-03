@@ -1,10 +1,12 @@
 /**
  * 日報のポップアップ（日付ヘッダーの日付をクリックすると開く）。
- * その日の予定・実績の合計、タスクの一覧、結果・ふりかえりなどの記録、集計をまとめて見せる。
- * 「ノートに書き出す」で同じ内容を Markdown のノート（日報）にできる。
+ * 設定「日報のフォルダ」（既定 daily）にある、その日の日報ノート（AI などが書いたもの）を
+ * そのまま Markdown として描画する。日報がまだ無い日は案内を出し、必要なら
+ * プラグインが集計した予定・実績・記録（タスクの集計）を代わりに見られる。
  * 左右のスワイプ（◀ ▶ ボタン・← → キーでも）で前後の日の日報に移れる。
  */
-import { App, Modal, Notice, Setting, moment, setIcon } from "obsidian";
+import { App, Component, MarkdownRenderer, Modal, Notice, Setting, TFile, moment, setIcon } from "obsidian";
+import type { ButtonComponent } from "obsidian";
 import type { Task } from "./model";
 import {
   actualLabel,
@@ -15,22 +17,37 @@ import {
   type DailyBucket,
   type DailyReport,
 } from "./report";
-import { addDays, isToday, stripTags } from "./util";
+import { addDays, dateKey, isToday, stripTags } from "./util";
 import { iconName } from "./icons";
+
+/** 日報のノート（フォルダから見つけたもの）と、その本文 */
+export interface DailyNote {
+  file: TFile;
+  content: string;
+}
+
+/** 1日ぶんの材料: 日報ノート（無ければ null）と、集計用のその日のタスク */
+export interface DailyDay {
+  note: DailyNote | null;
+  tasks: Task[];
+}
 
 export interface DailyReportModalOptions {
   date: Date;
-  /** その日のタスク（メンバーの予定が混ざっていても中で除外する） */
-  tasks: Task[];
-  /** 別の日へ移ったときにその日のタスクを読む（無ければ日付の移動はできない） */
-  loadTasks?: (date: Date) => Promise<Task[]>;
+  day: DailyDay;
+  /** 別の日へ移ったときにその日の材料を読む（無ければ日付の移動はできない） */
+  loadDay?: (date: Date) => Promise<DailyDay>;
+  /** 日報ノートを探すフォルダ（無いときの案内に出す） */
+  noteFolder: string;
   /** チケットの URL（無ければ null） */
   ticketUrlOf: (tracker: string, id: string) => string | null;
   /** タグの色（バッジの色分けに使う。無ければ枠線だけ） */
   colorOfTags: (tags: string[]) => string | null;
-  /** 「ノートに書き出す」を押したとき（表示中の日） */
+  /** 「ノートで開く」を押したとき（日報ノートをタブで開く） */
+  onOpenNote: (file: TFile) => void;
+  /** 「集計をノートに書き出す」を押したとき（表示中の日） */
   onExport: (date: Date) => void;
-  /** タスクの行をクリックしたとき（タイムラインの該当ブロックへジャンプ）。無ければクリック不可 */
+  /** 集計のタスク行をクリックしたとき（タイムラインの該当ブロックへジャンプ）。無ければクリック不可 */
   onSelectTask?: (date: Date, task: Task) => void;
 }
 
@@ -48,6 +65,11 @@ function diff(plan: number, act: number): string {
   return `${d > 0 ? "+" : "-"}${hmm(Math.abs(d))}`;
 }
 
+/** 先頭の YAML フロントマターを外す（描画すると表やコードになって邪魔なので） */
+function stripFrontmatter(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+
 /** 横スワイプと見なす最小の移動量（px）。タイムラインの日付移動と同じ */
 const SWIPE_MIN_X = 48;
 /** これより縦に動いたらスクロールと見なしてスワイプ判定をやめる */
@@ -56,12 +78,18 @@ const SWIPE_SLOP_Y = 10;
 export class DailyReportModal extends Modal {
   /** 表示中の日（スワイプで変わる） */
   private date: Date;
+  private note: DailyNote | null;
   private tasks: Task[];
   private report: DailyReport;
+  /** 日報が無い日に「タスクの集計」を開いているか（日を移っても保つ） */
+  private summaryOpen = false;
   /** 日付の切替が重ならないよう、最後の読み込みだけを反映するための通し番号 */
   private loadSeq = 0;
   private titleLabelEl: HTMLElement | null = null;
   private bodyEl: HTMLElement | null = null;
+  private openNoteBtn: ButtonComponent | null = null;
+  /** MarkdownRenderer の寿命をこのポップアップに合わせるための入れ物 */
+  private component = new Component();
 
   constructor(
     app: App,
@@ -69,39 +97,46 @@ export class DailyReportModal extends Modal {
   ) {
     super(app);
     this.date = opts.date;
-    this.tasks = opts.tasks;
-    this.report = summarizeDaily({ date: opts.date, tasks: opts.tasks });
+    this.note = opts.day.note;
+    this.tasks = opts.day.tasks;
+    this.report = summarizeDaily({ date: opts.date, tasks: opts.day.tasks });
   }
 
   onOpen(): void {
     const { contentEl } = this;
+    this.component.load();
     this.modalEl.addClass("dt-modal");
     this.modalEl.addClass("dt-daily-modal");
     this.renderTitle();
     this.bodyEl = contentEl.createDiv("dt-daily-body");
-    this.renderBody();
 
     const buttons = new Setting(contentEl);
     buttons.settingEl.addClass("dt-modal-buttons");
     buttons.addButton((b) =>
       b
         .setButtonText("コピー")
-        .setTooltip("日報の Markdown をクリップボードにコピー")
+        .setTooltip("日報の Markdown をクリップボードにコピー（日報が無い日はタスクの集計）")
         .onClick(() => void this.copy())
     );
-    buttons.addButton((b) =>
-      b
-        .setButtonText("ノートに書き出す")
+    buttons.addButton((b) => {
+      this.openNoteBtn = b;
+      b.setButtonText("ノートで開く")
         .setCta()
         .onClick(() => {
-          const date = this.date;
+          const note = this.note;
+          if (!note) {
+            new Notice("この日の日報はまだありません");
+            return;
+          }
           this.close();
-          this.opts.onExport(date);
-        })
-    );
+          this.opts.onOpenNote(note.file);
+        });
+    });
     buttons.addButton((b) => b.setButtonText("閉じる").onClick(() => this.close()));
 
-    if (this.opts.loadTasks) {
+    void this.renderBody();
+
+    if (this.opts.loadDay) {
       this.attachSwipe();
       // ← → で前後の日（入力欄は無いので、そのままキーを取ってよい）
       this.scope.register([], "ArrowLeft", (e) => {
@@ -117,6 +152,7 @@ export class DailyReportModal extends Modal {
 
   onClose(): void {
     this.loadSeq++;
+    this.component.unload();
     this.contentEl.empty();
   }
 
@@ -125,12 +161,12 @@ export class DailyReportModal extends Modal {
     const el = this.titleEl;
     el.empty();
     el.addClass("dt-daily-title-bar");
-    if (this.opts.loadTasks) {
+    if (this.opts.loadDay) {
       this.navButton(el, "chevron-left", "前の日の日報（← キー / 右へスワイプ）", -1);
     }
     this.titleLabelEl = el.createSpan("dt-daily-title-label");
     this.updateTitleLabel();
-    if (this.opts.loadTasks) {
+    if (this.opts.loadDay) {
       this.navButton(el, "chevron-right", "次の日の日報（→ キー / 左へスワイプ）", 1);
     }
   }
@@ -153,17 +189,77 @@ export class DailyReportModal extends Modal {
     if (isToday(this.date)) el.createSpan({ cls: "dt-daily-title-today", text: "今日" });
   }
 
-  /** 本文（合計・タスク・記録・集計）を描き直す */
-  private renderBody(): void {
+  /**
+   * 本文を描き直す。日報ノートがあればその Markdown を描画し、
+   * 無ければ案内 + 「タスクの集計を見る」（開いていれば集計）
+   */
+  private async renderBody(): Promise<void> {
     const body = this.bodyEl;
     if (!body) return;
     body.empty();
-    this.renderTotals(body);
-    this.renderTasks(body);
-    this.renderNotes(body);
-    this.renderOthers(body);
-    this.renderLeftovers(body);
-    this.renderBuckets(body);
+    this.openNoteBtn?.setDisabled(!this.note);
+    const note = this.note;
+    if (note) {
+      const md = body.createDiv("dt-daily-md markdown-rendered");
+      const seq = this.loadSeq;
+      await MarkdownRenderer.render(this.app, stripFrontmatter(note.content), md, note.file.path, this.component);
+      if (seq !== this.loadSeq) return; // 描画中に別の日へ移った・閉じた
+      // ノート内のリンクはポップアップを閉じてから開く（描画しただけでは動かないので）
+      md.addEventListener("click", (e) => {
+        const a = (e.target as HTMLElement).closest<HTMLElement>("a.internal-link");
+        if (!a) return;
+        e.preventDefault();
+        const href = a.getAttr("data-href") ?? a.getAttr("href") ?? "";
+        if (!href) return;
+        this.close();
+        void this.app.workspace.openLinkText(href, note.file.path, false).catch((err) => {
+          console.error(err);
+          new Notice("リンク先を開けませんでした: " + String(err));
+        });
+      });
+      return;
+    }
+
+    const miss = body.createDiv("dt-daily-missing");
+    const icon = miss.createSpan("dt-daily-missing-icon");
+    setIcon(icon, iconName("file-x"));
+    const text = miss.createDiv("dt-daily-missing-text");
+    text.createDiv({
+      cls: "dt-daily-missing-title",
+      text: `${moment(this.date).format("M月D日")} の日報はまだありません`,
+    });
+    text.createDiv({
+      cls: "dt-daily-missing-desc",
+      text: `フォルダ「${this.opts.noteFolder}」で、ファイル名に ${dateKey(this.date)} を含むノートを探しています`,
+    });
+    const toggle = miss.createEl("button", {
+      cls: "dt-daily-summary-toggle",
+      text: this.summaryOpen ? "タスクの集計を隠す" : "タスクの集計を見る",
+      attr: { type: "button" },
+    });
+    toggle.addEventListener("click", () => {
+      this.summaryOpen = !this.summaryOpen;
+      void this.renderBody();
+    });
+    if (this.summaryOpen) {
+      const sum = body.createDiv("dt-daily-summary");
+      this.renderTotals(sum);
+      this.renderTasks(sum);
+      this.renderNotes(sum);
+      this.renderOthers(sum);
+      this.renderLeftovers(sum);
+      this.renderBuckets(sum);
+      const exp = sum.createEl("button", {
+        cls: "dt-daily-summary-export",
+        text: "集計をノートに書き出す",
+        attr: { type: "button" },
+      });
+      exp.addEventListener("click", () => {
+        const date = this.date;
+        this.close();
+        this.opts.onExport(date);
+      });
+    }
   }
 
   /**
@@ -171,15 +267,15 @@ export class DailyReportModal extends Modal {
    * 連続でスワイプされたときは最後の日だけを反映する
    */
   private async go(dir: -1 | 1): Promise<void> {
-    const load = this.opts.loadTasks;
+    const load = this.opts.loadDay;
     const body = this.bodyEl;
     if (!load || !body) return;
     const date = addDays(this.date, dir);
     const seq = ++this.loadSeq;
     body.addClass("is-loading");
-    let tasks: Task[];
+    let day: DailyDay;
     try {
-      tasks = await load(date);
+      day = await load(date);
     } catch (e) {
       console.error(e);
       if (seq === this.loadSeq) body.removeClass("is-loading");
@@ -188,10 +284,12 @@ export class DailyReportModal extends Modal {
     }
     if (seq !== this.loadSeq) return; // その後さらに移動している
     this.date = date;
-    this.tasks = tasks;
-    this.report = summarizeDaily({ date, tasks });
+    this.note = day.note;
+    this.tasks = day.tasks;
+    this.report = summarizeDaily({ date, tasks: day.tasks });
     this.updateTitleLabel();
-    this.renderBody();
+    await this.renderBody();
+    if (seq !== this.loadSeq) return;
     body.removeClass("is-loading");
     body.removeClass("is-slide-left", "is-slide-right");
     // 同じクラスを付け直してもアニメーションが再生されるよう、1フレーム空ける
@@ -265,27 +363,32 @@ export class DailyReportModal extends Modal {
     );
   }
 
+  /** コピーする Markdown: 日報ノートの本文。無い日はタスクの集計 */
   private markdown(): string {
+    if (this.note) return this.note.content;
     return buildDailyReport({ date: this.date, tasks: this.tasks }, { ticketUrlOf: this.opts.ticketUrlOf });
   }
 
   private async copy(): Promise<void> {
     const text = this.markdown();
+    const what = this.note ? "日報" : "タスクの集計";
     try {
       // モバイルの WebView では navigator.clipboard が使えないことがあるので、
       // 使えなければ隠しテキストエリア + execCommand("copy") に落とす
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
       else if (!copyFallback(text)) throw new Error("クリップボードを使えません");
-      new Notice("日報をコピーしました");
+      new Notice(`${what}をコピーしました`);
     } catch (e) {
       console.error(e);
       if (copyFallback(text)) {
-        new Notice("日報をコピーしました");
+        new Notice(`${what}をコピーしました`);
         return;
       }
       new Notice("コピーできませんでした: " + String(e));
     }
   }
+
+  // ---------- タスクの集計（日報が無い日のフォールバック） ----------
 
   /** 上段: 予定・実績・差異・完了件数のピル */
   private renderTotals(parent: HTMLElement): void {

@@ -4204,7 +4204,7 @@ body .dt-dropdown button.dt-dropdown-item.is-checked {
 
 /* ---------- 日報（日付ヘッダーの日付のクリックで開くポップアップ） ---------- */
 .dt-daily-modal {
-  max-width: 640px;
+  max-width: 760px;
 }
 body:not(.is-mobile) .dt-daily-modal .modal-content {
   max-height: 70vh;
@@ -4545,4 +4545,69 @@ button.dt-daily-nav svg {
 body.is-mobile button.dt-daily-nav {
   width: 40px;
   height: 40px;
+}
+
+
+/* 日報ノート（daily 配下）の描画。Obsidian の markdown-rendered に少し詰めた行間を足す */
+.dt-daily-md {
+  font-size: var(--font-ui-small);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.dt-daily-md > :first-child {
+  margin-top: 0;
+}
+.dt-daily-md > :last-child {
+  margin-bottom: 0;
+}
+.dt-daily-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+/* 日報が無い日の案内 */
+.dt-daily-missing {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  flex-wrap: wrap;
+}
+.dt-daily-missing-icon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  padding-top: 2px;
+}
+.dt-daily-missing-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-daily-missing-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.dt-daily-missing-title {
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+}
+.dt-daily-missing-desc {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+button.dt-daily-summary-toggle,
+button.dt-daily-summary-export {
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller);
+  padding: 4px 10px;
+  height: auto;
+}
+.dt-daily-summary {
+  margin-top: 12px;
+}
+button.dt-daily-summary-export {
+  margin-top: 12px;
 }
