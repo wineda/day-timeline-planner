@@ -28,6 +28,7 @@ import {
 import {
   ConfirmModal,
   PromptModal,
+  ProjectDifficultyModal,
   RemainingStepsModal,
   RetrospectiveModal,
   TaskModal,
@@ -2766,6 +2767,24 @@ export class DayTimelineView extends ItemView {
       );
     }
     menu.addSeparator();
+    if (this.plugin.settings.bossBattle) {
+      menu.addItem((i) =>
+        i
+          .setTitle("難易度を変更…")
+          .setIcon("swords")
+          .onClick(() =>
+            new ProjectDifficultyModal(this.app, {
+              projectName: sum.ref.name,
+              initial: { difficulty: sum.fields?.difficulty ?? null, monster: sum.fields?.monster || null },
+              onSubmit: async (c) => {
+                const ok = await this.plugin.projects?.setDifficulty(sum.ref.linktext, c.difficulty, c.monster);
+                if (!ok) new Notice("難易度を保存できませんでした");
+                await this.reload();
+              },
+            }).open()
+          )
+      );
+    }
     menu.addItem((i) =>
       i.setTitle("プロジェクトを完了にする").setIcon("check-circle-2").onClick(() => this.completeProject(sum))
     );

@@ -476,8 +476,8 @@ export default class DayTimelinePlugin extends Plugin {
       groups: knownGroupNames(projects.list(), this.settings.projectGroups.map((g) => g.name)),
       initialGroup,
       templatePath: hasTemplate ? tplPath : null,
-      onSubmit: async (name, group) => {
-        const link = await projects.create(name, group);
+      onSubmit: async (name, group, difficulty, monster) => {
+        const link = await projects.create(name, group, difficulty, monster);
         if (!link) {
           new Notice("プロジェクトを作成できませんでした");
           return;
