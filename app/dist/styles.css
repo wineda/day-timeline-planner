@@ -2446,6 +2446,8 @@
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
+  /* スマホの標準ボタンは角丸が大きく、下線が角丸に沿って湾曲してしまう */
+  border-radius: 0;
   margin-bottom: -1px;
   box-shadow: none;
   color: var(--text-muted);
