@@ -4,6 +4,7 @@
  * 1体は左半分（グリッドの半分の幅）の文字列で、左右対称に展開して描く。横向きのものは全幅で書く。
  * 記号: . 空 / # 体 / e 目 / m 口 / t 牙・歯（白） / a アクセント / h ハイライト / w 第2色（翼・服） / d 暗色 / r 赤
  * ランクごとにドットの数が違う（雑魚 16×16・中級 24×24・ボス 32×32）ので、同じドットの大きさで描くと上のランクほど大きくなる。
+ * 描画時に EPX（Scale2x）で 2 倍に拡大して斜めの段差を埋めるので、見た目は 32×32 / 48×48 / 64×64 相当のなめらかさになる。
  * すべて SVG の文字列として生成するので、画像ファイルは要らない
  */
 
@@ -254,6 +255,32 @@ function outline(g: string[], n: number): string[][] {
   return out;
 }
 
+/**
+ * ピクセルアート用の EPX（Scale2x）でグリッドを2倍に拡大する。
+ * 上下左右の色を見て斜めの段差の角を埋めるので、同じドット絵でも解像度を上げたようになめらかになる
+ */
+function scale2x(g: (string | null)[][]): (string | null)[][] {
+  const h = g.length;
+  const w = g[0]?.length ?? 0;
+  const out: (string | null)[][] = Array.from({ length: h * 2 }, () => new Array<string | null>(w * 2).fill(null));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = g[y][x];
+      const up = y > 0 ? g[y - 1][x] : null;
+      const right = x + 1 < w ? g[y][x + 1] : null;
+      const left = x > 0 ? g[y][x - 1] : null;
+      const down = y + 1 < h ? g[y + 1][x] : null;
+      const row0 = out[y * 2];
+      const row1 = out[y * 2 + 1];
+      row0[x * 2] = left === up && left !== down && up !== right ? up : p;
+      row0[x * 2 + 1] = up === right && up !== left && right !== down ? right : p;
+      row1[x * 2] = down === left && down !== right && left !== up ? left : p;
+      row1[x * 2 + 1] = right === down && right !== up && down !== left ? down : p;
+    }
+  }
+  return out;
+}
+
 function gray(c: string): string {
   const v = parseInt(c.slice(1), 16);
   const l = Math.round((v >> 16) * 0.3 + ((v >> 8) & 255) * 0.59 + (v & 255) * 0.11);
@@ -272,14 +299,14 @@ export function monsterSVG(m: Monster, hp: number, size: number): string {
   const hurt = hp <= 0.5 && !defeated;
   const critical = hp <= 0.2 && !defeated;
   const col = (c: string) => (defeated ? gray(c) : c);
-  let body = "";
   const eyes: [number, number][] = [];
   const mouth: [number, number][] = [];
   const cells: [number, number][] = [];
-  g.forEach((row, y) =>
-    row.forEach((ch, x) => {
+  // シンボルを色に直してから EPX で2倍に拡大する。目・口・汗などの飾りは元のドット座標のまま重ねる
+  const colors = g.map((row, y) =>
+    row.map((ch, x): string | null => {
       let c = ch;
-      if (c === ".") return;
+      if (c === ".") return null;
       if (c === "e") {
         eyes.push([x, y]);
         c = "#";
@@ -288,9 +315,26 @@ export function monsterSVG(m: Monster, hp: number, size: number): string {
         if (hurt || defeated) c = "#";
       }
       if (c === "#" && y > n / 2) cells.push([x, y]);
-      body += `<rect x="${x * px}" y="${y * px}" width="${px}" height="${px}" fill="${col(m.pal[c] ?? m.pal["#"])}"/>`;
+      return m.pal[c] ?? m.pal["#"];
     })
   );
+  const hi = scale2x(colors);
+  const hpx = px / 2;
+  let body = "";
+  hi.forEach((row, y) => {
+    // 同じ色の横並びは1つの rect にまとめて、SVG が大きくなり過ぎないようにする
+    for (let x = 0; x < row.length; ) {
+      const c = row[x];
+      if (!c) {
+        x++;
+        continue;
+      }
+      let x2 = x + 1;
+      while (x2 < row.length && row[x2] === c) x2++;
+      body += `<rect x="${x * hpx}" y="${y * hpx}" width="${(x2 - x) * hpx}" height="${hpx}" fill="${col(c)}"/>`;
+      x = x2;
+    }
+  });
   const dark = col(m.pal.o);
   for (const [x, y] of eyes) {
     const X = x * px;
