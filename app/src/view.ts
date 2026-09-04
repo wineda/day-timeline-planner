@@ -2011,10 +2011,13 @@ export class DayTimelineView extends ItemView {
     this.renderInbox();
   }
 
-  /** そのプロジェクトに今日のタスク（自分・メンバー問わず）があるか */
+  /** そのプロジェクトに今日のタスク（自分・メンバー問わず）があるか。
+   * 持ち越し済み [>] は別の日へ送った記録なので、今日のタスクには数えない */
   private projectHasToday(sum: ProjectSummary): boolean {
     const today = startOfDay(new Date());
-    return sum.children.some((c) => c.date !== null && isSameDay(c.date, today));
+    return sum.children.some(
+      (c) => c.date !== null && isSameDay(c.date, today) && !c.task.forwarded
+    );
   }
 
   toggleProjectsFlatList(): void {
@@ -2112,7 +2115,7 @@ export class DayTimelineView extends ItemView {
         b.addEventListener("click", () => this.setProjectsFilter(id));
       };
       chip("all", "すべて", all.length, "進行中のプロジェクトをすべて表示");
-      chip("today", "本日", todayOnes.length, "今日のタスクがあるプロジェクトだけを表示");
+      chip("today", "本日", todayOnes.length, "今日のタスクがあるプロジェクトだけを表示（持ち越し済みは除く）");
     }
     const active = filter === "today" ? todayOnes : all;
     const list = wrap.createDiv("dt-projects-list");
@@ -2698,9 +2701,13 @@ export class DayTimelineView extends ItemView {
 
   /** 展開時に見せる子タスク。「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない */
   private visibleProjectChildren(sum: ProjectSummary): ProjectChild[] {
-    return this.plugin.settings.projectsHideDone
-      ? sum.children.filter((c) => !c.task.done && !c.task.forwarded)
-      : sum.children;
+    const s = this.plugin.settings;
+    return sum.children.filter(
+      (c) =>
+        (!s.projectsHideDone || (!c.task.done && !c.task.forwarded)) &&
+        // 「本日」の絞り込み中は持ち越し済み [>]（別の日へ送った記録）を出さない
+        (s.projectsFilter !== "today" || !c.task.forwarded)
+    );
   }
 
   /** 子タスクの完了チェックボックス。ツリー・テーブル共通 */
