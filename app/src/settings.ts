@@ -68,6 +68,7 @@ export const DEFAULT_TAG_COLORS: TagColor[] = [
   { tag: "開発/設計", color: "#4a90d9", hint: "設計・方式検討" },
   { tag: "開発/実装", color: "#4a90d9", hint: "コードを書く" },
   { tag: "開発/検証", color: "#4a90d9", hint: "環境構築・動作確認・試験" },
+  { tag: "開発/バグ", color: "#4a90d9", hint: "バグの調査・修正。原因と判断を残します" },
   { tag: "資料", color: "#5cb85c", hint: "ドキュメント・報告資料づくり" },
   { tag: "雑務", color: "#8a8f98", hint: "メール・事務・チケット登録・朝ルーチン" },
   { tag: "私用", color: "#d977ac", hint: "生活・中抜け。結果は不要" },
@@ -329,6 +330,22 @@ export const DEFAULT_TAG_FIELD_SCHEMA: TagFieldSchema[] = [
     },
   },
   {
+    tag: "開発/バグ",
+    required: ["結果", "原因", "判断"],
+    suggested: ["残", "完了条件"],
+    placeholders: {
+      タイトル: "例: 注文APIで在庫が二重に引かれるバグの修正",
+      結果: "例: 排他制御の考慮漏れを修正し、再現手順で再発しないことを確認",
+      原因: "例: 同時更新時の排他制御の考慮漏れ",
+      判断: "例: 暫定は楽観ロックで対応。設計の見直しは次スプリントで検討",
+      残: "例: 結合環境での再確認",
+      完了条件: "例: 再現手順で再発せず、PR がマージされている",
+      次アクション: "例: 修正PRをレビュー依頼する",
+      ふりかえり: "例: 排他制御のテスト観点をチェックリストに足す",
+      備考: "例: 再現手順・調査ログの要点（ログ全文は Runbook へ）",
+    },
+  },
+  {
     tag: "資料",
     required: ["結果"],
     suggested: ["残"],
@@ -520,7 +537,7 @@ export const DEFAULT_DAILY_REPORT_FOLDER = "daily";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 8;
+export const SETTINGS_VERSION = 9;
 
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
@@ -753,6 +770,8 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  *          保存済みの設定に無ければ既定値が入る（既存の設定は変えない）。
  * v7 → v8: tagFieldSchema に既定のサブタグ定義（管理/質問 など）とプレースホルダーを追加。
  *          保存済みの定義は変えず、無いタグの定義だけを足す。
+ * v8 → v9: 開発のサブタグ「開発/バグ」（原因・判断が必須）を追加。
+ *          保存済みの設定にも、タグの選択肢とフィールド定義が無ければ足す（既存の定義は変えない）。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -797,6 +816,38 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
     for (const def of DEFAULT_TAG_FIELD_SCHEMA) {
       if (have.has(normalizeTag(def.tag))) continue;
       s.tagFieldSchema.push({ tag: def.tag, required: [...def.required], suggested: [...def.suggested] });
+    }
+  }
+  if (version < 9) {
+    // 開発のサブタグ「開発/バグ」を追加（バグ対応では原因・判断を必須にする）。
+    // タグの選択肢: 開発タグを使っている設定にだけ、開発の並びの末尾に足す（色は開発に合わせる）
+    if (!s.tagColors.some((r) => normalizeTag(r.tag) === "開発/バグ")) {
+      const devRows = s.tagColors
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => {
+          const t = normalizeTag(r.tag);
+          return t === "開発" || t.startsWith("開発/");
+        });
+      if (devRows.length) {
+        const color = (devRows.find(({ r }) => normalizeTag(r.tag) === "開発") ?? devRows[0]).r.color;
+        const def = DEFAULT_TAG_COLORS.find((r) => r.tag === "開発/バグ");
+        s.tagColors.splice(devRows[devRows.length - 1].i + 1, 0, {
+          tag: "開発/バグ",
+          color,
+          ...(def?.hint ? { hint: def.hint } : {}),
+        });
+      }
+    }
+    // フィールド定義: 無ければ既定を足す（保存済みの定義は変えない）
+    if (!s.tagFieldSchema.some((r) => normalizeTag(r.tag) === "開発/バグ")) {
+      const def = DEFAULT_TAG_FIELD_SCHEMA.find((r) => r.tag === "開発/バグ");
+      if (def) {
+        s.tagFieldSchema.push({
+          tag: def.tag,
+          required: [...def.required],
+          suggested: [...def.suggested],
+        });
+      }
     }
   }
   if (typeof s.validateRequiredOnSave !== "boolean") s.validateRequiredOnSave = true;
