@@ -6,11 +6,14 @@ Obsidian プラグイン。タスクを日付ノートの Markdown ブロック�
 ## 構成
 
 - `app/` … npm プロジェクト本体（`cd app` してから npm を使う）
-  - `src/markdown/blocks.ts` … **保存形式の正本**。フィールドの解析・書き出しはここだけに置く（Obsidian 非依存）
+  - `src/markdown/fields.ts` … **保存形式の正本**。本文フィールド（`- ラベル: 値` の行）の定義一覧。何も import しない
+  - `src/markdown/blocks.ts` … ブロック（見出し + メタ行 + フィールド + ステップ + 本文）の解析・書き出し（Obsidian 非依存）
   - `src/markdown/edit.ts` … 追加・更新・削除・並べ替え（ブロック単位の部分置換）
   - `src/model.ts` … ビューが扱う `Task` 型
   - `src/settings.ts` / `src/modal.ts` / `src/view.ts` … 設定・編集ダイアログ・タイムライン
-  - `test/` … vitest。`test/fixtures/*.md` は保存形式の**実例**（README の説明と一致させる）
+  - `scripts/bump.mjs` … バージョン更新（`npm run bump`）
+  - `test/` … vitest。`test/fixtures/*.md` は保存形式の**実例**（README の説明と一致させる）。
+    `test/obsidian-stub.ts` は obsidian モジュールの代わり（settings.ts などを読み込むため）
   - `dist/` … リリース成果物（`main.js` / `manifest.json` / `styles.css`）。**コミットする**
 - `manifest.json`（ルート） … BRAT 用の `app/manifest.json` のコピー
 - `.github/workflows/ci.yml` … テスト・ビルド・dist の一致検証（全ブランチ）
@@ -23,6 +26,7 @@ cd app
 npm ci
 npm test           # vitest（保存形式の往復テストなど）
 npm run build      # tsc の型チェック + esbuild → app/main.js
+npm run bump       # バージョンを上げて manifest / versions.json / dist/ を揃える
 ```
 
 ## 変更の完了条件
@@ -36,11 +40,9 @@ npm run build      # tsc の型チェック + esbuild → app/main.js
 
 ### `src/` か `styles.css` を変えたとき（プラグインの動作が変わる）
 
-1. `app/manifest.json` の `version` を上げる（機能追加・修正は minor。`2.116.0` → `2.117.0`）
-2. `app/versions.json` に新バージョンの行を足す（`"2.117.0": "1.5.0"`）
-3. ルートの `manifest.json` を `app/manifest.json` と同じにする
-4. `npm run build` して `app/main.js` を `app/dist/main.js` へコピー。`app/styles.css` と `app/manifest.json` も `app/dist/` へコピー
-5. コミットメッセージは日本語で、末尾に `(v2.117.0)` を付ける
+1. `npm run bump` を実行する（既定は minor。`2.116.0` → `2.117.0`。修正だけなら `npm run bump -- patch`）。
+   manifest 3 か所と `versions.json` の更新、ビルド、`app/dist/` へのコピーまで一度に行う
+2. コミットメッセージは日本語で、末尾に `(v2.117.0)` を付ける
 
 テスト・ドキュメント・CI だけの変更ではバージョンを上げない（dist も変わらない）。
 
@@ -48,12 +50,15 @@ npm run build      # tsc の型チェック + esbuild → app/main.js
 
 利用者のノートと、ノートを読む AI の指示書がこの形式に依存している。次を**同じコミットで**揃える。
 
-1. `src/markdown/blocks.ts` の解析・書き出し（新しいフィールドは既存の `parseXxxLine` / `renderXxxLine` の対と同じ形で）
-2. `src/markdown/edit.ts` の `TaskPatch` / `NewTaskInput` / `updateTask`
-3. `src/model.ts` の `Task` と `src/store.ts` の変換
-4. `test/fixtures/daily-fields.md` に実例を足し、`test/blocks.test.ts` の全フィールド・往復テストに加える
-5. README.md「保存形式」の一覧
-6. 既存ノートとの互換: 旧表記を読めるようにし、書き出しは新表記に統一する（例: `期日:` → `期限:`）
+1. **フィールドの追加は `src/markdown/fields.ts` に 1 件足す**（key / label / aliases / zone / insertAt / description / example）。
+   解析（`parseBlockDocument`）・書き出し（`renderTaskBlock`）・編集（`updateTask`）・`TaskBlock` / `Task` / `TaskPatch` の型は、
+   1 行の文字列の値ならこれだけで揃う。リンクや時間帯のような特別な値なら `blocks.ts` の `renderFieldLineOf` と `parseBlockDocument` に分岐を足す
+2. 編集ダイアログ（`src/modal.ts`）に欄を足す。設定「タグ別フィールド」から使う欄は**ラベル**で参照する（`test/settings-schema.test.ts` が整合を検証）
+3. `test/fixtures/daily-fields.md` に実例を足し、`test/blocks.test.ts` の全フィールドの読み取り・「書き出しの並び」のテストを更新する
+4. README.md「保存形式」の一覧を直す
+5. 既存ノートとの互換: 旧表記は `aliases` で読めるようにし、書き出しは `label` の表記に統一する（例: `期日:` → `期限:`）
+
+メタ行（時刻・チェック・チケット・リマインド・ブロックID）の形は `blocks.ts` の `parseMetaLine` / `renderMetaLine`。
 
 ## 書き方の約束
 

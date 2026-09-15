@@ -407,7 +407,7 @@ npm run dev        # 変更を監視して自動ビルド
 
 `master` に push されると GitHub Actions（`.github/workflows/release.yml`）が `app/manifest.json` のバージョンを読み、そのバージョンのタグがまだ無ければ `app/dist/` の `main.js` / `manifest.json` / `styles.css` を添付した GitHub Release を自動作成します。BRAT はこの Release を見て各端末のプラグインを更新します。
 
-バージョンを上げるときは次の4つを揃えてください（不一致だと CI が失敗し、リリースは作られません）:
+バージョンを上げるときは `app/` で `npm run bump` を実行してください（既定は minor。`npm run bump -- patch` で patch）。次の4つを一度に揃えます（不一致だと CI が失敗し、リリースは作られません）:
 
 1. `app/manifest.json` の `version`
 2. `app/dist/` の中身（`npm run build` した `main.js` と、`manifest.json` / `styles.css` のコピー）
