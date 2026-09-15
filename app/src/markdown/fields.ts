@@ -52,6 +52,13 @@ export interface FieldDef {
   values?: readonly string[];
 }
 
+/**
+ * 保存形式の版。ノートを読む AI の指示書がこの番号を見て、想定と違えば警告できる。
+ * フィールドの追加・ラベルの変更・メタ行の文法の変更など、**ノートの読み書きの約束が変わったときだけ**上げる
+ * （プラグインのバージョンとは別。UI だけの変更では上げない）
+ */
+export const FORMAT_VERSION = "2.1";
+
 /** 状態の値の種類。中断だけは「中断(理由)」のように理由を付けられる */
 export const STATUS_KINDS = ["未着手", "進行中", "中断", "回答待ち", "期限未定"] as const;
 
@@ -93,7 +100,7 @@ export const FIELDS = [
     preview: false,
     aiReads: false,
     description: "前の日から持ち越されたタスクの、元のブロックへのリンク（プラグインが書く）",
-    example: "[[2026-08-18#^dtp-k3f9a2]]",
+    example: "[[2026-08-18#^dtp-9b2c44]]",
   },
   {
     key: "carryTo",
@@ -106,7 +113,7 @@ export const FIELDS = [
     aiReads: false,
     description:
       "残件を翌日へ持ち越したとき、続きのブロックへのリンク（プラグインが書く）。持ち越したタスクはチェックが `[>]` になる",
-    example: "[[2026-08-19#^dtp-9b2c44]]",
+    example: "[[2026-08-19#^dtp-c0ffee]]",
   },
   {
     key: "registered",
@@ -129,7 +136,8 @@ export const FIELDS = [
     insertAt: "afterMeta",
     preview: true,
     aiReads: true,
-    description: "期限（YYYY-MM-DD）。旧表記の「期日」も読める（保存すると「期限」に統一）",
+    description:
+      "いつまでに終えるか（YYYY-MM-DD）。編集画面では Owner・完了条件・次アクションと一緒に「未完了セット」の枠にまとまる",
     example: "2026-08-20",
   },
   {

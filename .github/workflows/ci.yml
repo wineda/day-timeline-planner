@@ -29,6 +29,9 @@ jobs:
       - name: 型チェック + ビルド
         run: npm run build
 
+      - name: 生成物（docs/format.md と README の一覧）が最新か
+        run: npm run gen:spec -- --check
+
       - name: dist がソースと一致しているか
         run: |
           fail=0

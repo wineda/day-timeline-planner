@@ -12,8 +12,9 @@
  *   1. app/manifest.json の version を更新
  *   2. リポジトリ直下の manifest.json を app/manifest.json のコピーにする（BRAT 用）
  *   3. app/versions.json に「新バージョン: minAppVersion」の行を足す
- *   4. npm run build（型チェック + esbuild）
- *   5. main.js / styles.css / manifest.json を app/dist/ へコピー
+ *   4. docs/format.md を生成し直す（plugin_version を含むため）
+ *   5. npm run build（型チェック + esbuild）
+ *   6. main.js / styles.css / manifest.json を app/dist/ へコピー
  */
 import { execSync } from "node:child_process";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
@@ -62,6 +63,9 @@ writeFileSync(rootManifestPath, manifestText);
 versions[next] = manifest.minAppVersion;
 writeFileSync(versionsPath, JSON.stringify(versions, null, 2) + "\n");
 console.log(`version: ${current} → ${next}`);
+
+// 仕様書（docs/format.md）は plugin_version を含むので、番号を変えたら生成し直す
+execSync("node scripts/gen-spec.mjs", { cwd: appDir, stdio: "inherit" });
 
 if (!noBuild) {
   // 4. ビルド

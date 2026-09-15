@@ -14,6 +14,7 @@ import { ProjectCreateModal, TaskModal } from "./modal";
 import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
 import type { Task, TaskSource } from "./model";
 import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
+import { renderFormatSpec, type SpecContext } from "./spec";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
 import { DailyReportModal, type DailyDay, type DailyNote } from "./report-modal";
@@ -277,6 +278,13 @@ export default class DayTimelinePlugin extends Plugin {
       },
     });
 
+    // 保存形式の仕様書（AI の指示書から参照させる）
+    this.addCommand({
+      id: "export-format-spec",
+      name: "保存形式の仕様をノートに書き出す（AI 向け）",
+      callback: () => void this.exportFormatSpec(),
+    });
+
     this.addSettingTab(new DayTimelineSettingTab(this.app, this));
   }
 
@@ -397,11 +405,52 @@ export default class DayTimelinePlugin extends Plugin {
   }
 
   /**
+   * 保存形式の仕様書を <フォルダ>/_spec/format.md に書いて開く（既にあれば中身を差し替える）。
+   * この保管庫の設定（フォルダ・見出し・Inbox・チケット管理ツール・メンバー）を埋めた形で書き出すので、
+   * ノートを読む AI の指示書からはこのノートを参照させればよい
+   */
+  async exportFormatSpec(): Promise<void> {
+    try {
+      const path = await this.writeNote("_spec", "format.md", renderFormatSpec(this.specContext()));
+      new Notice(`保存形式の仕様を書き出しました: ${path}`);
+    } catch (e) {
+      console.error(e);
+      new Notice("保存形式の仕様を書き出せませんでした: " + String(e));
+    }
+  }
+
+  /** 仕様書に埋める、この保管庫の設定 */
+  specContext(): SpecContext {
+    const s = this.settings;
+    return {
+      pluginVersion: this.manifest.version,
+      folder: s.folder,
+      dateFormat: s.dateFormat,
+      headingLevel: s.taskHeadingLevel,
+      rootHeading: s.taskRootHeading,
+      inboxPath: s.inboxPath.replace(/\.md$/, ""),
+      projectsFolder: s.projectsFolder,
+      dailyReportFolder: this.dailyReportFolder(),
+      trackers: s.trackers.map((t) => t.name).filter((n) => n.trim()),
+      members: s.members.map((m) => m.name).filter((n) => n.trim()),
+      generatedAt: moment().format("YYYY-MM-DD HH:mm"),
+    };
+  }
+
+  /**
    * レポートのノートを <フォルダ>/Reports/ に書いて開く（既にあれば中身を差し替える）。
    * 書いたノートのパスを返す
    */
-  private async writeReport(name: string, content: string): Promise<string> {
-    const dir = normalizePath((this.settings.folder ? this.settings.folder + "/" : "") + "Reports");
+  private writeReport(name: string, content: string): Promise<string> {
+    return this.writeNote("Reports", name, content);
+  }
+
+  /**
+   * <フォルダ>/<sub>/<name> にノートを書いて開く（無ければフォルダごと作る。既にあれば中身を差し替える）。
+   * 書いたノートのパスを返す
+   */
+  private async writeNote(sub: string, name: string, content: string): Promise<string> {
+    const dir = normalizePath((this.settings.folder ? this.settings.folder + "/" : "") + sub);
     let cur = "";
     for (const part of dir.split("/")) {
       cur = cur ? `${cur}/${part}` : part;

@@ -9,7 +9,8 @@
     "mock": "node mock/build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bump": "node scripts/bump.mjs"
+    "bump": "node scripts/bump.mjs",
+    "gen:spec": "node scripts/gen-spec.mjs"
   },
   "keywords": [
     "obsidian",
