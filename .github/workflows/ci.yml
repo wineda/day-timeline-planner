@@ -1,0 +1,59 @@
+# すべてのブランチ・PR で: テスト → 型チェック + ビルド → コミット済みの dist が最新のビルドと一致するか。
+# リリース（release.yml）は master への push だけで動くが、こちらは開発中の枝でも動く
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+
+      - name: テスト
+        run: npm test
+
+      - name: 型チェック + ビルド
+        run: npm run build
+
+      - name: 生成物（docs/format.md と README の一覧）が最新か
+        run: npm run gen:spec -- --check
+
+      - name: dist がソースと一致しているか
+        run: |
+          fail=0
+          if ! cmp -s main.js dist/main.js; then
+            echo "::error file=app/dist/main.js::dist/main.js がビルド結果と違います。npm run build して dist/ にコピーしてください"
+            fail=1
+          fi
+          if ! cmp -s styles.css dist/styles.css; then
+            echo "::error file=app/dist/styles.css::dist/styles.css が app/styles.css と違います"
+            fail=1
+          fi
+          if ! cmp -s manifest.json dist/manifest.json; then
+            echo "::error file=app/dist/manifest.json::dist/manifest.json が app/manifest.json と違います"
+            fail=1
+          fi
+          if ! cmp -s manifest.json ../manifest.json; then
+            echo "::error file=manifest.json::リポジトリ直下の manifest.json が app/manifest.json と違います"
+            fail=1
+          fi
+          VERSION=$(jq -r .version manifest.json)
+          if ! jq -e --arg v "$VERSION" 'has($v)' versions.json >/dev/null; then
+            echo "::error file=app/versions.json::versions.json に $VERSION の行がありません"
+            fail=1
+          fi
+          exit $fail

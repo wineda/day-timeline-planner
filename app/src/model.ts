@@ -5,6 +5,7 @@
 import type { TFile } from "obsidian";
 import type { ListEvent } from "./markdown/legacy";
 import type { ActualRange, ReminderSetting, TaskStep, TicketRef } from "./markdown/blocks";
+import type { TextFieldValues } from "./markdown/fields";
 
 /** ソースだけが解釈する参照情報 */
 export type TaskRefData =
@@ -17,7 +18,12 @@ export type TaskRefData =
     }
   | { kind: "list"; event: ListEvent };
 
-export interface Task {
+/**
+ * ビューが扱うタスク。
+ * 1行・文字列のフィールド（完了条件・結果・期限 …）は fields.ts の定義から
+ * プロパティが生える（ブロック形式のみ。無ければ ""）
+ */
+export interface Task extends TextFieldValues {
   /** 同一性の鍵（描画とメニューの照合に使う） */
   key: string;
   title: string;
@@ -33,34 +39,10 @@ export interface Task {
   tags: string[];
   /** リマインド: 分前 / "off" / null = 既定 */
   reminder: ReminderSetting;
-  /** 完了条件（ブロック形式のみ。無ければ ""） */
-  doneCondition: string;
   /** ステップ（ブロック形式のみ） */
   steps: TaskStep[];
-  /** ふりかえり（ブロック形式のみ。無ければ ""） */
-  retrospective: string;
-  /** 結果 = 何がどこまで終わったか（ブロック形式のみ。無ければ ""） */
-  result: string;
-  /** 残 = 完了後に残った作業（ブロック形式のみ。無ければ ""） */
-  remaining: string;
-  /** 原因 = 障害・バグの原因（ブロック形式のみ。無ければ ""） */
-  cause: string;
-  /** 判断 = どう判断したか（ブロック形式のみ。無ければ ""） */
-  judgment: string;
   /** 他者 = ボールが相手にあるもの（ブロック形式のみ。1件 = 1行。無ければ []） */
   others: string[];
-  /** 回答 = 質問に回答が付いたか（"済" / "未" など。ブロック形式のみ。無ければ ""） */
-  answer: string;
-  /** 状態 = 中断などの状態（「中断(理由)」の値。ブロック形式のみ。無ければ ""） */
-  status: string;
-  /** Owner = タスクのオーナー名（「誰の予定か」とは別の記録上の担当。無ければ ""） */
-  ownerName: string;
-  /** 期限（「- 期限: YYYY-MM-DD」行。旧表記「期日:」も読む。無ければ ""） */
-  due: string;
-  /** 次アクション = 未完了事項の次の一手（「- 次アクション: …」行。無ければ ""） */
-  nextAction: string;
-  /** 登録日（Inbox に入れた日。ブロック形式のみ。無ければ ""） */
-  registered: string;
   /** 実績 = 実際に作業した時間帯（ブロック形式のみ。無ければ []） */
   actual: ActualRange[];
   /** プロジェクト（大きなタスク）ノートへのリンク先（ブロック形式のみ。無ければ null） */

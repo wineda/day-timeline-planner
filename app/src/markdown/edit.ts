@@ -16,29 +16,14 @@ import {
   TicketRef,
   parseBlockDocument,
   parseHeadingSetting,
-  renderActualLine,
-  renderAnswerLine,
-  renderCarryFromLine,
-  renderCarryToLine,
-  renderCauseLine,
-  renderProjectLine,
-  renderDoneConditionLine,
-  renderDueLine,
+  renderFieldLineOf,
   renderHeadingLine,
-  renderJudgmentLine,
-  renderNextActionLine,
-  renderOthersLine,
-  renderOwnerNameLine,
-  renderRegisteredLine,
-  renderRemainingLine,
-  renderResultLine,
-  renderRetrospectiveLine,
-  renderStatusLine,
   renderStepLines,
   renderMetaLine,
   renderTaskBlock,
   trimBlankLines,
 } from "./blocks";
+import { FIELDS, HEAD_FIELDS, RECORD_FIELDS, renderFieldLine, type AnyField, type TextFieldValues } from "./fields";
 import { newBlockId } from "./id";
 
 export interface InsertOptions extends BlockOptions {
@@ -54,7 +39,11 @@ export interface TaskRef {
   end: number | null;
 }
 
-export interface TaskPatch {
+/**
+ * 変更内容。フィールドは undefined = 変更しない / "" = 消す（1行の文字列）、
+ * [] = 消す（ステップ・他者・実績）、null = 外す（プロジェクト・持ち越し）
+ */
+export interface TaskPatch extends Partial<TextFieldValues> {
   title?: string;
   start?: number | null;
   end?: number | null;
@@ -62,34 +51,10 @@ export interface TaskPatch {
   reminder?: ReminderSetting;
   /** undefined = 変更しない / null = 消す */
   ticket?: TicketRef | null;
-  /** undefined = 変更しない / "" = 消す */
-  doneCondition?: string;
   /** undefined = 変更しない / [] = 消す */
   steps?: TaskStep[];
-  /** undefined = 変更しない / "" = 消す */
-  retrospective?: string;
-  /** 結果。undefined = 変更しない / "" = 消す */
-  result?: string;
-  /** 残。undefined = 変更しない / "" = 消す */
-  remaining?: string;
-  /** 原因。undefined = 変更しない / "" = 消す */
-  cause?: string;
-  /** 判断。undefined = 変更しない / "" = 消す */
-  judgment?: string;
   /** 他者（1件 = 1行）。undefined = 変更しない / [] = 全部消す */
   others?: string[];
-  /** 回答。undefined = 変更しない / "" = 消す */
-  answer?: string;
-  /** 状態。undefined = 変更しない / "" = 消す */
-  status?: string;
-  /** Owner。undefined = 変更しない / "" = 消す */
-  ownerName?: string;
-  /** 期限。undefined = 変更しない / "" = 消す */
-  due?: string;
-  /** 次アクション。undefined = 変更しない / "" = 消す */
-  nextAction?: string;
-  /** 登録日。undefined = 変更しない / "" = 消す */
-  registered?: string;
   /** 実績。undefined = 変更しない / [] = 消す */
   actual?: ActualRange[];
   /** プロジェクト。undefined = 変更しない / null = 外す */
@@ -104,27 +69,15 @@ export interface TaskPatch {
   details?: string;
 }
 
-export interface NewTaskInput {
+export interface NewTaskInput extends Partial<TextFieldValues> {
   title: string;
   start: number | null;
   end: number | null;
   done: boolean;
   reminder?: ReminderSetting;
   ticket?: TicketRef | null;
-  doneCondition?: string;
   steps?: TaskStep[];
-  retrospective?: string;
-  result?: string;
-  remaining?: string;
-  cause?: string;
-  judgment?: string;
   others?: string[];
-  answer?: string;
-  status?: string;
-  ownerName?: string;
-  due?: string;
-  nextAction?: string;
-  registered?: string;
   actual?: ActualRange[];
   project?: string | null;
   carryTo?: string | null;
@@ -149,37 +102,16 @@ export function locateTask(doc: BlockDocument, ref: TaskRef): TaskBlock | null {
   );
 }
 
-/** タスクを追加する */
+/** 新しいタスクをノートに書き込む */
 export function insertTask(content: string, draft: NewTaskInput, opts: InsertOptions): string {
-  const id = draft.id ?? newBlockId();
+  const { details, id: draftId, body, ...rest } = draft;
   const source: MetaSource & { body?: string[] } = {
-    id,
-    title: draft.title,
-    start: draft.start,
-    end: draft.end,
-    done: draft.done,
+    ...rest,
+    id: draftId ?? newBlockId(),
     note: "",
     reminder: draft.reminder ?? null,
     ticket: draft.ticket ?? null,
-    doneCondition: draft.doneCondition,
-    steps: draft.steps,
-    retrospective: draft.retrospective,
-    result: draft.result,
-    remaining: draft.remaining,
-    cause: draft.cause,
-    judgment: draft.judgment,
-    others: draft.others,
-    answer: draft.answer,
-    status: draft.status,
-    ownerName: draft.ownerName,
-    due: draft.due,
-    nextAction: draft.nextAction,
-    registered: draft.registered,
-    actual: draft.actual,
-    project: draft.project,
-    carryTo: draft.carryTo,
-    carryFrom: draft.carryFrom,
-    body: draft.body ?? (draft.details ? draft.details.replace(/\s+$/, "").split("\n") : undefined),
+    body: body ?? (details ? details.replace(/\s+$/, "").split("\n") : undefined),
   };
   return insertBlockLines(content, renderTaskBlock(source, opts), draft.start, opts);
 }
@@ -206,7 +138,24 @@ export function insertBlockLines(
 }
 
 /**
- * タスクを更新する。見出し行とメタ行だけを書き換えるので、本文には触れない。
+ * 同じ位置に複数の行を足すときの並び（大きいほど上）。
+ * head 領域のフィールド（プロジェクト … 完了条件）> ステップ（1）> record 領域のフィールド（結果 … ふりかえり、0〜1）> 詳細（-1）。
+ * fields.ts の並びがそのまま上下の順になる
+ */
+function fieldOrder(f: AnyField): number {
+  if (f.zone === "head") return 1 + (HEAD_FIELDS.length - HEAD_FIELDS.indexOf(f));
+  return (RECORD_FIELDS.length - RECORD_FIELDS.indexOf(f)) / (RECORD_FIELDS.length + 1);
+}
+const STEPS_ORDER = 1;
+const DETAILS_ORDER = -1;
+
+/** TaskBlock のフィールドの行番号（`${key}Line`） */
+function fieldLineOf(t: TaskBlock, key: string): number | null {
+  return (t as unknown as Record<string, number | null>)[`${key}Line`];
+}
+
+/**
+ * タスクを更新する。見出し行・メタ行・指定されたフィールドの行だけを書き換えるので、本文には触れない。
  * 見つからなければ null。
  */
 export function updateTask(
@@ -241,183 +190,87 @@ export function updateTask(
   lines[t.headingLine] = renderHeadingLine(next.title, t.level);
   lines[t.metaLine] = renderMetaLine(next, opts);
 
-  // 完了条件とステップ: 既存の行を書き換える / 無ければメタ行の直下に足す / 空にしたら行ごと消す。
+  // フィールドとステップ: 既存の行を書き換える / 無ければ決まった位置に足す / 空にしたら行ごと消す。
   // 行番号がずれないように、後ろにある方から差し替える
   const ops: { at: number; del: number; lines: string[]; order: number }[] = [];
   let deleted = false;
-  // 詳細（自由な本文）: 特別な行（完了条件など）の後ろの領域をまるごと差し替える
+  // 詳細（自由な本文）: フィールド行・ステップの後ろの領域をまるごと差し替える
   if (patch.details !== undefined) {
     const text = patch.details.replace(/\s+$/, "");
     const add = text ? text.split("\n") : [];
     if (add.length && t.detailsStart > 0 && lines[t.detailsStart - 1].trim() !== "") add.unshift("");
     if (add.length && lines[t.endLine] !== undefined && lines[t.endLine].trim() !== "") add.push("");
-    ops.push({ at: t.detailsStart, del: t.endLine - t.detailsStart, lines: add, order: -1 });
+    ops.push({ at: t.detailsStart, del: t.endLine - t.detailsStart, lines: add, order: DETAILS_ORDER });
     if (!add.length) deleted = true;
   }
-  // 詳細の領域内にある「ふりかえり」「完了条件」「実績」行は詳細と一緒に編集されるので、個別の書き換えは行わない
+  // 詳細の領域内にあるフィールド行は詳細と一緒に編集されるので、個別の書き換えは行わない
   const insideDetails = (line: number | null) =>
     patch.details !== undefined && line !== null && line >= t.detailsStart;
-  // メタ行直下に並ぶ特別な行（プロジェクト・実績・持ち越し・登録日・期限・完了条件）を飛ばした挿入位置
+  // メタ行直下に並ぶ head 領域の行（プロジェクト・実績・持ち越し・登録日・期限・完了条件）を飛ばした挿入位置
+  const headLines = new Set(HEAD_FIELDS.map((f) => fieldLineOf(t, f.key)).filter((n): n is number => n !== null));
   let afterMeta = t.metaLine + 1;
-  while (
-    afterMeta === t.actualLine ||
-    afterMeta === t.doneConditionLine ||
-    afterMeta === t.projectLine ||
-    afterMeta === t.carryToLine ||
-    afterMeta === t.carryFromLine ||
-    afterMeta === t.registeredLine ||
-    afterMeta === t.dueLine
-  )
-    afterMeta++;
-  // ふりかえり・結果・残の新規行を入れる位置（ステップ・完了条件の後ろ）
+  while (headLines.has(afterMeta)) afterMeta++;
+  // record 領域の新規行を入れる位置（ステップ・完了条件の後ろ）
   const afterSteps =
     t.stepsStart !== null
       ? t.stepsEnd
       : t.doneConditionLine !== null
         ? t.doneConditionLine + 1
         : afterMeta;
-  // ふりかえり: 既存行を書き換え / 無ければステップ・完了条件の後ろに足す / 空なら消す
-  if (patch.retrospective !== undefined && !insideDetails(t.retrospectiveLine)) {
-    const text = patch.retrospective.trim();
-    if (t.retrospectiveLine !== null) {
-      ops.push({ at: t.retrospectiveLine, del: 1, lines: text ? [renderRetrospectiveLine(text)] : [], order: 0 });
-      if (!text) deleted = true;
-    } else if (text) {
-      ops.push({ at: afterSteps, del: 0, lines: [renderRetrospectiveLine(text)], order: 0 });
-    }
-  }
-  // 結果・残: ふりかえりと同じ扱い（同じ位置に重なったら 結果 → 残 → ふりかえり の順に並ぶ）
-  if (patch.result !== undefined && !insideDetails(t.resultLine)) {
-    const text = patch.result.trim();
-    if (t.resultLine !== null) {
-      ops.push({ at: t.resultLine, del: 1, lines: text ? [renderResultLine(text)] : [], order: 0.7 });
-      if (!text) deleted = true;
-    } else if (text) {
-      ops.push({ at: afterSteps, del: 0, lines: [renderResultLine(text)], order: 0.7 });
-    }
-  }
-  if (patch.remaining !== undefined && !insideDetails(t.remainingLine)) {
-    const text = patch.remaining.trim();
-    if (t.remainingLine !== null) {
-      ops.push({ at: t.remainingLine, del: 1, lines: text ? [renderRemainingLine(text)] : [], order: 0.5 });
-      if (!text) deleted = true;
-    } else if (text) {
-      ops.push({ at: afterSteps, del: 0, lines: [renderRemainingLine(text)], order: 0.5 });
-    }
-  }
-  // 1行の値を持つフィールドの共通処理: 既存行を書き換え / 無ければ at に足す / 空なら消す
-  const patchLine = (
-    value: string | undefined,
-    line: number | null,
-    render: (text: string) => string,
-    at: number,
-    order: number
-  ) => {
-    if (value === undefined || insideDetails(line)) return;
-    const text = value.trim();
-    if (line !== null) {
-      ops.push({ at: line, del: 1, lines: text ? [render(text)] : [], order });
-      if (!text) deleted = true;
-    } else if (text) {
-      ops.push({ at, del: 0, lines: [render(text)], order });
+  const insertAt = (f: AnyField): number => {
+    switch (f.insertAt) {
+      case "metaTop":
+        return t.metaLine + 1;
+      case "afterProject":
+        // 既存のプロジェクト行がメタ行の直下にあれば、その下に入れる
+        return t.projectLine === t.metaLine + 1 ? t.metaLine + 2 : t.metaLine + 1;
+      case "afterMeta":
+        return afterMeta;
+      case "afterSteps":
+        return afterSteps;
     }
   };
-  // 原因・判断・回答・状態・Owner: 結果・残と同じ扱い
-  //（order は同じ位置に重なったときの並び。大きいほど上 = 結果 → 原因 → 判断 → 残 → 他者 → 回答 → 状態 → Owner → ふりかえり）
-  patchLine(patch.cause, t.causeLine, renderCauseLine, afterSteps, 0.65);
-  patchLine(patch.judgment, t.judgmentLine, renderJudgmentLine, afterSteps, 0.6);
-  patchLine(patch.answer, t.answerLine, renderAnswerLine, afterSteps, 0.2);
-  patchLine(patch.status, t.statusLine, renderStatusLine, afterSteps, 0.15);
-  patchLine(patch.ownerName, t.ownerNameLine, renderOwnerNameLine, afterSteps, 0.1);
-  patchLine(patch.nextAction, t.nextActionLine, renderNextActionLine, afterSteps, 0.05);
-  // 期限: メタ行直下の特別な行（登録日の下）に置く。既存の「期日:」行も「期限:」に書き換わる（出力の統一）
-  patchLine(patch.due, t.dueLine, renderDueLine, afterMeta, 2.35);
-  // 他者: 唯一の複数行フィールド。既存の行を前から順に書き換え、余りは消し、足りなければ最後の行の下に足す
-  if (patch.others !== undefined) {
-    const values = patch.others.map((v) => v.trim()).filter(Boolean);
-    const existing = t.othersLines.filter((ln) => !insideDetails(ln));
-    const shared = Math.min(existing.length, values.length);
-    for (let i = 0; i < shared; i++) {
-      ops.push({ at: existing[i], del: 1, lines: [renderOthersLine(values[i])], order: 0.25 });
+
+  for (const f of FIELDS) {
+    const value = (patch as Record<string, unknown>)[f.key];
+    if (value === undefined) continue;
+    const order = fieldOrder(f);
+    if ("multi" in f && f.multi) {
+      // 他者: 複数行。既存の行を前から順に書き換え、余りは消し、足りなければ最後の行の下に足す
+      const values = (value as string[]).map((v) => v.trim()).filter(Boolean);
+      const existing = t.othersLines.filter((ln) => !insideDetails(ln));
+      const shared = Math.min(existing.length, values.length);
+      for (let i = 0; i < shared; i++) {
+        ops.push({ at: existing[i], del: 1, lines: [renderFieldLine(f.key, values[i])], order });
+      }
+      for (let i = values.length; i < existing.length; i++) {
+        ops.push({ at: existing[i], del: 1, lines: [], order });
+        deleted = true;
+      }
+      if (values.length > existing.length) {
+        const rest = values.slice(existing.length).map((v) => renderFieldLine(f.key, v));
+        const at = existing.length ? existing[existing.length - 1] + 1 : insertAt(f);
+        ops.push({ at, del: 0, lines: rest, order });
+      }
+      continue;
     }
-    for (let i = values.length; i < existing.length; i++) {
-      ops.push({ at: existing[i], del: 1, lines: [], order: 0.25 });
-      deleted = true;
-    }
-    if (values.length > existing.length) {
-      const rest = values.slice(existing.length).map(renderOthersLine);
-      const at = existing.length ? existing[existing.length - 1] + 1 : afterSteps;
-      ops.push({ at, del: 0, lines: rest, order: 0.25 });
-    }
-  }
-  // 登録日: 既存行を書き換え / 無ければメタ行直下の特別な行の下に足す / 空なら消す
-  if (patch.registered !== undefined && !insideDetails(t.registeredLine)) {
-    const text = patch.registered.trim();
-    if (t.registeredLine !== null) {
-      ops.push({ at: t.registeredLine, del: 1, lines: text ? [renderRegisteredLine(text)] : [], order: 2.4 });
-      if (!text) deleted = true;
-    } else if (text) {
-      ops.push({ at: afterMeta, del: 0, lines: [renderRegisteredLine(text)], order: 2.4 });
+    const line = fieldLineOf(t, f.key);
+    if (insideDetails(line)) continue;
+    const rendered = renderFieldLineOf(f.key, value as string | ActualRange[] | null);
+    if (line !== null) {
+      ops.push({ at: line, del: 1, lines: rendered, order });
+      if (!rendered.length) deleted = true;
+    } else if (rendered.length) {
+      ops.push({ at: insertAt(f), del: 0, lines: rendered, order });
     }
   }
   if (patch.steps !== undefined) {
     const rendered = renderStepLines(patch.steps);
     if (t.stepsStart !== null) {
-      ops.push({ at: t.stepsStart, del: t.stepsEnd - t.stepsStart, lines: rendered, order: 1 });
+      ops.push({ at: t.stepsStart, del: t.stepsEnd - t.stepsStart, lines: rendered, order: STEPS_ORDER });
       if (!rendered.length) deleted = true;
     } else if (rendered.length) {
-      ops.push({ at: afterMeta, del: 0, lines: rendered, order: 1 });
-    }
-  }
-  if (patch.doneCondition !== undefined && !insideDetails(t.doneConditionLine)) {
-    const text = patch.doneCondition.trim();
-    if (t.doneConditionLine !== null) {
-      ops.push({ at: t.doneConditionLine, del: 1, lines: text ? [renderDoneConditionLine(text)] : [], order: 2 });
-      if (!text) deleted = true;
-    } else if (text) {
-      // 既存のプロジェクト・実績行の下に入れる
-      ops.push({ at: afterMeta, del: 0, lines: [renderDoneConditionLine(text)], order: 2 });
-    }
-  }
-  // 実績: 既存行を書き換え / 無ければメタ行の直下に足す / 空なら消す
-  if (patch.actual !== undefined && !insideDetails(t.actualLine)) {
-    const ranges = patch.actual;
-    if (t.actualLine !== null) {
-      ops.push({ at: t.actualLine, del: 1, lines: ranges.length ? [renderActualLine(ranges)] : [], order: 3 });
-      if (!ranges.length) deleted = true;
-    } else if (ranges.length) {
-      // 既存のプロジェクト行がメタ行の直下にあれば、その下に入れる
-      const at = t.projectLine === t.metaLine + 1 ? t.metaLine + 2 : t.metaLine + 1;
-      ops.push({ at, del: 0, lines: [renderActualLine(ranges)], order: 3 });
-    }
-  }
-  // プロジェクト: 既存行を書き換え / 無ければメタ行の直下に足す / null なら消す
-  if (patch.project !== undefined && !insideDetails(t.projectLine)) {
-    const link = patch.project;
-    if (t.projectLine !== null) {
-      ops.push({ at: t.projectLine, del: 1, lines: link ? [renderProjectLine(link)] : [], order: 4 });
-      if (!link) deleted = true;
-    } else if (link) {
-      ops.push({ at: t.metaLine + 1, del: 0, lines: [renderProjectLine(link)], order: 4 });
-    }
-  }
-  // 持ち越し先・元: 既存行を書き換え / 無ければ特別な行の下（afterMeta）に足す / null なら消す
-  if (patch.carryTo !== undefined && !insideDetails(t.carryToLine)) {
-    const link = patch.carryTo;
-    if (t.carryToLine !== null) {
-      ops.push({ at: t.carryToLine, del: 1, lines: link ? [renderCarryToLine(link)] : [], order: 2.5 });
-      if (!link) deleted = true;
-    } else if (link) {
-      ops.push({ at: afterMeta, del: 0, lines: [renderCarryToLine(link)], order: 2.5 });
-    }
-  }
-  if (patch.carryFrom !== undefined && !insideDetails(t.carryFromLine)) {
-    const link = patch.carryFrom;
-    if (t.carryFromLine !== null) {
-      ops.push({ at: t.carryFromLine, del: 1, lines: link ? [renderCarryFromLine(link)] : [], order: 2.6 });
-      if (!link) deleted = true;
-    } else if (link) {
-      ops.push({ at: afterMeta, del: 0, lines: [renderCarryFromLine(link)], order: 2.6 });
+      ops.push({ at: afterMeta, del: 0, lines: rendered, order: STEPS_ORDER });
     }
   }
   // 行の後ろから順に適用する。同じ位置に重なったときは、既存行の書き換え・削除を先に行い、
