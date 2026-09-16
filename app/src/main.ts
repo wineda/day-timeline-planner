@@ -4,6 +4,7 @@ import {
   DayTimelineSettingTab,
   DayTimelineSettings,
   colorForTags,
+  memberFolder,
   migrateSettings,
   ticketUrl,
 } from "./settings";
@@ -13,7 +14,7 @@ import { RecurringManagerView, VIEW_TYPE_RECURRING } from "./recurring-view";
 import { ProjectCreateModal, TaskModal } from "./modal";
 import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
 import type { Task, TaskSource } from "./model";
-import { parseMetaLine, renderMetaLine } from "./markdown/blocks";
+import { normalizeBlockOptions, parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { renderFormatSpec, type SpecContext } from "./spec";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
@@ -282,7 +283,12 @@ export default class DayTimelinePlugin extends Plugin {
     this.addCommand({
       id: "export-format-spec",
       name: "保存形式の仕様をノートに書き出す（AI 向け）",
-      callback: () => void this.exportFormatSpec(),
+      checkCallback: (checking) => {
+        // 仕様書はタスクブロック形式のもの。旧リスト形式のときは出さない
+        if (!this.blockStore()) return false;
+        if (!checking) void this.exportFormatSpec();
+        return true;
+      },
     });
 
     this.addSettingTab(new DayTimelineSettingTab(this.app, this));
@@ -422,17 +428,28 @@ export default class DayTimelinePlugin extends Plugin {
   /** 仕様書に埋める、この保管庫の設定 */
   specContext(): SpecContext {
     const s = this.settings;
+    // 実際の書き込みと同じ設定（親見出しとの繰り下げも込み）で実例を出す
+    const opts = normalizeBlockOptions({
+      headingLevel: s.taskHeadingLevel,
+      rootHeading: s.taskRootHeading,
+      useCheckbox: s.useCheckbox,
+      mirrorTitle: s.mirrorTitleInMeta,
+    });
     return {
       pluginVersion: this.manifest.version,
       folder: s.folder,
       dateFormat: s.dateFormat,
-      headingLevel: s.taskHeadingLevel,
-      rootHeading: s.taskRootHeading,
+      headingLevel: opts.headingLevel,
+      rootHeading: opts.rootHeading,
+      useCheckbox: opts.useCheckbox,
+      mirrorTitle: opts.mirrorTitle,
       inboxPath: s.inboxPath.replace(/\.md$/, ""),
       projectsFolder: s.projectsFolder,
       dailyReportFolder: this.dailyReportFolder(),
       trackers: s.trackers.map((t) => t.name).filter((n) => n.trim()),
-      members: s.members.map((m) => m.name).filter((n) => n.trim()),
+      members: s.members
+        .filter((m) => m.name.trim())
+        .map((m) => ({ name: m.name.trim(), folder: normalizePath(memberFolder(s, m)) })),
       generatedAt: moment().format("YYYY-MM-DD HH:mm"),
     };
   }

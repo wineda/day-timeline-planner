@@ -14,10 +14,11 @@ Obsidian プラグイン。タスクを日付ノートの Markdown ブロック�
   - `src/spec.ts` … 保存形式の仕様書（Markdown）の生成。`docs/format.md` と保管庫への書き出しの両方がこれを使う
   - `scripts/bump.mjs` … バージョン更新（`npm run bump`）
   - `scripts/gen-spec.mjs` … 仕様書の生成（`npm run gen:spec`。`--check` で最新かの検証）
-- `docs/format.md` … 生成された仕様書（手で直さない）。`docs/ai-instructions-template.md` は保管庫側の指示書の雛形
   - `test/` … vitest。`test/fixtures/*.md` は保存形式の**実例**（README の説明と一致させる）。
-    `test/obsidian-stub.ts` は obsidian モジュールの代わり（settings.ts などを読み込むため）
+    `test/obsidian-stub.ts` は obsidian モジュールの代わり（settings.ts などを読み込むため）。
+    テストの型検査は `tsconfig.test.json`（`npm run typecheck`）
   - `dist/` … リリース成果物（`main.js` / `manifest.json` / `styles.css`）。**コミットする**
+- `docs/format.md` … 生成された仕様書（手で直さない）。`docs/ai-instructions-template.md` は保管庫側の指示書の雛形
 - `manifest.json`（ルート） … BRAT 用の `app/manifest.json` のコピー
 - `.github/workflows/ci.yml` … テスト・ビルド・dist の一致検証（全ブランチ）
 - `.github/workflows/release.yml` … master への push で GitHub Release を作る
@@ -28,6 +29,7 @@ Obsidian プラグイン。タスクを日付ノートの Markdown ブロック�
 cd app
 npm ci
 npm test           # vitest（保存形式の往復テストなど）
+npm run typecheck  # src/ と test/ の型検査（build は src/ だけを検査する）
 npm run build      # tsc の型チェック + esbuild → app/main.js
 npm run bump       # バージョンを上げて manifest / versions.json / dist/ を揃える
 npm run gen:spec   # 保存形式の仕様書（docs/format.md, README の一覧）を fields.ts から生成
@@ -39,7 +41,7 @@ npm run gen:spec   # 保存形式の仕様書（docs/format.md, README の一覧
 
 ### どの変更でも
 
-- `npm test` と `npm run build` が通る
+- `npm test`、`npm run typecheck`、`npm run build` が通る
 - README.md（ルート）の該当箇所を直す。README はルートの1本だけが正
 
 ### `src/` か `styles.css` を変えたとき（プラグインの動作が変わる）

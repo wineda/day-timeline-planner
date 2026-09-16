@@ -12,7 +12,7 @@ import {
  * フィールドを足したり名前を変えたりしたときに、設定側の文字列が取り残されるのを防ぐ
  */
 describe("タグ別フィールドの既定値と fields.ts の整合", () => {
-  const labels = new Set(FIELDS.map((f) => f.label));
+  const labels = new Set<string>(FIELDS.map((f) => f.label));
 
   it("required / suggested の欄名はすべて fields.ts に定義されたラベル", () => {
     for (const s of DEFAULT_TAG_FIELD_SCHEMA) {
