@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bump": "node scripts/bump.mjs",
-    "gen:spec": "node scripts/gen-spec.mjs"
+    "gen:spec": "node scripts/gen-spec.mjs",
+    "typecheck": "tsc -noEmit -skipLibCheck -p tsconfig.test.json"
   },
   "keywords": [
     "obsidian",

@@ -8,7 +8,14 @@
  *
  * Obsidian の API に依存しない（そのままテストできる）。
  */
-import { renderTaskBlock, type BlockOptions, type MetaSource, parseActualValue, parseLinkValue } from "./markdown/blocks";
+import {
+  renderMetaLine,
+  renderTaskBlock,
+  type BlockOptions,
+  type MetaSource,
+  parseActualValue,
+  parseLinkValue,
+} from "./markdown/blocks";
 import { FIELDS, FORMAT_VERSION, HEAD_FIELDS, RECORD_FIELDS, STATUS_KINDS, type AnyField } from "./markdown/fields";
 import { ID_PREFIX } from "./markdown/id";
 
@@ -20,10 +27,14 @@ export interface SpecContext {
   folder: string;
   /** ファイル名の日付形式（設定「日付形式」） */
   dateFormat: string;
-  /** タスクとみなす見出しレベル */
+  /** タスクとみなす見出しレベル（親見出しとの繰り下げを済ませた値） */
   headingLevel: number;
   /** タスクを置く親見出し（"" ならファイル直下） */
   rootHeading: string;
+  /** "- [ ] " のチェックボックス形式で書き込むか（設定「チェックボックス形式で保存」） */
+  useCheckbox: boolean;
+  /** メタ行にもタイトルを書くか（設定「メタ行にタイトルを書く」） */
+  mirrorTitle: boolean;
   /** Inbox のノート（拡張子なし） */
   inboxPath: string;
   /** プロジェクトノートのフォルダ（"" なら <フォルダ>/Projects） */
@@ -32,8 +43,8 @@ export interface SpecContext {
   dailyReportFolder: string;
   /** チケット管理ツールの名前（設定「チケット管理ツール」。先頭が既定） */
   trackers: string[];
-  /** メンバー名（設定「メンバー」） */
-  members: string[];
+  /** メンバー（設定「メンバー」）。folder はその人のノートのフォルダ（設定で変えていなければ <フォルダ>/Members/<名前>） */
+  members: { name: string; folder: string }[];
   /** 生成日時（"" なら書かない。リポジトリの docs は差分を安定させるため書かない） */
   generatedAt: string;
 }
@@ -46,6 +57,8 @@ export function defaultSpecContext(pluginVersion: string): SpecContext {
     dateFormat: "YYYY-MM-DD",
     headingLevel: 2,
     rootHeading: "",
+    useCheckbox: true,
+    mirrorTitle: false,
     inboxPath: "Timeline/Inbox",
     projectsFolder: "",
     dailyReportFolder: "daily",
@@ -55,7 +68,7 @@ export function defaultSpecContext(pluginVersion: string): SpecContext {
   };
 }
 
-/** 仕様書の実例に使う書き出し設定（既定の設定と同じ） */
+/** 仕様書の実例に使う書き出し設定（既定の設定と同じ。テストと README 用） */
 export const EXAMPLE_OPTIONS: BlockOptions = {
   headingLevel: 2,
   rootHeading: "",
@@ -63,8 +76,18 @@ export const EXAMPLE_OPTIONS: BlockOptions = {
   mirrorTitle: false,
 };
 
+/** 仕様書の設定から、実例を書き出すときのブロック設定を組む */
+export function exampleOptionsOf(ctx: SpecContext): BlockOptions {
+  return {
+    headingLevel: ctx.headingLevel,
+    rootHeading: ctx.rootHeading,
+    useCheckbox: ctx.useCheckbox,
+    mirrorTitle: ctx.mirrorTitle,
+  };
+}
+
 /** 仕様書の実例タスク（全フィールド入り。持ち越しは別の実例で出す） */
-export function exampleTaskSource(): MetaSource & { body: string[] } {
+export function exampleTaskSource(tracker = "redmine"): MetaSource & { body: string[] } {
   const ex = (key: string) => (FIELDS.find((f) => f.key === key) as AnyField).example;
   return {
     id: `${ID_PREFIX}k3f9a2`,
@@ -74,7 +97,7 @@ export function exampleTaskSource(): MetaSource & { body: string[] } {
     done: true,
     note: "",
     reminder: 10,
-    ticket: { tracker: "redmine", id: "65130" },
+    ticket: { tracker, id: "65130" },
     project: parseLinkValue(ex("project")),
     actual: parseActualValue(ex("actual")),
     registered: ex("registered"),
@@ -156,7 +179,7 @@ export function renderFieldList(): string {
 /** 仕様書用: フィールドの表 */
 export function renderFieldTable(): string {
   const rows = [
-    "| ラベル | 位置 | 値 | 説明 | 実例 | 別表記 | AI が読む |",
+    "| ラベル | 位置 | 値 | 説明 | 実例 | 別表記 | 記録タブ |",
     "|---|---|---|---|---|---|---|",
   ];
   for (const f of FIELDS) {
@@ -181,7 +204,10 @@ export function renderFormatSpec(ctx: SpecContext): string {
   const heading = "#".repeat(ctx.headingLevel);
   const root = ctx.rootHeading.trim();
   const tracker = ctx.trackers[0] ?? "redmine";
-  const example = renderTaskBlock(exampleTaskSource(), EXAMPLE_OPTIONS);
+  const opts = exampleOptionsOf(ctx);
+  const exampleSource = exampleTaskSource(tracker);
+  const example = renderTaskBlock(exampleSource, opts);
+  const exampleMeta = renderMetaLine(exampleSource, opts);
   const carry = exampleCarrySources();
 
   const out: string[] = [];
@@ -212,12 +238,12 @@ export function renderFormatSpec(ctx: SpecContext): string {
   out.push(`| 日付ノート | \`${folder}/${ctx.dateFormat}.md\` | その日のタスク（この文書の形式） |`);
   out.push(`| Inbox | \`${ctx.inboxPath}.md\` | 日付を決めていないタスク（同じ形式。\`登録日\` 付き） |`);
   out.push(`| プロジェクトノート | \`${projects}/<名前>.md\` | 大きなタスク。日付ノートのタスクが \`プロジェクト\` 行でここへリンクする |`);
-  out.push(
-    `| メンバーの予定 | \`${folder}/Members/<名前>/${ctx.dateFormat}.md\` | 他の人の予定（同じ形式）${
-      ctx.members.length ? `。メンバー: ${ctx.members.join("、")}` : ""
-    } |`
-  );
-  out.push(`| プラグインの集計 | \`${folder}/Reports/日報 ${ctx.dateFormat}.md\`、\`${folder}/Reports/予実レポート ${ctx.dateFormat}.md\` | プラグインがタスクを集計して書き出した Markdown。**AI が読む入力として最も扱いやすい** |`);
+  const memberList = ctx.members.length
+    ? "。メンバー: " + ctx.members.map((m) => `${m.name}（\`${m.folder}/\`）`).join("、")
+    : "";
+  out.push(`| メンバーの予定 | \`${folder}/Members/<名前>/${ctx.dateFormat}.md\`（メンバーごとに設定で変えられる） | 他の人の予定（同じ形式）${memberList} |`);
+  // レポートのファイル名は設定の日付形式によらず常に YYYY-MM-DD（main.ts の dateKey）
+  out.push(`| プラグインの集計 | \`${folder}/Reports/日報 YYYY-MM-DD.md\`、\`${folder}/Reports/予実レポート YYYY-MM-DD.md\` | プラグインがタスクを集計して書き出した Markdown。**AI が読む入力として最も扱いやすい** |`);
   out.push(`| 日報 | \`${ctx.dailyReportFolder}/…${ctx.dateFormat}….md\` | AI などが書いた日報。プラグインは日付ヘッダーからこれを表示する |`);
   out.push("");
 
@@ -244,12 +270,19 @@ export function renderFormatSpec(ctx: SpecContext): string {
 
   out.push("### メタ行");
   out.push("");
-  out.push(code([`- [x] 10:00 - 11:00 🎫${tracker}#65130 🔔10 ^${ID_PREFIX}k3f9a2`]));
+  out.push(code([exampleMeta]));
   out.push("");
   out.push("| 部分 | 意味 |");
   out.push("|---|---|");
-  out.push("| `- [ ]` / `- [x]` / `- [>]` | 未完了 / 完了 / **持ち越し済み**（翌日へ送った。完了でも未完了でもない） |");
+  out.push(
+    "| `- [ ]` / `- [x]` / `- [>]` | 未完了 / 完了 / **持ち越し済み**（翌日へ送った。完了でも未完了でもない）" +
+      (ctx.useCheckbox ? "" : "。この保管庫の設定では、未完了のタスクはチェックボックス無し（`- 10:00 - 11:00 …`）で書かれ、完了すると `- [x]` になる") +
+      " |"
+  );
   out.push("| `10:00 - 11:00` | 予定の時刻（24 時間制）。**無ければ「未スケジュール」**（Inbox や再スケジュール待ち） |");
+  if (ctx.mirrorTitle) {
+    out.push("| タイトル | この保管庫の設定では、時刻の後ろにタイトルも書かれる（他プラグインとの互換用。見出しと同じ内容） |");
+  }
   out.push(`| \`🎫${tracker}#65130\` | チケット。\`🎫#65130\` はツール省略（先頭のツール${ctx.trackers.length ? `: ${ctx.trackers.join(" / ")}` : ""}） |`);
   out.push("| `🔔10` / `🔔off` | リマインド（開始 10 分前 / しない）。無ければ既定 |");
   out.push(`| \`^${ID_PREFIX}xxxxxx\` | プラグインが付けるブロックID。\`[[${ctx.dateFormat}#^${ID_PREFIX}xxxxxx]]\` で他のノートから参照できる |`);
@@ -262,7 +295,7 @@ export function renderFormatSpec(ctx: SpecContext): string {
   out.push(
     "本文の `- ラベル: 値` の行。1 行のフィールドは**最初の 1 行だけ**が有効で、2 つ目以降はただの本文。" +
       "読むときはリスト記号なし・`**ラベル**`・全角コロン・別表記も受け付けるが、プラグインが書くときは下のラベルに統一する。" +
-      "AI が読む欄は、編集画面の「記録」タブに集まっている。"
+      "「記録タブ」の欄は、編集画面で作業の記録として「記録」タブに集めているもの（日報・振り返りの元データ）。"
   );
   out.push("");
   out.push(renderFieldTable());
@@ -274,7 +307,7 @@ export function renderFormatSpec(ctx: SpecContext): string {
   out.push("");
   out.push("未完了のまま翌日へ送ると、元のブロックはチェックが `[>]` になって `持ち越し先` を持ち、続きのブロックが `持ち越し元` を持つ。");
   out.push("");
-  out.push(code([...renderTaskBlock(carry.from, EXAMPLE_OPTIONS), "", ...renderTaskBlock(carry.to, EXAMPLE_OPTIONS)]));
+  out.push(code([...renderTaskBlock(carry.from, opts), "", ...renderTaskBlock(carry.to, opts)]));
   out.push("");
 
   out.push("## 読むときの約束（AI 向け）");

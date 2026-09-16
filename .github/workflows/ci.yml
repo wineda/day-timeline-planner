@@ -26,6 +26,9 @@ jobs:
       - name: テスト
         run: npm test
 
+      - name: 型チェック（src と test）
+        run: npm run typecheck
+
       - name: 型チェック + ビルド
         run: npm run build
 

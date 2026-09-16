@@ -5,6 +5,7 @@ import {
   EXAMPLE_OPTIONS,
   defaultSpecContext,
   exampleCarrySources,
+  exampleOptionsOf,
   exampleTaskSource,
   renderFieldList,
   renderFieldTable,
@@ -59,21 +60,58 @@ describe("仕様書の生成（spec.ts）", () => {
   });
 
   it("仕様書の全文: frontmatter に版、全フィールドの表、実例、保管庫の設定が入る", () => {
-    const ctx = { ...defaultSpecContext("2.117.0"), folder: "Work", trackers: ["gitea", "redmine"], members: ["田中"] };
+    const ctx = {
+      ...defaultSpecContext("2.117.0"),
+      folder: "Work",
+      trackers: ["gitea", "redmine"],
+      members: [{ name: "田中", folder: "Work/Members/田中" }],
+    };
     const md = renderFormatSpec(ctx);
     expect(md.startsWith(`---\nformat_version: "${FORMAT_VERSION}"\nplugin_version: "2.117.0"\n`)).toBe(true);
     for (const f of FIELDS) expect(md).toContain(`| \`${f.label}\``);
     expect(md).toContain("`Work/YYYY-MM-DD.md`");
     expect(md).toContain("`Work/Projects/<名前>.md`");
-    expect(md).toContain("🎫gitea#65130");
-    expect(md).toContain("メンバー: 田中");
+    expect(md).toContain("メンバー: 田中（`Work/Members/田中/`）");
     expect(md).toContain("## 誤検知の調査 #障害");
     expect(md).not.toContain("generated_at");
     expect(renderFormatSpec({ ...ctx, generatedAt: "2026-09-15 10:00" })).toContain("generated_at: 2026-09-15 10:00");
   });
 
-  it("親見出しの設定はブロックの置き場の説明に反映される", () => {
-    const md = renderFormatSpec({ ...defaultSpecContext("x"), rootHeading: "## 予定", headingLevel: 3 });
-    expect(md).toContain("親見出し `## 予定` の配下に、レベル 3（`###`）");
+  it("チケット管理ツールの先頭を、実例ブロックとメタ行の説明の両方に使う", () => {
+    const md = renderFormatSpec({ ...defaultSpecContext("x"), trackers: ["gitea", "redmine"] });
+    expect(md).toContain("- [x] 10:00 - 11:00 🎫gitea#65130 🔔10 ^dtp-k3f9a2");
+    expect(md).not.toContain("🎫redmine#65130");
+    expect(md).toContain("先頭のツール: gitea / redmine");
+  });
+
+  it("レポートのファイル名は設定の日付形式によらず YYYY-MM-DD（プラグインの書き出しと同じ）", () => {
+    const md = renderFormatSpec({ ...defaultSpecContext("x"), dateFormat: "YYYYMMDD" });
+    expect(md).toContain("`Timeline/YYYYMMDD.md`"); // 日付ノートは設定どおり
+    expect(md).toContain("`Timeline/Reports/日報 YYYY-MM-DD.md`、`Timeline/Reports/予実レポート YYYY-MM-DD.md`");
+    expect(md).not.toContain("日報 YYYYMMDD");
+  });
+
+  it("実例ブロックは保管庫の設定（見出しレベル・チェックボックス・メタ行のタイトル）で書き出す", () => {
+    const base = defaultSpecContext("x");
+    const level3 = renderFormatSpec({ ...base, rootHeading: "## 予定", headingLevel: 3 });
+    expect(level3).toContain("親見出し `## 予定` の配下に、レベル 3（`###`）");
+    expect(level3).toContain("### 誤検知の調査 #障害");
+    expect(level3).toContain("### 設計レビューの準備 #開発/設計");
+    expect(level3).not.toContain("\n## 誤検知の調査");
+
+    const noBox = renderFormatSpec({ ...base, useCheckbox: false });
+    expect(noBox).toContain("- ^dtp-c0ffee\n"); // 未完了はチェックボックス無し
+    expect(noBox).toContain("- [x] 10:00 - 11:00"); // 完了は [x] のまま
+    expect(noBox).toContain("未完了のタスクはチェックボックス無し");
+
+    const mirror = renderFormatSpec({ ...base, mirrorTitle: true });
+    expect(mirror).toContain("- [x] 10:00 - 11:00 誤検知の調査 #障害 🎫redmine#65130 🔔10 ^dtp-k3f9a2");
+    expect(mirror).toContain("| タイトル | この保管庫の設定では");
+    expect(renderFormatSpec(base)).not.toContain("| タイトル | この保管庫の設定では");
+  });
+
+  it("実例の書き出し設定は保管庫の設定から組む", () => {
+    const opts = exampleOptionsOf({ ...defaultSpecContext("x"), headingLevel: 4, rootHeading: "# 予定", useCheckbox: false, mirrorTitle: true });
+    expect(opts).toEqual({ headingLevel: 4, rootHeading: "# 予定", useCheckbox: false, mirrorTitle: true });
   });
 });
