@@ -450,6 +450,7 @@ export default class DayTimelinePlugin extends Plugin {
       members: s.members
         .filter((m) => m.name.trim())
         .map((m) => ({ name: m.name.trim(), folder: normalizePath(memberFolder(s, m)) })),
+      deletionLog: s.deletionLog,
       generatedAt: moment().format("YYYY-MM-DD HH:mm"),
     };
   }

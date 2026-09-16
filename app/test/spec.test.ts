@@ -41,9 +41,33 @@ describe("仕様書の生成（spec.ts）", () => {
     expect(doc.tasks).toHaveLength(2);
     expect(doc.tasks[0].checkChar).toBe(">");
     // 元のブロックの持ち越し先は続きのブロックの ID を、続きのブロックの持ち越し元は元のブロックの ID を指す
-    expect(doc.tasks[0].carryTo).toBe(`2026-08-19#^${doc.tasks[1].id}`);
-    expect(doc.tasks[1].carryFrom).toBe(`2026-08-18#^${doc.tasks[0].id}`);
+    // リンクは日付ノートのパス（フォルダ付き）
+    expect(doc.tasks[0].carryTo).toBe(`Timeline/2026-08-19#^${doc.tasks[1].id}`);
+    expect(doc.tasks[1].carryFrom).toBe(`Timeline/2026-08-18#^${doc.tasks[0].id}`);
     expect(doc.tasks[1].start).toBeNull();
+  });
+
+  it("プロジェクトと持ち越しのリンクは保管庫のフォルダ設定で組む", () => {
+    const md = renderFormatSpec({ ...defaultSpecContext("x"), folder: "Work", projectsFolder: "Projects", inboxPath: "Work/Inbox" });
+    expect(md).toContain("- プロジェクト: [[Projects/環境構築]]");
+    expect(md).toContain("| `[[Projects/環境構築]]` |"); // 表の実例も設定に合わせる
+    expect(md).toContain("| `[[Work/2026-08-18#^dtp-9b2c44]]` |");
+    expect(md).toContain("`Projects/<名前>.md`");
+    expect(md).toContain("- 持ち越し先: [[Work/2026-08-19#^dtp-c0ffee]]");
+    expect(md).toContain("- 持ち越し元: [[Work/2026-08-18#^dtp-9b2c44]]");
+    expect(md).toContain("`[[Work/YYYY-MM-DD#^dtp-xxxxxx]]`");
+    expect(md).not.toContain("Timeline/");
+    // 既定はプロジェクトが <フォルダ>/Projects
+    const def = renderFormatSpec(defaultSpecContext("x"));
+    expect(def).toContain("- プロジェクト: [[Timeline/Projects/環境構築]]");
+    expect(def).toContain("- 持ち越し先: [[Timeline/2026-08-19#^dtp-c0ffee]]");
+  });
+
+  it("削除ログの行は設定が有効なときだけ出す。集計はコマンドで書き出したときだけ存在すると書く", () => {
+    const on = renderFormatSpec(defaultSpecContext("x"));
+    expect(on).toContain("| 操作ログ | `Timeline/Log.md` |");
+    expect(on).toContain("書き出したときだけ存在する");
+    expect(renderFormatSpec({ ...defaultSpecContext("x"), deletionLog: false })).not.toContain("| 操作ログ |");
   });
 
   it("README 用の一覧と仕様書の表は、全フィールドを 1 件 1 行で持つ", () => {

@@ -100,7 +100,7 @@ export const FIELDS = [
     preview: false,
     aiReads: false,
     description: "前の日から持ち越されたタスクの、元のブロックへのリンク（プラグインが書く）",
-    example: "[[2026-08-18#^dtp-9b2c44]]",
+    example: "[[Timeline/2026-08-18#^dtp-9b2c44]]",
   },
   {
     key: "carryTo",
@@ -113,7 +113,7 @@ export const FIELDS = [
     aiReads: false,
     description:
       "残件を翌日へ持ち越したとき、続きのブロックへのリンク（プラグインが書く）。持ち越したタスクはチェックが `[>]` になる",
-    example: "[[2026-08-19#^dtp-c0ffee]]",
+    example: "[[Timeline/2026-08-19#^dtp-c0ffee]]",
   },
   {
     key: "registered",
