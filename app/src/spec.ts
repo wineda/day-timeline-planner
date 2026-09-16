@@ -45,6 +45,8 @@ export interface SpecContext {
   trackers: string[];
   /** メンバー（設定「メンバー」）。folder はその人のノートのフォルダ（設定で変えていなければ <フォルダ>/Members/<名前>） */
   members: { name: string; folder: string }[];
+  /** タスクを削除したとき <フォルダ>/Log.md に記録を残すか（設定「削除したタスクの記録を残す」） */
+  deletionLog: boolean;
   /** 生成日時（"" なら書かない。リポジトリの docs は差分を安定させるため書かない） */
   generatedAt: string;
 }
@@ -64,8 +66,14 @@ export function defaultSpecContext(pluginVersion: string): SpecContext {
     dailyReportFolder: "daily",
     trackers: [],
     members: [],
+    deletionLog: true,
     generatedAt: "",
   };
+}
+
+/** プロジェクトノートのフォルダ（設定が空なら <フォルダ>/Projects） */
+export function projectsFolderOf(ctx: Pick<SpecContext, "folder" | "projectsFolder">): string {
+  return ctx.projectsFolder.trim().replace(/\/+$/, "") || `${ctx.folder.replace(/\/+$/, "")}/Projects`;
 }
 
 /** 仕様書の実例に使う書き出し設定（既定の設定と同じ。テストと README 用） */
@@ -86,8 +94,11 @@ export function exampleOptionsOf(ctx: SpecContext): BlockOptions {
   };
 }
 
-/** 仕様書の実例タスク（全フィールド入り。持ち越しは別の実例で出す） */
-export function exampleTaskSource(tracker = "redmine"): MetaSource & { body: string[] } {
+/**
+ * 仕様書の実例タスク（全フィールド入り。持ち越しは別の実例で出す）。
+ * プロジェクトのリンクはプロジェクトノートのパスそのものなので、フォルダは保管庫の設定で変わる
+ */
+export function exampleTaskSource(tracker = "redmine", projectsFolder = "Timeline/Projects"): MetaSource & { body: string[] } {
   const ex = (key: string) => (FIELDS.find((f) => f.key === key) as AnyField).example;
   return {
     id: `${ID_PREFIX}k3f9a2`,
@@ -98,7 +109,7 @@ export function exampleTaskSource(tracker = "redmine"): MetaSource & { body: str
     note: "",
     reminder: 10,
     ticket: { tracker, id: "65130" },
-    project: parseLinkValue(ex("project")),
+    project: `${projectsFolder}/${parseLinkValue(ex("project")).split("/").pop()}`,
     actual: parseActualValue(ex("actual")),
     registered: ex("registered"),
     due: ex("due"),
@@ -121,9 +132,16 @@ export function exampleTaskSource(tracker = "redmine"): MetaSource & { body: str
   };
 }
 
-/** 持ち越しの実例（元のブロックと続きのブロック） */
-export function exampleCarrySources(): { from: MetaSource; to: MetaSource } {
-  const ex = (key: string) => (FIELDS.find((f) => f.key === key) as AnyField).example;
+/**
+ * 持ち越しの実例（元のブロックと続きのブロック）。
+ * 持ち越しのリンクは日付ノートのパスから作るので、フォルダは保管庫の設定で変わる
+ */
+export function exampleCarrySources(folder = "Timeline"): { from: MetaSource; to: MetaSource } {
+  // 定義の実例（Timeline/… の形）のフォルダ部分を、この保管庫のフォルダに差し替える
+  const ex = (key: string) => {
+    const link = parseLinkValue((FIELDS.find((f) => f.key === key) as AnyField).example);
+    return `${folder}/${link.split("/").pop()}`;
+  };
   return {
     from: {
       id: `${ID_PREFIX}9b2c44`,
@@ -133,7 +151,7 @@ export function exampleCarrySources(): { from: MetaSource; to: MetaSource } {
       done: false,
       checkChar: ">",
       note: "",
-      carryTo: parseLinkValue(ex("carryTo")),
+      carryTo: ex("carryTo"),
       steps: [
         { text: "資料の骨子", done: true, children: [] },
         { text: "図を描く", done: false, children: [] },
@@ -146,7 +164,7 @@ export function exampleCarrySources(): { from: MetaSource; to: MetaSource } {
       end: null,
       done: false,
       note: "",
-      carryFrom: parseLinkValue(ex("carryFrom")),
+      carryFrom: ex("carryFrom"),
       steps: [{ text: "図を描く", done: false, children: [] }],
     },
   };
@@ -176,8 +194,19 @@ export function renderFieldList(): string {
   return lines.join("\n");
 }
 
+/**
+ * フィールドの実例。リンク系（プロジェクト・持ち越し）はノートのパスなので、
+ * ctx があれば保管庫のフォルダ設定に合わせた形にする
+ */
+export function fieldExample(f: AnyField, ctx?: Pick<SpecContext, "folder" | "projectsFolder">): string {
+  if (!ctx || f.kind !== "link") return f.example;
+  const name = parseLinkValue(f.example).split("/").pop();
+  const dir = f.key === "project" ? projectsFolderOf(ctx) : ctx.folder.replace(/\/+$/, "");
+  return `[[${dir}/${name}]]`;
+}
+
 /** 仕様書用: フィールドの表 */
-export function renderFieldTable(): string {
+export function renderFieldTable(ctx?: Pick<SpecContext, "folder" | "projectsFolder">): string {
   const rows = [
     "| ラベル | 位置 | 値 | 説明 | 実例 | 別表記 | 記録タブ |",
     "|---|---|---|---|---|---|---|",
@@ -185,7 +214,7 @@ export function renderFieldTable(): string {
   for (const f of FIELDS) {
     const multi = "multi" in f && f.multi ? "（複数行可）" : "";
     rows.push(
-      `| \`${f.label}\`${multi} | ${zoneLabel(f)} | ${valueLabel(f)} | ${f.description.replace(/\|/g, "\\|")} | \`${f.example}\` | ${
+      `| \`${f.label}\`${multi} | ${zoneLabel(f)} | ${valueLabel(f)} | ${f.description.replace(/\|/g, "\\|")} | \`${fieldExample(f, ctx)}\` | ${
         f.aliases.map((a) => `\`${a}\``).join(" ") || "—"
       } | ${f.aiReads ? "○" : "—"} |`
     );
@@ -200,15 +229,15 @@ function code(lines: string[]): string {
 /** 仕様書の全文（Markdown） */
 export function renderFormatSpec(ctx: SpecContext): string {
   const folder = ctx.folder.replace(/\/+$/, "") || "（保管庫直下）";
-  const projects = ctx.projectsFolder.trim() || `${folder}/Projects`;
+  const projects = projectsFolderOf(ctx);
   const heading = "#".repeat(ctx.headingLevel);
   const root = ctx.rootHeading.trim();
   const tracker = ctx.trackers[0] ?? "redmine";
   const opts = exampleOptionsOf(ctx);
-  const exampleSource = exampleTaskSource(tracker);
+  const exampleSource = exampleTaskSource(tracker, projects);
   const example = renderTaskBlock(exampleSource, opts);
   const exampleMeta = renderMetaLine(exampleSource, opts);
-  const carry = exampleCarrySources();
+  const carry = exampleCarrySources(folder);
 
   const out: string[] = [];
   out.push("---");
@@ -243,8 +272,14 @@ export function renderFormatSpec(ctx: SpecContext): string {
     : "";
   out.push(`| メンバーの予定 | \`${folder}/Members/<名前>/${ctx.dateFormat}.md\`（メンバーごとに設定で変えられる） | 他の人の予定（同じ形式）${memberList} |`);
   // レポートのファイル名は設定の日付形式によらず常に YYYY-MM-DD（main.ts の dateKey）
-  out.push(`| プラグインの集計 | \`${folder}/Reports/日報 YYYY-MM-DD.md\`、\`${folder}/Reports/予実レポート YYYY-MM-DD.md\` | プラグインがタスクを集計して書き出した Markdown。**AI が読む入力として最も扱いやすい** |`);
-  out.push(`| 日報 | \`${ctx.dailyReportFolder}/…${ctx.dateFormat}….md\` | AI などが書いた日報。プラグインは日付ヘッダーからこれを表示する |`);
+  out.push(
+    `| プラグインの集計 | \`${folder}/Reports/日報 YYYY-MM-DD.md\`、\`${folder}/Reports/予実レポート YYYY-MM-DD.md\` | プラグインがタスクを集計して書き出した Markdown。**AI が読む入力として最も扱いやすい**。` +
+      "コマンド「日報（タスクの集計）をノートに書き出す（表示中の日）」「予実レポートを作成（表示中の週）」で書き出したときだけ存在する |"
+  );
+  out.push(`| 日報 | \`${ctx.dailyReportFolder}/…${ctx.dateFormat}….md\` | AI などが書いた日報。プラグインは日付ヘッダーからこれを表示する（設定「日報のフォルダ」） |`);
+  if (ctx.deletionLog) {
+    out.push(`| 操作ログ | \`${folder}/Log.md\` | プラグインがタスクを削除したときの記録（日時・タイトル・元のノート）。「消えたタスク」が意図した削除だったかを確かめるのに使う |`);
+  }
   out.push("");
 
   out.push("## タスクブロックの構造");
@@ -285,7 +320,7 @@ export function renderFormatSpec(ctx: SpecContext): string {
   }
   out.push(`| \`🎫${tracker}#65130\` | チケット。\`🎫#65130\` はツール省略（先頭のツール${ctx.trackers.length ? `: ${ctx.trackers.join(" / ")}` : ""}） |`);
   out.push("| `🔔10` / `🔔off` | リマインド（開始 10 分前 / しない）。無ければ既定 |");
-  out.push(`| \`^${ID_PREFIX}xxxxxx\` | プラグインが付けるブロックID。\`[[${ctx.dateFormat}#^${ID_PREFIX}xxxxxx]]\` で他のノートから参照できる |`);
+  out.push(`| \`^${ID_PREFIX}xxxxxx\` | プラグインが付けるブロックID。\`[[${folder}/${ctx.dateFormat}#^${ID_PREFIX}xxxxxx]]\` で他のノートから参照できる（持ち越しのリンクもこの形） |`);
   out.push("");
   out.push("手書きで `- 09:00 - 10:00` とだけ書いてもタスクとして認識される（ID は次の保存時に付く）。");
   out.push("");
@@ -298,7 +333,7 @@ export function renderFormatSpec(ctx: SpecContext): string {
       "「記録タブ」の欄は、編集画面で作業の記録として「記録」タブに集めているもの（日報・振り返りの元データ）。"
   );
   out.push("");
-  out.push(renderFieldTable());
+  out.push(renderFieldTable(ctx));
   out.push("");
   out.push(`状態の値: ${STATUS_KINDS.map((v) => `\`${v}\``).join(" / ")}。中断だけは \`中断(理由)\` のように理由を付ける。`);
   out.push("");
