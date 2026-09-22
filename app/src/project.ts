@@ -7,7 +7,6 @@ import { App, Notice, TFile, TFolder, getIcon, moment, normalizePath, setIcon } 
 import type { DayTimelineSettings } from "./settings";
 import type { Task } from "./model";
 import { newBlockId } from "./markdown/id";
-import { parseRank, type MonsterRank } from "./bestiary";
 import { stripTags } from "./util";
 import {
   normalizeBlockOptions,
@@ -53,16 +52,10 @@ export interface ProjectFields {
   ticket: TicketRef | null;
   /** ドキュメント（「- ドキュメント: [[設計書]] …」行。複数行・複数リンク可） */
   docs: ProjectDoc[];
-  /** ボス戦のモンスター名（「- モンスター: ドラゴン」行。無ければ ""＝名前から自動で選ぶ） */
-  monster: string;
-  /** ボス戦の難易度（「- 難易度: ボス」行。null＝おまかせ（予定時間から決める）） */
-  difficulty: MonsterRank | null;
 }
 
 const DUE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?期日(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 const TICKET_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?チケット(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
-const MONSTER_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?モンスター(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
-const DIFFICULTY_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?難易度(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 const DOC_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:ドキュメント|資料)(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 
 /** 期日の行なら中身を返す（空でも ""）。違えば null */
@@ -163,8 +156,6 @@ export function extractProjectFields(content: string): ProjectFields {
   let dueDate: Date | null = null;
   let ticket: TicketRef | null = null;
   const docs: ProjectDoc[] = [];
-  let monster = "";
-  let difficulty: MonsterRank | null = null;
   let fence = false;
   for (let i = start; i < lines.length; i++) {
     const line = lines[i];
@@ -188,24 +179,10 @@ export function extractProjectFields(content: string): ProjectFields {
         continue;
       }
     }
-    if (!monster) {
-      const mv = MONSTER_LINE_RE.exec(line)?.[1];
-      if (mv !== undefined) {
-        monster = mv;
-        continue;
-      }
-    }
-    if (!difficulty) {
-      const dv = DIFFICULTY_LINE_RE.exec(line)?.[1];
-      if (dv !== undefined) {
-        difficulty = parseRank(dv);
-        continue;
-      }
-    }
     const dv = parseDocLine(line);
     if (dv !== null) docs.push(...parseDocValue(dv));
   }
-  return { due, dueDate, ticket, docs, monster, difficulty };
+  return { due, dueDate, ticket, docs };
 }
 
 /** プロジェクトノートの frontmatter でグループ名を持つキー */
@@ -303,11 +280,6 @@ export interface ProjectSummary {
   done?: boolean;
   /** プロジェクト自身の期日・チケット・ドキュメント（ノートから読む） */
   fields?: ProjectFields;
-  /**
-   * プロジェクトに属さないタスク 1 件を「1 件 1 体」として扱う仮の集計（ノートは無い）。
-   * パネルには出さず、ボス戦の演出とペットにだけ使う
-   */
-  solo?: boolean;
 }
 
 export function summarize(ref: ProjectRef, children: ProjectChild[]): ProjectSummary {
@@ -518,44 +490,6 @@ function bodyStart(lines: string[]): number {
 }
 
 /**
- * プロジェクトノートの「- ラベル: 値」行を書き換える（純関数）。
- * 行があれば値だけ差し替え、無ければメタ行（`- [ ] ^id`）の直後（無ければ最初の見出しの直後、それも無ければ先頭）に足す。
- * value が空で行も無ければ何もしない（テンプレートの空の行はそのまま残す）
- */
-export function upsertFieldLine(content: string, label: string, value: string): string {
-  const eol = content.includes("\r\n") ? "\r\n" : "\n";
-  const lines = content.split(/\r?\n/);
-  const re = new RegExp(`^(\\s*(?:[-*+]\\s+)?(?:\\*\\*)?${label}(?:\\*\\*)?\\s*[:：])\\s*(.*?)\\s*$`);
-  const start = bodyStart(lines);
-  let fence = false;
-  for (let i = start; i < lines.length; i++) {
-    if (FENCE_RE.test(lines[i])) {
-      fence = !fence;
-      continue;
-    }
-    if (fence) continue;
-    const m = re.exec(lines[i]);
-    if (m) {
-      lines[i] = value ? `${m[1]} ${value}` : m[1];
-      return lines.join(eol);
-    }
-  }
-  if (!value) return content;
-  const line = `- ${label}: ${value}`;
-  const meta = lines.findIndex((l, i) => i >= start && /^\s*[-*+]\s+\[[ xX>]\]\s+.*\^[A-Za-z0-9-]+\s*$/.test(l));
-  if (meta >= 0) {
-    // メタ行に続く「- ラベル: 」の並びの末尾に足す（期日・チケットのあとに並ぶ）
-    let at = meta + 1;
-    while (at < lines.length && /^\s*[-*+]\s+\S+\s*[:：]/.test(lines[at])) at++;
-    lines.splice(at, 0, line);
-    return lines.join(eol);
-  }
-  const head = lines.findIndex((l, i) => i >= start && /^#{1,2}\s/.test(l));
-  lines.splice(head >= 0 ? head + 1 : start, 0, line);
-  return lines.join(eol);
-}
-
-/**
  * 「テンプレートを作成」で書き出すサンプル。
  * {{name}} はプロジェクト名に置き換わる。メタ行（完了チェック）は作成時に自動で入る
  */
@@ -563,8 +497,6 @@ export const PROJECT_TEMPLATE_SAMPLE = `# {{name}}
 - 期日:
 - チケット:
 - ドキュメント:
-- 難易度:
-- モンスター:
 
 ## メモ
 
@@ -631,12 +563,7 @@ export class ProjectStore {
    * どちらもタスクブロックと同じ文法（見出し + メタ行）になるので、後から集計にも使える。
    * group を渡すとそのグループに入れる。作れなければ null
    */
-  async create(
-    name: string,
-    group?: string | null,
-    difficulty?: MonsterRank | null,
-    monster?: string | null
-  ): Promise<string | null> {
+  async create(name: string, group?: string | null): Promise<string | null> {
     const safe = name
       .trim()
       .replace(/[\\/:*?"<>|#^[\]]/g, " ")
@@ -659,23 +586,7 @@ export class ProjectStore {
     }
     const link = path.replace(/\.md$/, "");
     if (group?.trim()) await this.setGroup(link, group);
-    if (difficulty || monster) await this.setDifficulty(link, difficulty ?? null, monster ?? null);
     return link;
-  }
-
-  /**
-   * ボス戦の難易度とモンスターを書く（「- 難易度: 」「- モンスター: 」行）。
-   * null / 空は「おまかせ」で、行があれば値を空にする
-   */
-  async setDifficulty(linktext: string, difficulty: MonsterRank | null, monster: string | null): Promise<boolean> {
-    const file = this.resolveFile(linktext);
-    if (!(file instanceof TFile)) return false;
-    await this.app.vault.process(file, (content) => {
-      let next = upsertFieldLine(content, "難易度", difficulty ?? "");
-      next = upsertFieldLine(next, "モンスター", monster?.trim() ?? "");
-      return next;
-    });
-    return true;
   }
 
   /**

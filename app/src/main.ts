@@ -3,7 +3,6 @@ import {
   DEFAULT_SETTINGS,
   DayTimelineSettingTab,
   DayTimelineSettings,
-  colorForTags,
   memberFolder,
   migrateSettings,
   ticketUrl,
@@ -12,13 +11,12 @@ import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, mig
 import { RecurringModal } from "./recurring";
 import { RecurringManagerView, VIEW_TYPE_RECURRING } from "./recurring-view";
 import { ProjectCreateModal, TaskModal } from "./modal";
-import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
+import { ReminderService, requestNotificationPermission } from "./notify";
 import type { Task, TaskSource } from "./model";
 import { normalizeBlockOptions, parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { renderFormatSpec, type SpecContext } from "./spec";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
-import { DailyReportModal, type DailyDay, type DailyNote } from "./report-modal";
 import {
   ProjectStore,
   buildTaskListSection,
@@ -41,15 +39,12 @@ export default class DayTimelinePlugin extends Plugin {
   projects: ProjectStore | null = null;
   /** メンバー ID → その人の予定のストア（ブロック形式のときだけ） */
   memberStores = new Map<string, MemberStore>();
-  timer!: TimerService;
   reminders!: ReminderService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.createStore();
-    this.timer = new TimerService(this);
     this.reminders = new ReminderService(this);
-    this.timer.attachStatusBar(this.addStatusBarItem());
     this.reminders.start();
     if (this.settings.notifyStyle !== "banner") requestNotificationPermission();
 
@@ -105,21 +100,6 @@ export default class DayTimelinePlugin extends Plugin {
       "timeline-projects-toggle-expand",
       "タイムスケジュール: プロジェクトのツリーをすべて展開 / 閉じる",
       (v) => v.toggleAllProjects()
-    );
-    viewCommand(
-      "timeline-projects-toggle-flat",
-      "タイムスケジュール: プロジェクト一覧のフラット表示（グループの見出しなし）を切り替える",
-      (v) => v.toggleProjectsFlatList()
-    );
-    viewCommand(
-      "timeline-projects-toggle-filter",
-      "タイムスケジュール: プロジェクト一覧の絞り込み（すべて / 本日タスクあり）を切り替える",
-      (v) => v.toggleProjectsFilter()
-    );
-    viewCommand(
-      "timeline-projects-toggle-style",
-      "タイムスケジュール: プロジェクト一覧のツリー表示 / テーブル表示を切り替える",
-      (v) => v.toggleProjectsViewStyle()
     );
     viewCommand(
       "timeline-toggle-pane",
@@ -216,20 +196,6 @@ export default class DayTimelinePlugin extends Plugin {
       },
     });
 
-    // タイマー
-    this.addCommand({
-      id: "timer",
-      name: "タイマーを開始 / 操作",
-      callback: () => this.openTimerModal(),
-    });
-    for (const m of [5, 10, 15, 25, 30, 60]) {
-      this.addCommand({
-        id: `timer-${m}`,
-        name: `タイマー: ${m}分`,
-        callback: () => this.timer.start(m),
-      });
-    }
-
     // プロジェクト
     this.addCommand({
       id: "project-create",
@@ -262,7 +228,7 @@ export default class DayTimelinePlugin extends Plugin {
     });
     this.addCommand({
       id: "daily-report",
-      name: "日報を見る（表示中の日）",
+      name: "日報ノートを開く（表示中の日）",
       checkCallback: (checking) => {
         if (!this.blockStore()) return false;
         if (!checking) void this.openDailyReport(this.getTimelineView()?.getDate() ?? new Date());
@@ -348,45 +314,20 @@ export default class DayTimelinePlugin extends Plugin {
     return found[0] ?? null;
   }
 
-  /** その日の日報ノートと本文（無ければ null） */
-  private async readDailyNote(date: Date): Promise<DailyNote | null> {
-    const file = this.findDailyNote(date);
-    if (!file) return null;
-    return { file, content: await this.app.vault.cachedRead(file) };
-  }
-
   /**
-   * その日の日報をポップアップで見せる（日付ヘッダーの日付のクリック / コマンド）。
-   * 日報のフォルダにあるノートを描画する。無い日は案内と、代わりのタスクの集計。
-   * ノートを読み直してから出すので、他の端末で書いた分もそのまま反映される
+   * その日の日報ノート（設定「日報のフォルダ」にあるもの）を開く（日付ヘッダーの日付のクリック / コマンド）。
+   * 無い日は案内だけ出す（集計はコマンド「日報（タスクの集計）をノートに書き出す」で作れる）
    */
   async openDailyReport(date: Date): Promise<void> {
-    const store = this.blockStore();
-    if (!store) {
-      new Notice("日報はタスクブロック形式のときだけ使えます");
+    const file = this.findDailyNote(date);
+    if (!file) {
+      new Notice(
+        `${moment(date).format("M月D日")} の日報ノートは「${this.dailyReportFolder()}」にありません。` +
+          "タスクの集計はコマンド「日報（タスクの集計）をノートに書き出す」で作れます"
+      );
       return;
     }
-    const day = startOfDay(date);
-    const loadDay = async (d: Date): Promise<DailyDay> => ({
-      note: await this.readDailyNote(d),
-      tasks: (await store.load(d)).tasks,
-    });
-    try {
-      new DailyReportModal(this.app, {
-        date: day,
-        day: await loadDay(day),
-        loadDay,
-        noteFolder: this.dailyReportFolder(),
-        ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
-        colorOfTags: (tags) => colorForTags(tags, this.settings.tagColors),
-        onOpenNote: (file) => void this.app.workspace.getLeaf("tab").openFile(file),
-        onExport: (d) => void this.createDailyReport(d),
-        onSelectTask: (d, task) => this.getTimelineView()?.revealTask(d, task),
-      }).open();
-    } catch (e) {
-      console.error(e);
-      new Notice("日報を開けませんでした: " + String(e));
-    }
+    await this.app.workspace.getLeaf("tab").openFile(file);
   }
 
   /**
@@ -493,10 +434,6 @@ export default class DayTimelinePlugin extends Plugin {
     return path;
   }
 
-  openTimerModal(): void {
-    new TimerModal(this.app, this.timer).open();
-  }
-
   /** Inbox にタスクを追加するダイアログ */
   openInboxAddModal(): void {
     const inbox = this.inbox;
@@ -548,8 +485,8 @@ export default class DayTimelinePlugin extends Plugin {
       groups: knownGroupNames(projects.list(), this.settings.projectGroups.map((g) => g.name)),
       initialGroup,
       templatePath: hasTemplate ? tplPath : null,
-      onSubmit: async (name, group, difficulty, monster) => {
-        const link = await projects.create(name, group, difficulty, monster);
+      onSubmit: async (name, group) => {
+        const link = await projects.create(name, group);
         if (!link) {
           new Notice("プロジェクトを作成できませんでした");
           return;

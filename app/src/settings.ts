@@ -7,17 +7,13 @@ import { requestNotificationPermission, showAlert } from "./notify";
 export type ViewLocation = "tab" | "right" | "left";
 export type StorageFormat = "block" | "list";
 export type InsertPosition = "time" | "end";
-export type ViewMode = "day" | "3day" | "week" | "2week" | "month";
+export type ViewMode = "day" | "3day" | "week";
 /** 左サイドバーのタブ */
 export type SidebarTab = "inbox" | "projects" | "reschedule";
 
-/** プロジェクトパネルの表示形式（ツリー / テーブル） */
-export type ProjectsViewStyle = "tree" | "table";
 /** プロジェクト一覧の絞り込み: すべて / 本日タスクがあるものだけ */
 export type ProjectsFilter = "all" | "today";
 
-/** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
-export type PlanActualMode = "plan" | "both" | "actual";
 
 /** 1時間あたりの高さ（px）の範囲。設定のスライダーと Ctrl+ホイールのズームで共用する */
 export const MIN_HOUR_HEIGHT = 20;
@@ -539,6 +535,27 @@ export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
 export const SETTINGS_VERSION = 9;
 
+/** 過去の版にあって廃止した設定のキー（読み込み時に落とす） */
+const REMOVED_SETTING_KEYS = [
+  // ボス戦・ペット（v2.108〜v2.119 にあったゲーム要素）
+  "bossBattle",
+  "bossBattleSound",
+  "bossRankMidHours",
+  "bossRankBossHours",
+  "soloBattle",
+  "soloRankMidHours",
+  "soloRankBossHours",
+  "petEnabled",
+  "petPos",
+  // 2 週間・月表示、ズームのプリセット、予定 / 予実 / 実績の切替（いずれも v2.120 で廃止）
+  "twoWeekFit",
+  "zoomHours",
+  "paMode",
+  // プロジェクト一覧のテーブル表示・フラット表示（v2.120 で廃止。ツリーだけに）
+  "projectsViewStyle",
+  "projectsFlatList",
+];
+
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
   settingsVersion: number;
@@ -577,12 +594,6 @@ export interface DayTimelineSettings {
   endHour: number;
   /** 1時間あたりの高さ（px） */
   hourHeight: number;
-  /** タイムラインに一度に表示する時間の幅（4 / 8 / 12 時間）。0 = 「1時間あたりの高さ」に従う */
-  zoomHours: number;
-  /** 2週間表示で、今週・来週の2段が1画面に収まるよう縮尺を自動で決める（ズームを手で変えると外れる） */
-  twoWeekFit: boolean;
-  /** タイムラインに出すバー（予定 / 予実 / 実績） */
-  paMode: PlanActualMode;
   /** 未完了→完了にしたとき、実績が空なら自動で記録する */
   autoRecordActual: boolean;
   /** プロジェクト（大きなタスク）ノートを置くフォルダ。空欄 = <フォルダ>/Projects */
@@ -635,16 +646,8 @@ export interface DayTimelineSettings {
   showProjects: boolean;
   /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
   projectsHideDone: boolean;
-  /** プロジェクトパネルでグループの見出し（階層）を出さずフラットな一覧にするか。並びはグループ順のまま */
-  projectsFlatList: boolean;
   /** プロジェクト一覧の絞り込み（パネル上部の切替。記憶される） */
   projectsFilter: ProjectsFilter;
-  /** ペット: いま対応中のタスクのプロジェクトのモンスターを画面に浮かべて出すか */
-  petEnabled: boolean;
-  /** ペットの位置（画面の左上からの px）。null なら右下 */
-  petPos: { x: number; y: number } | null;
-  /** プロジェクトパネルの表示形式（tree = ツリー / table = 期日・進捗・予定・実績を列に並べるテーブル） */
-  projectsViewStyle: ProjectsViewStyle;
   /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
   projectGroups: ProjectGroupSetting[];
   /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
@@ -660,26 +663,12 @@ export interface DayTimelineSettings {
   summaryCollapsed: boolean;
   /** 連続達成（ストリーク）に数える1日の達成率（%）。予定時間ベース（予定の無い日は件数ベース）。0 なら連続達成を出さない */
   summaryStreakPercent: number;
-  /** プロジェクトパネルをボス戦（モンスター＋HP バー、完了時の演出）として表示するか */
-  bossBattle: boolean;
-  /** ボス戦の演出に効果音を付けるか */
-  bossBattleSound: boolean;
-  /** 予定時間の合計がこの時間以上なら中級のモンスター */
-  bossRankMidHours: number;
-  /** プロジェクトに属さないタスクを 1 件 1 体のモンスターとして扱う（演出とペット。パネルには出さない） */
-  soloBattle: boolean;
-  /** 単独タスクが中級になる予定時間（時間）。これ以内は雑魚 */
-  soloRankMidHours: number;
-  /** 単独タスクがボスになる予定時間（時間）。これ以内は中級 */
-  soloRankBossHours: number;
-  /** 予定時間の合計がこの時間以上ならボス */
-  bossRankBossHours: number;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
   /** 既定の「N分前」 */
   reminderDefaultMinutes: number;
-  /** タイマー終了・リマインドで音を鳴らすか */
+  /** リマインドで音を鳴らすか */
   notifySound: boolean;
   /** 通知の出し方 */
   notifyStyle: NotifyStyle;
@@ -706,9 +695,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   startHour: 7,
   endHour: 22,
   hourHeight: 60,
-  zoomHours: 0,
-  twoWeekFit: true,
-  paMode: "plan",
   autoRecordActual: true,
   projectsFolder: "",
   projectTemplatePath: "",
@@ -734,11 +720,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxCollapsed: false,
   showProjects: true,
   projectsHideDone: false,
-  projectsFlatList: false,
   projectsFilter: "all",
-  petEnabled: true,
-  petPos: null,
-  projectsViewStyle: "tree",
   projectGroups: [],
   defaultGroupIcon: "folder",
   sidebarWidth: 220,
@@ -746,13 +728,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showTodaySummary: true,
   summaryCollapsed: false,
   summaryStreakPercent: 80,
-  bossBattle: true,
-  bossBattleSound: true,
-  bossRankMidHours: 10,
-  soloBattle: true,
-  soloRankMidHours: 1,
-  soloRankBossHours: 3,
-  bossRankBossHours: 40,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -882,27 +857,20 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   delete (s as unknown as Record<string, unknown>).defaultProjectIcon;
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
   if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
-  if (s.projectsViewStyle !== "table") s.projectsViewStyle = "tree";
   if (s.projectsFilter !== "today") s.projectsFilter = "all";
-  if (typeof s.petEnabled !== "boolean") s.petEnabled = DEFAULT_SETTINGS.petEnabled;
-  if (!s.petPos || !Number.isFinite(s.petPos.x) || !Number.isFinite(s.petPos.y)) s.petPos = null;
   if (typeof s.showTodaySummary !== "boolean") s.showTodaySummary = DEFAULT_SETTINGS.showTodaySummary;
   if (typeof s.summaryCollapsed !== "boolean") s.summaryCollapsed = false;
   s.summaryStreakPercent = Number.isFinite(s.summaryStreakPercent)
     ? Math.min(100, Math.max(0, Math.round(s.summaryStreakPercent)))
     : DEFAULT_SETTINGS.summaryStreakPercent;
-  if (typeof s.bossBattle !== "boolean") s.bossBattle = DEFAULT_SETTINGS.bossBattle;
-  if (typeof s.bossBattleSound !== "boolean") s.bossBattleSound = DEFAULT_SETTINGS.bossBattleSound;
-  s.bossRankMidHours = Number.isFinite(s.bossRankMidHours) && s.bossRankMidHours >= 0 ? s.bossRankMidHours : DEFAULT_SETTINGS.bossRankMidHours;
-  s.bossRankBossHours =
-    Number.isFinite(s.bossRankBossHours) && s.bossRankBossHours >= 0 ? s.bossRankBossHours : DEFAULT_SETTINGS.bossRankBossHours;
-  if (typeof s.soloBattle !== "boolean") s.soloBattle = DEFAULT_SETTINGS.soloBattle;
-  s.soloRankMidHours =
-    Number.isFinite(s.soloRankMidHours) && s.soloRankMidHours >= 0 ? s.soloRankMidHours : DEFAULT_SETTINGS.soloRankMidHours;
-  s.soloRankBossHours =
-    Number.isFinite(s.soloRankBossHours) && s.soloRankBossHours >= 0 ? s.soloRankBossHours : DEFAULT_SETTINGS.soloRankBossHours;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
+  // 廃止した表示モード（2 週間・月）が保存されていたら既定に戻す
+  const modes: ViewMode[] = ["day", "3day", "week"];
+  if (!modes.includes(s.viewMode)) s.viewMode = DEFAULT_SETTINGS.viewMode;
+  if (!modes.includes(s.viewModeMobile)) s.viewModeMobile = DEFAULT_SETTINGS.viewModeMobile;
+  // 廃止した設定は保存ファイルから落とす（{ ...DEFAULT_SETTINGS, ...loaded } は未知のキーも残すため）
+  for (const key of REMOVED_SETTING_KEYS) delete (s as unknown as Record<string, unknown>)[key];
   s.settingsVersion = SETTINGS_VERSION;
   return s;
 }
@@ -1143,16 +1111,14 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("既定の表示")
       .setDesc(
-        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 2週 / 月」でいつでも切り替えられます。" +
+        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週」でいつでも切り替えられます。" +
           "スマホでは画面が狭いため表示を別に記憶します（既定は日表示。ツールバーで切り替えるとそれを覚えます）。"
       )
       .addDropdown((d) =>
         d
           .addOption("week", "週（7日）")
-          .addOption("2week", "2週間（今週・来週の2段）")
           .addOption("3day", "3日")
           .addOption("day", "日（1日）")
-          .addOption("month", "月（カレンダー）")
           .setValue(s.viewMode)
           .onChange(async (v) => {
             s.viewMode = v as ViewMode;
@@ -1691,110 +1657,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           })
       );
     new Setting(containerEl)
-      .setName("プロジェクトをボス戦として表示")
-      .setDesc(
-        "プロジェクトパネルの各行にモンスターと HP バーを出します。HP は子タスクの予定時間の合計で、ステップをチェックすると小さな一撃、" +
-          "タスクを完了にすると大きな一撃、最後のタスクを完了すると討伐の演出が入ります。モンスターはプロジェクト名から自動で決まり、" +
-          "プロジェクトノートに「- モンスター: ドラゴン」の行を書けば選べます。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.bossBattle).onChange(async (v) => {
-          s.bossBattle = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("対応中のプロジェクトのモンスターを画面に出す（ペット）")
-      .setDesc(
-        "いま対応中のタスク（計測中 → 現在時刻のタスク → 次のタスク の順）が結びついているプロジェクトのモンスターを、画面に浮かべて出します。" +
-          "ドラッグで好きな位置に動かせ（記憶されます）、クリックでそのタスクを編集、右クリックでメニュー。一撃・討伐の演出に合わせて動きます。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.petEnabled).onChange(async (v) => {
-          s.petEnabled = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("ボス戦の効果音")
-      .setDesc("一撃と討伐のときに短い打撃音を鳴らします。")
-      .addToggle((t) =>
-        t.setValue(s.bossBattleSound).onChange(async (v) => {
-          s.bossBattleSound = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("中級・ボスになる予定時間")
-      .setDesc(
-        "子タスクの予定時間の合計（時間）がこの値以上なら中級（★★）・ボス（★★★）のモンスターになります。それ未満は雑魚（★）。時刻の無いタスクは「既定の長さ」で数えます。"
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("中級 10")
-          .setValue(String(s.bossRankMidHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.bossRankMidHours = n;
-              await save();
-            }
-          })
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("ボス 40")
-          .setValue(String(s.bossRankBossHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.bossRankBossHours = n;
-              await save();
-            }
-          })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトなしのタスクも 1 件 1 体のモンスターにする")
-      .setDesc(
-        "プロジェクトに属さないタスクを、そのタスクだけを子に持つ仮のプロジェクトとして扱います（ノートは作らず、パネルにも出しません）。" +
-          "HP はそのタスクの予定時間で、完了するとそのまま討伐（短縮版の演出）。ペットもこのタスクのモンスターになります。姿はタスク名から決まります。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.soloBattle).onChange(async (v) => {
-          s.soloBattle = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("単独タスクが中級・ボスになる予定時間")
-      .setDesc(
-        "プロジェクトなしのタスク 1 件の予定時間（時間）がこの値以内なら雑魚（★）・中級（★★）、超えたらボス（★★★）。既定は 1 時間以内が雑魚、3 時間以内が中級。時刻の無いタスクは「既定の長さ」で数えます。"
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("中級 1")
-          .setValue(String(s.soloRankMidHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.soloRankMidHours = n;
-              await save();
-            }
-          })
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("ボス 3")
-          .setValue(String(s.soloRankBossHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.soloRankBossHours = n;
-              await save();
-            }
-          })
-      );
-    new Setting(containerEl)
       .setName("プロジェクトの完了済みタスクを隠す")
       .setDesc(
         "プロジェクトパネルのツリーに、完了済み・持ち越し済みの子タスクを出しません。パネルの目のボタンでも切り替えられます。"
@@ -1804,35 +1666,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           s.projectsHideDone = v;
           await save();
         })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトをフラットな一覧で表示")
-      .setDesc(
-        "グループの見出し（階層）を出さず、プロジェクトだけを一覧します。並びはグループ順のまま" +
-          "（ツリーと同じ: 設定の表示順 → 名前順 → 未分類は末尾。各グループの中は名前順）。" +
-          "グループ名は行のツールチップで確認できます。パネルの一覧ボタンでも切り替えられます。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.projectsFlatList).onChange(async (v) => {
-          s.projectsFlatList = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトの表示形式")
-      .setDesc(
-        "ツリーは1行に名前と進捗をまとめたコンパクトな表示、テーブルは期日・進捗・予定・実績を列に並べて見比べられる表示です。" +
-          "パネルの表ボタンでも切り替えられます。テーブルはサイドバーの右端をドラッグして広げると見やすくなります。"
-      )
-      .addDropdown((d) =>
-        d
-          .addOption("tree", "ツリー")
-          .addOption("table", "テーブル")
-          .setValue(s.projectsViewStyle)
-          .onChange(async (v) => {
-            s.projectsViewStyle = v === "table" ? "table" : "tree";
-            await save();
-          })
       );
     // ツリーのグループ見出しに出す既定のアイコン。プレビュー付きの入力欄
     {
@@ -1952,7 +1785,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       );
 
     // ---------- 通知 ----------
-    new Setting(containerEl).setName("通知（リマインド・タイマー）").setHeading();
+    new Setting(containerEl).setName("通知（リマインド）").setHeading();
     new Setting(containerEl)
       .setName("タスクのリマインド")
       .setDesc("今日の未完了タスクについて、開始の少し前に通知を出します（Obsidian を開いている間だけ）。")
@@ -2005,7 +1838,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       );
     new Setting(containerEl)
       .setName("音を鳴らす")
-      .setDesc("タイマー終了とリマインドのときに短いビープ音を鳴らします。")
+      .setDesc("リマインドのときに短いビープ音を鳴らします。")
       .addToggle((t) =>
         t.setValue(s.notifySound).onChange(async (v) => {
           s.notifySound = v;
