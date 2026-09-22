@@ -1841,71 +1841,51 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-/* 空の任意項目は「＋」チップで開くまで隠す */
+/* 畳んである欄・領域（「詳細」、モバイルの日時欄など） */
 .dt-modal .dt-collapsed {
   display: none !important;
 }
-.dt-modal .dt-add-fields {
+/* 「詳細」（チケット・リマインド・結果・ふりかえり）。値が無ければ畳んでおき、見出しのクリックで開く */
+.dt-modal .dt-details {
+  margin: 4px 0 2px;
+}
+.dt-modal .dt-details-toggle {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
-  padding: 8px 0 2px;
-  border-top: 1px solid var(--background-modifier-border);
-}
-.dt-modal .dt-add-field-chip {
-  height: auto;
-  min-height: 0;
-  padding: 2px 10px;
-  border-radius: var(--radius-l);
-  font-size: var(--font-ui-smaller);
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px dashed var(--background-modifier-border-hover);
+  width: 100%;
+  padding: 6px 0;
+  background: none;
+  border: none;
   box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  text-align: left;
   cursor: pointer;
 }
-.dt-modal .dt-add-field-chip:hover {
+.dt-modal .dt-details-toggle:hover {
   color: var(--text-normal);
-  border-color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
+  background: none;
 }
-/* 選択中のタグの「候補」フィールドのチップ（先頭に並ぶ）は少し目立たせる */
-.dt-modal .dt-add-field-chip.is-suggested {
-  color: var(--text-normal);
-  border-style: solid;
-  border-color: var(--interactive-accent);
+.dt-modal .dt-details-chevron {
+  display: inline-flex;
 }
-/* タグ別スキーマで必須になった欄のラベルのマーク */
-.dt-required-mark {
-  color: var(--color-red, #e06c75);
-  margin-left: 4px;
-  font-size: 0.7em;
-  vertical-align: 2px;
+.dt-modal .dt-details-chevron svg {
+  width: 14px;
+  height: 14px;
 }
-/* 必須なのに空のまま保存しようとした欄 */
-.dt-modal .setting-item.dt-field-invalid,
-.dt-modal .dt-steps.dt-field-invalid {
-  box-shadow: inset 3px 0 0 var(--color-red, #e06c75);
-  padding-left: 8px;
-  border-radius: var(--radius-s);
+.dt-modal .dt-details-sub {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
 }
+
 .dt-modal .dt-tag-setting .setting-item-control {
   flex-wrap: wrap;
   justify-content: flex-start;
   flex-direction: column;
   align-items: stretch;
 }
-/* タグ欄の「文言一覧」リンク */
-.dt-modal .dt-tag-ph-link {
-  margin-left: 8px;
-  font-size: var(--font-ui-smaller);
-  font-weight: normal;
-  color: var(--text-accent);
-  text-decoration: none;
-  border-bottom: 1px dotted var(--text-accent);
-}
+
 /* サブタグの段（親タグを選ぶと出る） */
 .dt-modal .dt-tag-subs {
   display: flex;
@@ -1918,9 +1898,7 @@
   background: var(--background-secondary);
 }
 .dt-modal .dt-tag-subs.is-hidden,
-.dt-modal .dt-tag-hint.is-hidden,
-.dt-modal .dt-status-reason.is-hidden,
-.dt-modal .dt-modal-pane.is-hidden {
+.dt-modal .dt-tag-hint.is-hidden {
   display: none;
 }
 .dt-modal .dt-tag-subs-lead {
@@ -1933,240 +1911,15 @@
   color: var(--text-muted);
   margin-top: 4px;
 }
-/* 「記録 / 作業メモ」タブ */
-.dt-modal .dt-modal-tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 4px;
-}
-.dt-modal .dt-modal-tab {
-  height: auto;
-  min-height: 0;
-  padding: 8px 12px;
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  /* スマホの標準ボタンは角丸が大きく、下線が角丸に沿って湾曲してしまう */
-  border-radius: 0;
-  margin-bottom: -1px;
-  box-shadow: none;
-  color: var(--text-muted);
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-.dt-modal .dt-modal-tab.is-active {
-  color: var(--text-normal);
-  border-bottom-color: var(--interactive-accent);
-}
-.dt-modal .dt-modal-tab-sub {
-  font-size: var(--font-ui-smaller);
-  font-weight: normal;
-  color: var(--text-muted);
-}
-.dt-modal .dt-modal-tab-badge {
-  font-size: var(--font-ui-smaller);
-  background: var(--background-modifier-hover);
-  border-radius: var(--radius-l);
-  padding: 0 7px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.dt-modal .dt-modal-tab-badge:empty {
-  display: none;
-}
-.dt-modal .dt-memo-lead {
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  margin: 8px 0 4px;
-  line-height: 1.6;
-}
-/* ラベル横の小さな補足（判断: PLとして / 他者: 相手のボール） */
-.dt-modal .dt-field-note {
-  margin-left: 6px;
-  font-size: var(--font-ui-smaller);
-  font-weight: normal;
-  color: var(--text-muted);
-}
+
 /* 欄の下の注意（記録チェックで指摘される条件） */
 .dt-modal .setting-item-description.dt-desc-warn {
   color: var(--color-orange, #d9a21b);
 }
-/* 状態: 中断のときだけ出る理由欄 */
-.dt-modal .dt-status-setting .setting-item-control {
-  flex-wrap: wrap;
-}
-.dt-modal .dt-status-reason {
-  margin-top: 6px;
-  flex-basis: 100%;
-}
-/* 他者: 相手 + 内容の行 */
-.dt-modal .dt-others-setting .setting-item-control {
-  justify-content: flex-start;
-}
-.dt-modal .dt-others {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-.dt-modal .dt-others-row {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) 28px;
-  gap: 6px;
-  align-items: center;
-}
-.dt-modal .dt-others-row input {
-  width: 100%;
-}
-.dt-modal .dt-others-del {
-  height: auto;
-  min-height: 0;
-  padding: 4px;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.dt-modal .dt-others-del:hover {
-  color: var(--color-red, #e06c75);
-}
-.dt-modal .dt-others-add {
-  align-self: flex-start;
-  height: auto;
-  min-height: 0;
-  padding: 3px 9px;
-  font-size: var(--font-ui-smaller);
-  background: transparent;
-  border: 1px solid var(--background-modifier-border);
-  box-shadow: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-/* 未完了セット（Owner・期限・完了条件・次アクション） */
-.dt-modal .dt-open-set {
-  margin: 8px 0 2px;
-  padding: 8px 12px 2px;
-  border: 1px dashed var(--background-modifier-border-hover);
-  border-radius: var(--radius-m);
-  background: var(--background-secondary);
-}
-.dt-modal .dt-open-set-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-}
-.dt-modal .dt-open-set-title {
-  letter-spacing: 0.08em;
-  font-weight: 500;
-}
-/* 「その他 N」チップ（候補以外の欄をまとめて畳む） */
-.dt-modal .dt-add-field-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border-style: solid;
-}
-.dt-modal .dt-add-field-more.is-open {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-}
-.dt-modal .dt-add-field-more-icon svg {
-  width: 12px;
-  height: 12px;
-  transition: transform 0.15s;
-}
-.dt-modal .dt-add-field-more.is-open .dt-add-field-more-icon svg {
-  transform: rotate(180deg);
-}
-.dt-modal .dt-add-field-more-count {
-  font-size: 0.85em;
-  background: var(--background-modifier-hover);
-  border-radius: var(--radius-l);
-  padding: 0 6px;
-}
-.dt-modal .dt-add-field-more-box {
-  flex-basis: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: var(--radius-m);
-  background: var(--background-secondary);
-}
-/* 完了ポップアップ: チェック済みのステップから結果の下書き */
-.dt-retro-from-steps {
-  height: auto;
-  min-height: 0;
-  margin-top: 4px;
-  padding: 2px 9px;
-  font-size: var(--font-ui-smaller);
-  background: transparent;
-  border: 1px solid var(--background-modifier-border);
-  box-shadow: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-/* タグ別の文言一覧 */
-.dt-ph-modal .dt-ph-group {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  padding: 6px 10px;
-  margin-bottom: 8px;
-}
-.dt-ph-modal .dt-ph-group.is-current {
-  border-color: var(--interactive-accent);
-}
-.dt-ph-modal summary {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 500;
-}
-.dt-ph-modal .dt-ph-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-  background: var(--background-modifier-border);
-}
-.dt-ph-modal .dt-ph-current {
-  font-size: var(--font-ui-smaller);
-  font-weight: normal;
-  color: var(--text-accent);
-}
-.dt-ph-modal .dt-ph-list {
-  display: grid;
-  grid-template-columns: 90px minmax(0, 1fr);
-  gap: 2px 8px;
-  font-size: var(--font-ui-smaller);
-  margin: 6px 0 2px;
-}
-.dt-ph-modal .dt-ph-list dt {
-  color: var(--text-muted);
-}
-.dt-ph-modal .dt-ph-list dd {
-  margin: 0;
-}
-.dt-ph-modal .dt-ph-list dd.is-inherited {
-  color: var(--text-muted);
-}
+
 /* 設定: タグの説明・文言の入力欄 */
 .dt-tag-color-row .dt-tag-hint-input {
   min-width: 220px;
-}
-.dt-tag-schema-ph-row .dt-schema-ph {
-  width: 100%;
-  min-width: 320px;
-  font-size: var(--font-ui-smaller);
 }
 
 /* ---------- スマホ（Obsidian の .is-phone）のダイアログ調整 ----------
@@ -2190,7 +1943,7 @@
 
 /* ---------- モバイルの編集ダイアログ（TickTick 風のシンプル表示） ----------
    上段は「丸い完了チェック + 日時サマリー」の1行だけ。日付・時間・実績の入力欄は
-   サマリーのタップで開閉し、空の任意項目は「＋ 項目を追加」のメニューにまとまる
+   サマリーのタップで開閉する
    （.dt-modal-mobile は modal.ts が Platform.isMobile のときに付ける） */
 .dt-modal-mobile .dt-m-head {
   display: flex;
@@ -2291,17 +2044,7 @@
 .dt-modal-mobile .setting-item {
   padding: 6px 0;
 }
-/* 「＋ 項目を追加」ボタン（チップの羅列の代わり。Obsidian のスマホCSSの幅100%を戻す） */
-.dt-modal-mobile .dt-add-fields {
-  border-top: none;
-  padding-top: 4px;
-}
-.dt-modal-mobile button.dt-add-field-menu-btn {
-  width: auto !important;
-  flex: 0 1 auto !important;
-  min-height: 0;
-  padding: 6px 14px;
-}
+
 /* 「削除」「ノートで開く」のアイコンボタン */
 .dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn {
   width: auto !important;
@@ -2612,7 +2355,7 @@
 }
 .dt-modal-buttons .setting-item-control {
   gap: 8px;
-  flex-wrap: wrap; /* ボタンが多いダイアログ（未完了ステップの確認など）でも収まるように */
+  flex-wrap: wrap; /* ボタンが多いダイアログでも収まるように */
 }
 /* 自動保存の状態（ボタン行の左側に出す） */
 .dt-modal .dt-modal-buttons .setting-item-description.dt-autosave-error {
@@ -2654,34 +2397,6 @@
 }
 .dt-details-field.is-active {
   min-height: 140px;
-}
-
-/* 結果とふりかえりの入力促進ポップアップ */
-.dt-retro-modal {
-  width: 560px;
-  max-width: 90vw;
-}
-/* 未完了ステップの確認ダイアログの一覧 */
-.dt-remaining-list {
-  margin: 8px 0 4px;
-  padding-inline-start: 22px;
-}
-.dt-remaining-list li {
-  line-height: 1.6;
-}
-.dt-retro-lead {
-  line-height: 1.6;
-  color: var(--text-normal);
-}
-.dt-retro-input {
-  width: 100%;
-  min-height: 120px;
-  max-height: 320px;
-  resize: vertical;
-  font-family: inherit;
-  font-size: var(--font-ui-medium);
-  line-height: 1.5;
-  padding: 8px 10px;
 }
 
 /* ---------- 画面内の通知バナー（右下に重ねる） ---------- */
@@ -2788,13 +2503,6 @@
 }
 .dt-tracker-row .dt-tracker-url {
   width: 280px;
-}
-/* タグ別フィールドの設定行（タグ / 必須 / 候補の3入力） */
-.dt-tag-schema-row .dt-schema-tag {
-  width: 110px;
-}
-.dt-tag-schema-row .dt-schema-fields {
-  width: 190px;
 }
 
 .dt-setting-preview {

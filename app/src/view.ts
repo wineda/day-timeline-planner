@@ -23,16 +23,7 @@ import {
   stepProgress,
   taskProgress,
 } from "./model";
-import {
-  ConfirmModal,
-  PromptModal,
-  RemainingStepsModal,
-  RetrospectiveModal,
-  TaskModal,
-  formatActualRanges,
-  type OtherActual,
-  type RetroExtraField,
-} from "./modal";
+import { ConfirmModal, PromptModal, TaskModal, formatActualRanges, type OtherActual } from "./modal";
 import { subtractActualRanges, type ActualRange, type TaskStep, type TicketRef } from "./markdown/blocks";
 import {
   groupProjects,
@@ -53,9 +44,6 @@ import { layoutEvents, type LayoutInfo } from "./layout";
 import {
   DEFAULT_SETTINGS,
   colorForTags,
-  normalizeFieldLabel,
-  placeholderFor,
-  schemaForTags,
   ticketUrl,
   MAX_HOUR_HEIGHT,
   MIN_HOUR_HEIGHT,
@@ -79,7 +67,6 @@ import {
   startOfDay,
   startOfWeek,
   stripTags,
-  extractTags,
 } from "./util";
 
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
@@ -4181,11 +4168,7 @@ export class DayTimelineView extends ItemView {
       allowUnscheduled: true,
       dateField: { value: dateKey(date) },
       tagChoices: s.tagColors,
-      tagFieldSchema: s.tagFieldSchema,
-      validateRequiredOnSave: s.validateRequiredOnSave,
-      memberNames: s.members.map((m) => m.name),
-      reminderDefault: this.plugin.blockStore() ? s.reminderDefaultMinutes : undefined,
-      showDoneCondition: !!this.plugin.blockStore(),
+      reminderDefault: s.reminderDefaultMinutes,
       trackers: s.trackers,
       owners: this.ownerChoices(),
       initialOwner: null,
@@ -4223,10 +4206,6 @@ export class DayTimelineView extends ItemView {
       },
       unscheduledHint: `時刻なし — 日付を決めずに登録します（プロジェクトパネルに「未定」として並びます。時刻を入れると ${dayLabel} に登録）`,
       tagChoices: s.tagColors,
-      tagFieldSchema: s.tagFieldSchema,
-      validateRequiredOnSave: s.validateRequiredOnSave,
-      memberNames: s.members.map((m) => m.name),
-      showDoneCondition: true,
       trackers: s.trackers,
       ...this.projectOptions(),
       onSubmit: async (data, dateSel) => {
@@ -4248,7 +4227,7 @@ export class DayTimelineView extends ItemView {
     }).open();
   }
 
-  private openEditModal(date: Date, task: Task, pane?: "record" | "memo"): void {
+  private openEditModal(date: Date, task: Task): void {
     // 自動保存のたびに参照を最新へ差し替える（タイトルや時刻が変わると照合できなくなるため）
     let current = task;
     const wasDone = task.done;
@@ -4266,17 +4245,12 @@ export class DayTimelineView extends ItemView {
         hint: allowClearDate ? "空にすると日付未定（Inbox）へ移します" : undefined,
       },
       tagChoices: this.plugin.settings.tagColors,
-      tagFieldSchema: this.plugin.settings.tagFieldSchema,
-      validateRequiredOnSave: this.plugin.settings.validateRequiredOnSave,
-      memberNames: this.plugin.settings.members.map((m) => m.name),
-      reminderDefault: this.plugin.blockStore() ? this.plugin.settings.reminderDefaultMinutes : undefined,
-      showDoneCondition: !!this.plugin.blockStore(),
-      showActual: !!this.plugin.blockStore(),
+      reminderDefault: this.plugin.settings.reminderDefaultMinutes,
+      showActual: true,
       trackers: this.plugin.settings.trackers,
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
       otherActuals: this.otherActualsFor(date, task.owner ?? null, task.key),
-      initialPane: pane,
       ...this.projectOptions(),
       onAutoSave: async (data) => {
         // 持ち主・日付の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
@@ -4358,7 +4332,7 @@ export class DayTimelineView extends ItemView {
   private otherActualsFor(date: Date, owner: string | null, exceptKey?: string): OtherActual[] {
     return (this.data.get(dateKey(date))?.tasks ?? [])
       .filter((t) => t.key !== exceptKey && (t.owner ?? null) === (owner ?? null) && t.actual.length)
-      .map((t) => ({ title: stripTags(t.title) || "(無題)", tags: t.tags, ranges: t.actual }));
+      .map((t) => ({ title: stripTags(t.title) || "(無題)", ranges: t.actual }));
   }
 
   /** 編集・追加ダイアログに渡すプロジェクトまわりの共通オプション */
@@ -4410,38 +4384,9 @@ export class DayTimelineView extends ItemView {
       await this.commitChangeOwner(date, task, data);
       return;
     }
-    // 未完了 → 完了で未チェックのステップが残っていれば、先に確認する
-    if (this.maybeConfirmRemainingSteps(date, task, data, wasDone)) return;
     await this.performUpdate(date, task, data, wasDone);
   }
 
-  /**
-   * 未完了 → 完了にするとき、未チェックのステップが残っていれば確認ダイアログを出す。
-   * 「残:」を書かずに完了にすると、日報などの下流で残件が完了扱いのまま埋もれてしまうため。
-   * ダイアログを出したら true（続きは選択に応じて performUpdate / commitCarryOver が行う）
-   */
-  private maybeConfirmRemainingSteps(
-    date: Date,
-    task: Task,
-    data: TaskDraft,
-    wasDone: boolean
-  ): boolean {
-    if (!this.plugin.blockStoreFor(task.owner)) return false; // ブロック形式のみ
-    if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
-    const steps = data.steps ?? task.steps;
-    const unchecked = steps.filter((st) => !st.done && st.text.trim()).map((st) => st.text.trim());
-    if (!unchecked.length) return false;
-    // すでに「残:」が書いてあれば、改めては聞かない
-    const remaining = data.remaining !== undefined ? data.remaining : task.remaining;
-    if (remaining.trim()) return false;
-    new RemainingStepsModal(this.app, {
-      taskTitle: stripTags(data.title || task.title),
-      steps: unchecked,
-      onComplete: (rem) => this.performUpdate(date, task, rem ? { ...data, remaining: rem } : data, wasDone),
-      onCarryOver: !task.forwarded ? () => this.commitCarryOver(date, task) : undefined,
-    }).open();
-    return true;
-  }
 
   private async performUpdate(
     date: Date,
@@ -4463,11 +4408,7 @@ export class DayTimelineView extends ItemView {
     }
     await this.reload();
     if (updated) {
-      const prompted = this.maybePromptRetrospective(date, task, data, wasDone);
-      // ふりかえりのポップアップが出ないときは、自動記録したことだけ知らせる
-      if (auto && !prompted) {
-        new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
-      }
+      if (auto) new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
       // 「未完了 → 完了」でプロジェクトの子が全部完了したら、プロジェクトの完了を提案
       if (data.done && !wasDone) {
         void this.maybeSuggestProjectDone(data.project !== undefined ? data.project : task.project);
@@ -4572,88 +4513,6 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /**
-   * 完了にしたとき、選んだタグで必須の欄（結果。障害なら原因・判断、質問なら回答 …）が空なら、
-   * その欄だけを聞くポップアップを出す（Rules/Work記録チェック担当ルール.md: 完了 [x] に結果が無いと 🔴）。
-   * 15分以上のタスクはふりかえりが空でも出す。実績の確認・修正欄も一緒に出す。ポップアップを出したら true
-   */
-  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): boolean {
-    if (!this.plugin.blockStore()) return false; // ブロック形式のみ
-    if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
-    const start = data.start ?? task.start;
-    const end = data.end ?? task.end;
-    const duration = start !== null && end !== null ? end - start : 0;
-    const merged = { ...this.draftOf(task), ...data };
-    const title = data.title ?? task.title;
-    const tags = extractTags(title);
-    const schema = this.plugin.settings.tagFieldSchema;
-    const def = schemaForTags(schema, tags);
-    // 選んだタグの必須欄のうち空のもの（結果は先頭に。定義の無いタグは結果だけ）
-    const required = def ? def.required.map(normalizeFieldLabel) : ["結果"];
-    const valueOf: Record<string, () => string> = {
-      結果: () => merged.result ?? "",
-      原因: () => merged.cause ?? "",
-      判断: () => merged.judgment ?? "",
-      残: () => merged.remaining ?? "",
-      回答: () => merged.answer ?? "",
-      完了条件: () => merged.doneCondition ?? "",
-      Owner: () => merged.ownerName ?? "",
-      次アクション: () => merged.nextAction ?? "",
-      期限: () => merged.due ?? "",
-    };
-    const keyOf: Record<string, string> = {
-      原因: "cause",
-      判断: "judgment",
-      残: "remaining",
-      回答: "answer",
-      完了条件: "doneCondition",
-      Owner: "ownerName",
-      次アクション: "nextAction",
-      期限: "due",
-    };
-    const missing = required.filter((l) => valueOf[l] && !valueOf[l]().trim());
-    const retro = merged.retrospective ?? "";
-    const needRetro = duration >= 15 && !retro.trim() && (!def || def.required.length > 0);
-    if (!missing.length && !needRetro) return false;
-    const tag = tags.find((t) => schemaForTags(schema, [t])) ?? tags[0] ?? "";
-    const phField = (f: string) => placeholderFor(schema, tag, f as never);
-    const extraFields: RetroExtraField[] = missing
-      .filter((l) => l !== "結果" && keyOf[l])
-      .map((l) => ({
-        key: keyOf[l],
-        label: l,
-        kind: l === "回答" ? "answer" : "text",
-        placeholder: l === "期限" ? "YYYY-MM-DD" : phField(l),
-      }));
-    const recorded = data.actual !== undefined ? data.actual : task.actual;
-    const result = merged.result ?? "";
-    new RetrospectiveModal(this.app, {
-      taskTitle: stripTags(title),
-      durationLabel: duration ? formatDuration(duration) : "時刻なし",
-      actual: recorded,
-      result,
-      resultPlaceholder: phField("結果"),
-      retroPlaceholder: phField("ふりかえり"),
-      extraFields,
-      doneSteps: (merged.steps ?? []).filter((st) => st.done).map((st) => st.text),
-      onSave: async (text, actual, resultText, extras) => {
-        try {
-          const patch: TaskDraft = { ...data };
-          if (text) patch.retrospective = text;
-          if (resultText.trim() !== (result ?? "").trim()) patch.result = resultText;
-          if (actual !== undefined) patch.actual = actual;
-          for (const [k, v] of Object.entries(extras)) (patch as unknown as Record<string, string>)[k] = v;
-          const ok = await this.storeOf(task).update(date, task, patch);
-          if (!ok) new Notice("完了の記録を保存できませんでした。ノートが変更された可能性があります。");
-        } catch (e) {
-          console.error(e);
-          new Notice("完了の記録を保存できませんでした: " + String(e));
-        }
-        await this.reload();
-      },
-    }).open();
-    return true;
-  }
 
   private async commitDelete(date: Date, task: Task): Promise<void> {
     const doDelete = async () => {
@@ -4822,10 +4681,6 @@ export class DayTimelineView extends ItemView {
         hint: "日付未定。日付を入れると、その日のノートへ移します",
       },
       tagChoices: this.plugin.settings.tagColors,
-      tagFieldSchema: this.plugin.settings.tagFieldSchema,
-      validateRequiredOnSave: this.plugin.settings.validateRequiredOnSave,
-      memberNames: this.plugin.settings.members.map((m) => m.name),
-      showDoneCondition: true,
       showActual: true,
       trackers: this.plugin.settings.trackers,
       ...this.projectOptions(),
