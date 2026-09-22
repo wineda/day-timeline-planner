@@ -3,22 +3,20 @@ import {
   DEFAULT_SETTINGS,
   DayTimelineSettingTab,
   DayTimelineSettings,
-  colorForTags,
   memberFolder,
   migrateSettings,
   ticketUrl,
 } from "./settings";
-import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, migrateNote } from "./store";
+import { BlockTaskStore, INBOX_DATE, InboxStore, MemberStore, migrateNote } from "./store";
 import { RecurringModal } from "./recurring";
 import { RecurringManagerView, VIEW_TYPE_RECURRING } from "./recurring-view";
 import { ProjectCreateModal, TaskModal } from "./modal";
-import { ReminderService, TimerModal, TimerService, requestNotificationPermission } from "./notify";
-import type { Task, TaskSource } from "./model";
+import { ReminderService, requestNotificationPermission } from "./notify";
+import type { Task } from "./model";
 import { normalizeBlockOptions, parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { renderFormatSpec, type SpecContext } from "./spec";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
 import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
-import { DailyReportModal, type DailyDay, type DailyNote } from "./report-modal";
 import {
   ProjectStore,
   buildTaskListSection,
@@ -34,22 +32,19 @@ import { DayTimelineView, PROJECT_HOVER_SOURCE, VIEW_TYPE_DAY_TIMELINE } from ".
 
 export default class DayTimelinePlugin extends Plugin {
   settings: DayTimelineSettings = { ...DEFAULT_SETTINGS };
-  store!: TaskSource;
-  /** Inbox（ブロック形式のときだけ。旧リスト形式では null） */
-  inbox: InboxStore | null = null;
-  /** プロジェクト（大きなタスク）。ブロック形式のときだけ */
-  projects: ProjectStore | null = null;
-  /** メンバー ID → その人の予定のストア（ブロック形式のときだけ） */
+  store!: BlockTaskStore;
+  /** Inbox（日付を決めていないタスクのノート） */
+  inbox!: InboxStore;
+  /** プロジェクト（大きなタスク） */
+  projects!: ProjectStore;
+  /** メンバー ID → その人の予定のストア */
   memberStores = new Map<string, MemberStore>();
-  timer!: TimerService;
   reminders!: ReminderService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.createStore();
-    this.timer = new TimerService(this);
     this.reminders = new ReminderService(this);
-    this.timer.attachStatusBar(this.addStatusBarItem());
     this.reminders.start();
     if (this.settings.notifyStyle !== "banner") requestNotificationPermission();
 
@@ -107,21 +102,6 @@ export default class DayTimelinePlugin extends Plugin {
       (v) => v.toggleAllProjects()
     );
     viewCommand(
-      "timeline-projects-toggle-flat",
-      "タイムスケジュール: プロジェクト一覧のフラット表示（グループの見出しなし）を切り替える",
-      (v) => v.toggleProjectsFlatList()
-    );
-    viewCommand(
-      "timeline-projects-toggle-filter",
-      "タイムスケジュール: プロジェクト一覧の絞り込み（すべて / 本日タスクあり）を切り替える",
-      (v) => v.toggleProjectsFilter()
-    );
-    viewCommand(
-      "timeline-projects-toggle-style",
-      "タイムスケジュール: プロジェクト一覧のツリー表示 / テーブル表示を切り替える",
-      (v) => v.toggleProjectsViewStyle()
-    );
-    viewCommand(
       "timeline-toggle-pane",
       "タイムスケジュール: タイムライン / パネルを切り替える（狭い画面）",
       (v) => v.toggleNarrowPane()
@@ -133,8 +113,7 @@ export default class DayTimelinePlugin extends Plugin {
       name: "このノートの予定をタスクブロックに変換",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== "md" || this.settings.storageFormat !== "block")
-          return false;
+        if (!file || file.extension !== "md") return false;
         if (!checking) void this.migrateFile(file);
         return true;
       },
@@ -162,7 +141,6 @@ export default class DayTimelinePlugin extends Plugin {
       id: "make-heading-task",
       name: "カーソル位置の見出しをタスクにする",
       editorCheckCallback: (checking, editor, view) => {
-        if (this.settings.storageFormat !== "block") return false;
         if (!(view instanceof MarkdownView)) return false;
         const pos = this.findHeadingForCursor(editor);
         if (pos === null) return false;
@@ -216,20 +194,6 @@ export default class DayTimelinePlugin extends Plugin {
       },
     });
 
-    // タイマー
-    this.addCommand({
-      id: "timer",
-      name: "タイマーを開始 / 操作",
-      callback: () => this.openTimerModal(),
-    });
-    for (const m of [5, 10, 15, 25, 30, 60]) {
-      this.addCommand({
-        id: `timer-${m}`,
-        name: `タイマー: ${m}分`,
-        callback: () => this.timer.start(m),
-      });
-    }
-
     // プロジェクト
     this.addCommand({
       id: "project-create",
@@ -262,7 +226,7 @@ export default class DayTimelinePlugin extends Plugin {
     });
     this.addCommand({
       id: "daily-report",
-      name: "日報を見る（表示中の日）",
+      name: "日報ノートを開く（表示中の日）",
       checkCallback: (checking) => {
         if (!this.blockStore()) return false;
         if (!checking) void this.openDailyReport(this.getTimelineView()?.getDate() ?? new Date());
@@ -348,45 +312,20 @@ export default class DayTimelinePlugin extends Plugin {
     return found[0] ?? null;
   }
 
-  /** その日の日報ノートと本文（無ければ null） */
-  private async readDailyNote(date: Date): Promise<DailyNote | null> {
-    const file = this.findDailyNote(date);
-    if (!file) return null;
-    return { file, content: await this.app.vault.cachedRead(file) };
-  }
-
   /**
-   * その日の日報をポップアップで見せる（日付ヘッダーの日付のクリック / コマンド）。
-   * 日報のフォルダにあるノートを描画する。無い日は案内と、代わりのタスクの集計。
-   * ノートを読み直してから出すので、他の端末で書いた分もそのまま反映される
+   * その日の日報ノート（設定「日報のフォルダ」にあるもの）を開く（日付ヘッダーの日付のクリック / コマンド）。
+   * 無い日は案内だけ出す（集計はコマンド「日報（タスクの集計）をノートに書き出す」で作れる）
    */
   async openDailyReport(date: Date): Promise<void> {
-    const store = this.blockStore();
-    if (!store) {
-      new Notice("日報はタスクブロック形式のときだけ使えます");
+    const file = this.findDailyNote(date);
+    if (!file) {
+      new Notice(
+        `${moment(date).format("M月D日")} の日報ノートは「${this.dailyReportFolder()}」にありません。` +
+          "タスクの集計はコマンド「日報（タスクの集計）をノートに書き出す」で作れます"
+      );
       return;
     }
-    const day = startOfDay(date);
-    const loadDay = async (d: Date): Promise<DailyDay> => ({
-      note: await this.readDailyNote(d),
-      tasks: (await store.load(d)).tasks,
-    });
-    try {
-      new DailyReportModal(this.app, {
-        date: day,
-        day: await loadDay(day),
-        loadDay,
-        noteFolder: this.dailyReportFolder(),
-        ticketUrlOf: (tracker, id) => ticketUrl(this.settings.trackers, tracker, id),
-        colorOfTags: (tags) => colorForTags(tags, this.settings.tagColors),
-        onOpenNote: (file) => void this.app.workspace.getLeaf("tab").openFile(file),
-        onExport: (d) => void this.createDailyReport(d),
-        onSelectTask: (d, task) => this.getTimelineView()?.revealTask(d, task),
-      }).open();
-    } catch (e) {
-      console.error(e);
-      new Notice("日報を開けませんでした: " + String(e));
-    }
+    await this.app.workspace.getLeaf("tab").openFile(file);
   }
 
   /**
@@ -493,10 +432,6 @@ export default class DayTimelinePlugin extends Plugin {
     return path;
   }
 
-  openTimerModal(): void {
-    new TimerModal(this.app, this.timer).open();
-  }
-
   /** Inbox にタスクを追加するダイアログ */
   openInboxAddModal(): void {
     const inbox = this.inbox;
@@ -511,10 +446,6 @@ export default class DayTimelinePlugin extends Plugin {
       allowUnscheduled: true,
       dateLabel: "Inbox",
       tagChoices: this.settings.tagColors,
-      tagFieldSchema: this.settings.tagFieldSchema,
-      validateRequiredOnSave: this.settings.validateRequiredOnSave,
-      memberNames: this.settings.members.map((m) => m.name),
-      showDoneCondition: true,
       trackers: this.settings.trackers,
       projects: this.projects?.list(),
       onCreateProject: (name) => (this.projects ? this.projects.create(name) : Promise.resolve(null)),
@@ -548,8 +479,8 @@ export default class DayTimelinePlugin extends Plugin {
       groups: knownGroupNames(projects.list(), this.settings.projectGroups.map((g) => g.name)),
       initialGroup,
       templatePath: hasTemplate ? tplPath : null,
-      onSubmit: async (name, group, difficulty, monster) => {
-        const link = await projects.create(name, group, difficulty, monster);
+      onSubmit: async (name, group) => {
+        const link = await projects.create(name, group);
         if (!link) {
           new Notice("プロジェクトを作成できませんでした");
           return;
@@ -571,45 +502,37 @@ export default class DayTimelinePlugin extends Plugin {
 
   /** 設定に合わせて読み書きの実装を作り直す */
   createStore(): void {
-    this.store =
-      this.settings.storageFormat === "list"
-        ? new ListTaskStore(this.app, () => this.settings)
-        : new BlockTaskStore(this.app, () => this.settings);
-    this.inbox =
-      this.settings.storageFormat === "list" ? null : new InboxStore(this.app, () => this.settings);
-    this.projects =
-      this.settings.storageFormat === "list" ? null : new ProjectStore(this.app, () => this.settings);
+    this.store = new BlockTaskStore(this.app, () => this.settings);
+    this.inbox = new InboxStore(this.app, () => this.settings);
+    this.projects = new ProjectStore(this.app, () => this.settings);
     this.memberStores = new Map();
-    if (this.settings.storageFormat !== "list") {
-      for (const m of this.settings.members) {
-        const id = m.id;
-        this.memberStores.set(
-          id,
-          new MemberStore(this.app, () => this.settings, () => this.settings.members.find((x) => x.id === id) ?? m)
-        );
-      }
+    for (const m of this.settings.members) {
+      const id = m.id;
+      this.memberStores.set(
+        id,
+        new MemberStore(this.app, () => this.settings, () => this.settings.members.find((x) => x.id === id) ?? m)
+      );
     }
   }
 
   /** タスクの持ち主に応じたストア（自分 / メンバー） */
-  storeFor(owner: string | null | undefined): TaskSource {
+  storeFor(owner: string | null | undefined): BlockTaskStore {
     if (!owner) return this.store;
     return this.memberStores.get(owner) ?? this.store;
   }
 
-  /** ブロック形式の持ち主別ストア（旧形式なら null） */
-  blockStoreFor(owner: string | null | undefined): BlockTaskStore | null {
-    const st = this.storeFor(owner);
-    return st instanceof BlockTaskStore ? st : null;
+  /** storeFor と同じ（旧リスト形式を廃止する前は「ブロック形式なら」の絞り込みだった） */
+  blockStoreFor(owner: string | null | undefined): BlockTaskStore {
+    return this.storeFor(owner);
   }
 
   memberOf(owner: string | null | undefined) {
     return owner ? this.settings.members.find((m) => m.id === owner) ?? null : null;
   }
 
-  /** ブロック形式のときだけ使える機能のための型付きアクセス */
-  blockStore(): BlockTaskStore | null {
-    return this.store instanceof BlockTaskStore ? this.store : null;
+  /** 自分のストア（旧リスト形式を廃止する前は「ブロック形式なら」の絞り込みだった） */
+  blockStore(): BlockTaskStore {
+    return this.store;
   }
 
   /** 開いているタイムラインビュー（無ければ null） */

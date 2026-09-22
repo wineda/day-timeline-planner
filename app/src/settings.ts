@@ -5,19 +5,14 @@ import { RecurringModal, describeRule, propagateAndNotify } from "./recurring";
 import { requestNotificationPermission, showAlert } from "./notify";
 
 export type ViewLocation = "tab" | "right" | "left";
-export type StorageFormat = "block" | "list";
 export type InsertPosition = "time" | "end";
-export type ViewMode = "day" | "3day" | "week" | "2week" | "month";
+export type ViewMode = "day" | "3day" | "week";
 /** 左サイドバーのタブ */
 export type SidebarTab = "inbox" | "projects" | "reschedule";
 
-/** プロジェクトパネルの表示形式（ツリー / テーブル） */
-export type ProjectsViewStyle = "tree" | "table";
 /** プロジェクト一覧の絞り込み: すべて / 本日タスクがあるものだけ */
 export type ProjectsFilter = "all" | "today";
 
-/** タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ */
-export type PlanActualMode = "plan" | "both" | "actual";
 
 /** 1時間あたりの高さ（px）の範囲。設定のスライダーと Ctrl+ホイールのズームで共用する */
 export const MIN_HOUR_HEIGHT = 20;
@@ -73,377 +68,6 @@ export const DEFAULT_TAG_COLORS: TagColor[] = [
   { tag: "雑務", color: "#8a8f98", hint: "メール・事務・チケット登録・朝ルーチン" },
   { tag: "私用", color: "#d977ac", hint: "生活・中抜け。結果は不要" },
 ];
-
-/**
- * タグ → 必須・候補フィールドの対応。
- * タスク編集ダイアログでこのタグを選ぶと、required の欄が自動で開き（必須マーク付き）、
- * suggested の欄が「＋」チップの先頭に並ぶ。フィールド名はダイアログの欄名
- * （結果 / 原因 / 判断 / 残 / 他者 / 回答 / 状態 / Owner / 期限 / 完了条件 / ふりかえり など）
- */
-export interface TagFieldSchema {
-  /** "#" 抜きのタグ。サブタグ（"管理/質問"）は完全一致 → 親タグ（"管理"）の順で引く */
-  tag: string;
-  /** 必須のフィールド名 */
-  required: string[];
-  /** 候補（推奨）のフィールド名。並び順のままチップの先頭に出す */
-  suggested: string[];
-  /**
-   * 欄ごとのプレースホルダー（このタグを選んだときに欄に薄く出る書き方の例）。
-   * キーは PLACEHOLDER_FIELDS のラベル。無い欄は親タグ → 既定の順で引く
-   */
-  placeholders?: Record<string, string>;
-}
-
-/** プレースホルダーを持てる欄（ダイアログの欄名） */
-export const PLACEHOLDER_FIELDS = [
-  "タイトル",
-  "結果",
-  "原因",
-  "判断",
-  "残",
-  "他者/相手",
-  "他者/内容",
-  "中断理由",
-  "Owner",
-  "完了条件",
-  "次アクション",
-  "ふりかえり",
-  "備考",
-] as const;
-export type PlaceholderField = (typeof PLACEHOLDER_FIELDS)[number];
-
-/** どのタグにも無いときのプレースホルダー */
-export const DEFAULT_PLACEHOLDERS: Record<PlaceholderField, string> = {
-  タイトル: "タスクの名前",
-  結果: "何がどこまで終わったか",
-  原因: "何が原因だったか",
-  判断: "その場でどう判断したか",
-  残: "完了後に残った作業",
-  "他者/相手": "相手",
-  "他者/内容": "内容（相手に何を待っているか）",
-  中断理由: "中断した理由（例: 障害対応、会議で離席）",
-  Owner: "ボールを持っている人",
-  完了条件: "何ができたら終わりか",
-  次アクション: "次にやることを1つ",
-  ふりかえり: "作業してみてどうだったか・次はどう改善するか",
-  備考: "自由なメモ（Markdown）。10行を超える手順やログは案件ノートか Runbook へ",
-};
-
-/**
- * tagFieldSchema の既定値（Rules/Timeline記録ルール.md のタグ別の記入ルールに合わせたもの）。
- * placeholders は、そのタグの業務でよくある書き方の例
- */
-export const DEFAULT_TAG_FIELD_SCHEMA: TagFieldSchema[] = [
-  {
-    tag: "障害",
-    required: ["結果", "原因", "判断"],
-    suggested: ["残", "他者", "状態"],
-    placeholders: {
-      タイトル: "例: WAF 403 誤検知の調査（redmine#65130）",
-      結果: "例: GenericRFI_BODY の誤検知と特定。除外ルールを暫定追加し 403 は解消",
-      原因: "例: マネージドルールが JSON 本文の ../ を RFI と判定",
-      判断: "例: 暫定は除外ルールで解消。恒久対応はシン会議で決める",
-      残: "例: 恒久対応の方針決め、顧客への報告",
-      "他者/相手": "例: 顧客A 情シス",
-      "他者/内容": "例: 影響範囲の回答待ち",
-      中断理由: "例: 顧客の確認待ちで停止",
-      完了条件: "例: 本番で 403 が再現せず、顧客へ報告済み",
-      次アクション: "例: 恒久対応案をシン会議に持ち込む",
-      ふりかえり: "例: WAF ログの見方を調べ直した。Runbook 化する",
-      備考: "例: 発生時刻・影響範囲・確認したログの要点（ログ全文は Runbook へ）",
-    },
-  },
-  {
-    tag: "会議",
-    required: ["結果"],
-    suggested: ["判断", "他者", "残"],
-    placeholders: {
-      タイトル: "例: 週次定例（顧客A）",
-      結果: "例: リリース日を 9/12 に決定。移行手順は佐藤が作成",
-      判断: "例: 追加要望はスコープ外とし、次フェーズで検討",
-      残: "例: 議事録の送付",
-      "他者/相手": "例: 顧客A 担当",
-      "他者/内容": "例: 追加要望の優先順位の回答待ち",
-      完了条件: "例: 議事録を送付し、決定事項がチケットに入っている",
-      次アクション: "例: 決定事項をチケットに登録する",
-      ふりかえり: "例: アジェンダを前日に送れば短くできた",
-      備考: "例: 議題・決定事項・宿題",
-    },
-  },
-  {
-    tag: "管理",
-    required: ["結果"],
-    suggested: ["判断", "完了条件", "他者", "次アクション"],
-    placeholders: {
-      タイトル: "例: 来週のリリース計画の整理",
-      結果: "例: 課題3件を優先順位付けし、担当を割り当てた",
-      判断: "例: 検証工数は見積の1.5倍で計画する",
-      残: "例: 関係者への共有",
-      "他者/相手": "例: 鈴木",
-      "他者/内容": "例: 見積の回答待ち",
-      完了条件: "例: 計画が関係者に共有されている",
-      次アクション: "例: 計画を朝会で共有する",
-      ふりかえり: "例: 前提の確認が後回しになった。先に聞く",
-      備考: "例: 判断の前提・候補案",
-    },
-  },
-  {
-    tag: "管理/計画",
-    required: ["結果"],
-    suggested: ["完了条件", "次アクション"],
-    placeholders: {
-      タイトル: "例: 顧客定例の準備（確認事項の整理）",
-      結果: "例: 議題3件と確認事項5件をまとめ、アジェンダを送付",
-      完了条件: "例: アジェンダを前日までに送付済み",
-      次アクション: "例: 確認事項を担当に振る",
-      ふりかえり: "例: 前回議事録の宿題を見落とした",
-    },
-  },
-  {
-    tag: "管理/進捗",
-    required: ["結果"],
-    suggested: ["判断", "次アクション"],
-    placeholders: {
-      タイトル: "例: 結合テストの進捗確認",
-      結果: "例: 消化率 60%。遅れ2件は担当と対策を確認",
-      判断: "例: 遅れ2件は週内にリカバリ可能と判断。増員はしない",
-      完了条件: "例: 遅れの対策が決まり、報告資料に反映済み",
-      次アクション: "例: 木曜にもう一度進み具合を確認する",
-      ふりかえり: "例: 遅れの報告が金曜まで上がってこなかった。中間確認を入れる",
-    },
-  },
-  {
-    tag: "管理/調整",
-    required: ["結果", "他者", "Owner", "期限", "完了条件"],
-    suggested: ["次アクション"],
-    placeholders: {
-      タイトル: "例: 結合環境の再構築を佐藤さんへ依頼",
-      結果: "例: 手順書を渡して依頼済み。9/5 までに完了予定",
-      "他者/相手": "例: 佐藤",
-      "他者/内容": "例: 着手日の回答待ち",
-      Owner: "例: 佐藤",
-      完了条件: "例: 結合環境で疎通確認が通っている",
-      次アクション: "例: 9/4 に進み具合を確認する",
-      ふりかえり: "例: 依頼時に期限を伝え忘れた",
-      備考: "例: 渡した手順書へのリンク・前提条件",
-    },
-  },
-  {
-    tag: "管理/質問",
-    required: ["結果", "回答"],
-    suggested: ["他者", "次アクション"],
-    placeholders: {
-      タイトル: "例: 田中さんから DB 接続数上限の質問",
-      結果: "例: 上限 200 の根拠を説明して回答済み",
-      判断: "例: 設定変更は今回不要と判断",
-      "他者/相手": "例: 田中",
-      "他者/内容": "例: 追加質問の有無を確認中",
-      完了条件: "例: 回答して相手が納得している",
-      次アクション: "例: インフラ担当に設定値を確認して回答する",
-      ふりかえり: "例: 設定値の根拠を調べ直した。Runbook に載せる",
-      備考: "例: 質問の要旨と回答の要点",
-    },
-  },
-  {
-    tag: "管理/報告",
-    required: ["結果"],
-    suggested: ["他者", "次アクション"],
-    placeholders: {
-      タイトル: "例: 顧客Aへ週次報告",
-      結果: "例: 進捗と課題2件を報告。指摘なし",
-      完了条件: "例: 報告を送付し、質問に回答済み",
-      次アクション: "例: 課題の対応状況を来週報告する",
-      "他者/相手": "例: 上長",
-      "他者/内容": "例: 報告内容の承認待ち",
-    },
-  },
-  {
-    tag: "レビュー",
-    required: ["結果"],
-    suggested: ["判断", "他者"],
-    placeholders: {
-      タイトル: "例: PR #412（注文API の排他制御）のレビュー",
-      結果: "例: 指摘3件。排他制御の考慮漏れは修正依頼、他は軽微",
-      判断: "例: 軽微な指摘は次回PRでまとめて対応でよいとした",
-      残: "例: 修正後の再レビュー",
-      "他者/相手": "例: 鈴木",
-      "他者/内容": "例: 指摘の修正待ち",
-      完了条件: "例: 指摘が反映されてマージ済み",
-      次アクション: "例: 修正版を再レビューする",
-      ふりかえり: "例: 設計時点で見ていれば手戻りが減った",
-      備考: "例: 指摘の要点（コードの引用は PR 側に）",
-    },
-  },
-  {
-    tag: "開発",
-    required: ["結果"],
-    suggested: ["残", "完了条件"],
-    placeholders: {
-      タイトル: "例: 注文API の排他制御の実装",
-      結果: "例: 実装完了。単体テストまで通した",
-      原因: "例: 排他制御の考慮漏れ",
-      判断: "例: 楽観ロックで進める",
-      残: "例: 結合環境への投入",
-      完了条件: "例: PR を出してレビュー依頼済み",
-      次アクション: "例: PR を作成して鈴木さんへレビュー依頼する",
-      ふりかえり: "例: ライブラリの仕様を調べ直した",
-      備考: "例: 設計メモ・参考リンク",
-    },
-  },
-  {
-    tag: "開発/設計",
-    required: ["結果"],
-    suggested: ["判断", "完了条件"],
-    placeholders: {
-      タイトル: "例: 排他制御の方式検討",
-      結果: "例: 楽観ロックで決定。設計メモを案件ノートに記載",
-      判断: "例: 悲観ロックは性能影響が大きく採用しない",
-      完了条件: "例: 設計がレビューで承認されている",
-      次アクション: "例: 設計メモをレビュー依頼する",
-    },
-  },
-  {
-    tag: "開発/実装",
-    required: ["結果"],
-    suggested: ["残", "完了条件"],
-    placeholders: {
-      タイトル: "例: 注文API の排他制御の実装",
-      結果: "例: 実装とテストコード完了。PR #415 を作成",
-      残: "例: レビュー指摘の対応",
-      完了条件: "例: PR がマージされている",
-      次アクション: "例: レビュー指摘に対応する",
-    },
-  },
-  {
-    tag: "開発/検証",
-    required: ["結果"],
-    suggested: ["残", "原因", "完了条件"],
-    placeholders: {
-      タイトル: "例: 結合環境の動作確認",
-      結果: "例: ログイン〜注文確定まで通し確認OK。不具合1件",
-      残: "例: 不具合の切り分け",
-      原因: "例: 接続先の設定が検証環境のままだった",
-      完了条件: "例: 確認観点がすべてOKで、結果を共有済み",
-      次アクション: "例: 不具合を鈴木さんに再現手順つきで共有する",
-      ふりかえり: "例: 接続先の切替手順を毎回調べ直した",
-      備考: "例: 確認観点と結果の要点（手順は Runbook へ）",
-    },
-  },
-  {
-    tag: "開発/バグ",
-    required: ["結果", "原因", "判断"],
-    suggested: ["残", "完了条件"],
-    placeholders: {
-      タイトル: "例: 注文APIで在庫が二重に引かれるバグの修正",
-      結果: "例: 排他制御の考慮漏れを修正し、再現手順で再発しないことを確認",
-      原因: "例: 同時更新時の排他制御の考慮漏れ",
-      判断: "例: 暫定は楽観ロックで対応。設計の見直しは次スプリントで検討",
-      残: "例: 結合環境での再確認",
-      完了条件: "例: 再現手順で再発せず、PR がマージされている",
-      次アクション: "例: 修正PRをレビュー依頼する",
-      ふりかえり: "例: 排他制御のテスト観点をチェックリストに足す",
-      備考: "例: 再現手順・調査ログの要点（ログ全文は Runbook へ）",
-    },
-  },
-  {
-    tag: "資料",
-    required: ["結果"],
-    suggested: ["残"],
-    placeholders: {
-      タイトル: "例: 顧客向け進捗報告資料",
-      結果: "例: 骨子と進捗ページまで作成。課題ページは未着手",
-      残: "例: 課題ページ、レビュー依頼",
-      完了条件: "例: レビューを通して顧客へ送付済み",
-      次アクション: "例: 課題ページを書いて佐藤さんにレビュー依頼する",
-      ふりかえり: "例: 前回の資料を流用すれば早かった",
-      備考: "例: 構成案・参照した数字の出典",
-    },
-  },
-  {
-    tag: "雑務",
-    required: ["結果"],
-    suggested: [],
-    placeholders: {
-      タイトル: "例: メールの棚卸し・チケット登録",
-      結果: "例: 未読を処理し、チケット3件を登録（#65131〜#65133）",
-      残: "例: 経費精算",
-      次アクション: "例: 返信待ちのメールをフォローする",
-      完了条件: "例: 受信箱が空で、登録したチケット番号を控えた",
-    },
-  },
-  {
-    tag: "私用",
-    required: [],
-    suggested: [],
-    placeholders: { タイトル: "例: 通院で中抜け", 結果: "記録は不要です", 備考: "例: メモ（任意）" },
-  },
-];
-
-/** 既定の定義（tag で引く。プレースホルダーのフォールバックに使う） */
-function defaultSchemaFor(tag: string): TagFieldSchema | null {
-  return DEFAULT_TAG_FIELD_SCHEMA.find((r) => normalizeTag(r.tag) === normalizeTag(tag)) ?? null;
-}
-
-/**
- * タグに応じたプレースホルダー。
- * 完全一致のタグ → 親タグ の順に、設定の定義 → 既定の定義 を引き、どこにも無ければ DEFAULT_PLACEHOLDERS
- */
-export function placeholderFor(schema: TagFieldSchema[], tag: string, field: PlaceholderField): string {
-  const key = normalizeTag(tag);
-  const candidates = key ? [key, key.split("/")[0]].filter((t, i, a) => a.indexOf(t) === i) : [];
-  for (const t of candidates) {
-    const own = schema.find((r) => normalizeTag(r.tag) === t)?.placeholders?.[field];
-    if (own && own.trim()) return own;
-    const def = defaultSchemaFor(t)?.placeholders?.[field];
-    if (def && def.trim()) return def;
-  }
-  return DEFAULT_PLACEHOLDERS[field];
-}
-
-/** タスクに付いたタグ（複数）から、最初に定義が見つかったタグのフィールド定義を引く */
-export function schemaForTags(schema: TagFieldSchema[], tags: string[]): TagFieldSchema | null {
-  for (const tag of tags) {
-    const def = schemaForTag(schema, tag);
-    if (def) return def;
-  }
-  return null;
-}
-
-/** タグ別スキーマで「完了したときに必須」とみなす欄（未完了のうちは保存を止めない） */
-export const DONE_ONLY_FIELDS = new Set(["結果", "原因", "判断"]);
-
-/** 障害・緊急対応のタグ（タイトルに対象機能名かチケット番号を求める） */
-export const TROUBLE_TAGS = ["障害"];
-/** 打合せのタグ（実績の重複チェックの対象外。Rules/Work記録チェック担当ルール.md） */
-export const MEETING_TAGS = ["会議"];
-
-/**
- * タグに対応するフィールド定義を引く。完全一致 → 親タグ一致の順
- * （"#管理/質問" は "管理/質問" の定義があればそれ、無ければ "管理" の定義に従う）。
- * どちらも無ければ null（= そのタグにルールなし。従来どおりの表示）
- */
-export function schemaForTag(schema: TagFieldSchema[], tag: string): TagFieldSchema | null {
-  const key = normalizeTag(tag);
-  if (!key) return null;
-  const exact = schema.find((r) => normalizeTag(r.tag) === key);
-  if (exact) return exact;
-  const parent = key.split("/")[0];
-  if (parent === key) return null;
-  return schema.find((r) => normalizeTag(r.tag) === parent) ?? null;
-}
-
-/**
- * スキーマに書くフィールド名の表記ゆれを、ダイアログの欄名に揃える
- * （「期日」→「期限」、「振り返り」→「ふりかえり」）
- */
-export function normalizeFieldLabel(label: string): string {
-  const t = label.trim();
-  if (t === "期日") return "期限";
-  if (t === "振り返り") return "ふりかえり";
-  if (t === "詳細") return "備考";
-  if (t === "次のアクション" || t === "ネクストアクション") return "次アクション";
-  return t;
-}
 
 /** プロジェクトのグループの表示設定（配列の順 = パネルでの表示順） */
 export interface ProjectGroupSetting {
@@ -537,7 +161,35 @@ export const DEFAULT_DAILY_REPORT_FOLDER = "daily";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 9;
+export const SETTINGS_VERSION = 10;
+
+/** 過去の版にあって廃止した設定のキー（読み込み時に落とす） */
+const REMOVED_SETTING_KEYS = [
+  // ボス戦・ペット（v2.108〜v2.119 にあったゲーム要素）
+  "bossBattle",
+  "bossBattleSound",
+  "bossRankMidHours",
+  "bossRankBossHours",
+  "soloBattle",
+  "soloRankMidHours",
+  "soloRankBossHours",
+  "petEnabled",
+  "petPos",
+  // 2 週間・月表示、ズームのプリセット、予定 / 予実 / 実績の切替（いずれも v2.120 で廃止）
+  "twoWeekFit",
+  "zoomHours",
+  "paMode",
+  // プロジェクト一覧のテーブル表示・フラット表示（v2.120 で廃止。ツリーだけに）
+  "projectsViewStyle",
+  "projectsFlatList",
+  // 本日のサマリーの連続達成・今週の棒グラフ（v2.120 で廃止）
+  "summaryStreakPercent",
+  // 旧リスト形式（1.x）の読み書き（v2.120 で廃止。読み取りと変換コマンドは残る）
+  "storageFormat",
+  // タグ別フィールド（必須・候補・文言）と保存前チェック（v2.120 で廃止。記録欄は手書きか AI が書く）
+  "tagFieldSchema",
+  "validateRequiredOnSave",
+];
 
 export interface DayTimelineSettings {
   /** 設定の版（移行用） */
@@ -551,13 +203,11 @@ export interface DayTimelineSettings {
    * ここにあるファイル名に YYYY-MM-DD を含むノートをその日の日報として表示する
    */
   dailyReportFolder: string;
-  /** 旧リスト形式で予定を書き込む見出し（例: "## タイムスケジュール"）。移行元にもなる */
+  /** 旧リスト形式（1.x）の見出し（例: "## タイムスケジュール"）。変換コマンドの移行元で、この見出しはタスクとして扱わない */
   heading: string;
   /** ノート新規作成時に使うテンプレートのパス（任意） */
   templatePath: string;
 
-  /** 保存形式: "block" = 1タスク = 1ブロック / "list" = 見出しの下のリスト（旧形式） */
-  storageFormat: StorageFormat;
   /** タスクとみなす見出しレベル（1〜6） */
   taskHeadingLevel: number;
   /** タスクを置く親見出し（"" ならファイル直下） */
@@ -577,12 +227,6 @@ export interface DayTimelineSettings {
   endHour: number;
   /** 1時間あたりの高さ（px） */
   hourHeight: number;
-  /** タイムラインに一度に表示する時間の幅（4 / 8 / 12 時間）。0 = 「1時間あたりの高さ」に従う */
-  zoomHours: number;
-  /** 2週間表示で、今週・来週の2段が1画面に収まるよう縮尺を自動で決める（ズームを手で変えると外れる） */
-  twoWeekFit: boolean;
-  /** タイムラインに出すバー（予定 / 予実 / 実績） */
-  paMode: PlanActualMode;
   /** 未完了→完了にしたとき、実績が空なら自動で記録する */
   autoRecordActual: boolean;
   /** プロジェクト（大きなタスク）ノートを置くフォルダ。空欄 = <フォルダ>/Projects */
@@ -611,10 +255,6 @@ export interface DayTimelineSettings {
   weekStart: number;
   /** タグごとの色 */
   tagColors: TagColor[];
-  /** タグごとの必須・候補フィールド（タスク編集ダイアログの表示に使う） */
-  tagFieldSchema: TagFieldSchema[];
-  /** 必須フィールドが空のまま保存しようとしたとき警告する（保存自体は止めない） */
-  validateRequiredOnSave: boolean;
 
   /** 定期タスクのルール */
   recurring: RecurringRule[];
@@ -635,16 +275,8 @@ export interface DayTimelineSettings {
   showProjects: boolean;
   /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
   projectsHideDone: boolean;
-  /** プロジェクトパネルでグループの見出し（階層）を出さずフラットな一覧にするか。並びはグループ順のまま */
-  projectsFlatList: boolean;
   /** プロジェクト一覧の絞り込み（パネル上部の切替。記憶される） */
   projectsFilter: ProjectsFilter;
-  /** ペット: いま対応中のタスクのプロジェクトのモンスターを画面に浮かべて出すか */
-  petEnabled: boolean;
-  /** ペットの位置（画面の左上からの px）。null なら右下 */
-  petPos: { x: number; y: number } | null;
-  /** プロジェクトパネルの表示形式（tree = ツリー / table = 期日・進捗・予定・実績を列に並べるテーブル） */
-  projectsViewStyle: ProjectsViewStyle;
   /** プロジェクトのグループ（frontmatter の group）の表示順とアイコン。載っていないグループは名前順で後ろに */
   projectGroups: ProjectGroupSetting[];
   /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
@@ -658,28 +290,12 @@ export interface DayTimelineSettings {
   showTodaySummary: boolean;
   /** 本日のサマリーを見出しの1行に畳んでいるか（見出しのクリックで切替。記憶される） */
   summaryCollapsed: boolean;
-  /** 連続達成（ストリーク）に数える1日の達成率（%）。予定時間ベース（予定の無い日は件数ベース）。0 なら連続達成を出さない */
-  summaryStreakPercent: number;
-  /** プロジェクトパネルをボス戦（モンスター＋HP バー、完了時の演出）として表示するか */
-  bossBattle: boolean;
-  /** ボス戦の演出に効果音を付けるか */
-  bossBattleSound: boolean;
-  /** 予定時間の合計がこの時間以上なら中級のモンスター */
-  bossRankMidHours: number;
-  /** プロジェクトに属さないタスクを 1 件 1 体のモンスターとして扱う（演出とペット。パネルには出さない） */
-  soloBattle: boolean;
-  /** 単独タスクが中級になる予定時間（時間）。これ以内は雑魚 */
-  soloRankMidHours: number;
-  /** 単独タスクがボスになる予定時間（時間）。これ以内は中級 */
-  soloRankBossHours: number;
-  /** 予定時間の合計がこの時間以上ならボス */
-  bossRankBossHours: number;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
   /** 既定の「N分前」 */
   reminderDefaultMinutes: number;
-  /** タイマー終了・リマインドで音を鳴らすか */
+  /** リマインドで音を鳴らすか */
   notifySound: boolean;
   /** 通知の出し方 */
   notifyStyle: NotifyStyle;
@@ -696,7 +312,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   dailyReportFolder: DEFAULT_DAILY_REPORT_FOLDER,
   heading: "## タイムスケジュール",
   templatePath: "",
-  storageFormat: "block",
   taskHeadingLevel: 2,
   taskRootHeading: "",
   insertPosition: "time",
@@ -706,9 +321,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   startHour: 7,
   endHour: 22,
   hourHeight: 60,
-  zoomHours: 0,
-  twoWeekFit: true,
-  paMode: "plan",
   autoRecordActual: true,
   projectsFolder: "",
   projectTemplatePath: "",
@@ -723,8 +335,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   viewModeMobile: "day",
   weekStart: 0,
   tagColors: DEFAULT_TAG_COLORS,
-  tagFieldSchema: DEFAULT_TAG_FIELD_SCHEMA,
-  validateRequiredOnSave: true,
   recurring: [],
   autoApplyRecurring: true,
   recurringApplied: {},
@@ -734,25 +344,13 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxCollapsed: false,
   showProjects: true,
   projectsHideDone: false,
-  projectsFlatList: false,
   projectsFilter: "all",
-  petEnabled: true,
-  petPos: null,
-  projectsViewStyle: "tree",
   projectGroups: [],
   defaultGroupIcon: "folder",
   sidebarWidth: 220,
   sidebarTab: "inbox",
   showTodaySummary: true,
   summaryCollapsed: false,
-  summaryStreakPercent: 80,
-  bossBattle: true,
-  bossBattleSound: true,
-  bossRankMidHours: 10,
-  soloBattle: true,
-  soloRankMidHours: 1,
-  soloRankBossHours: 3,
-  bossRankBossHours: 40,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -766,12 +364,9 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  * v1（版なし）: 表示時間帯の既定が 0:00〜24:00、フォルダの既定が保管庫直下だった。
  * v2: recurringInstances が「ルールID → ブロックID の文字列」だった。
  * v3〜v5: プロジェクト行にアイコン（defaultProjectIcon）を出していた。
- * v6 → v7: tagFieldSchema（タグ別の必須・候補フィールド）と validateRequiredOnSave を追加。
- *          保存済みの設定に無ければ既定値が入る（既存の設定は変えない）。
- * v7 → v8: tagFieldSchema に既定のサブタグ定義（管理/質問 など）とプレースホルダーを追加。
- *          保存済みの定義は変えず、無いタグの定義だけを足す。
- * v8 → v9: 開発のサブタグ「開発/バグ」（原因・判断が必須）を追加。
- *          保存済みの設定にも、タグの選択肢とフィールド定義が無ければ足す（既存の定義は変えない）。
+ * v6〜v9: タグ別フィールド（tagFieldSchema）を持っていた（v10 で廃止）。v9 で「開発/バグ」のタグを追加。
+ * v10: 表示モードを 日 / 3日 / 週 に絞り、ゲーム要素・タグ別フィールド・旧リスト形式などの設定を廃止
+ *      （REMOVED_SETTING_KEYS を読み込み時に落とす）。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -794,30 +389,6 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
       color: typeof r.color === "string" ? r.color : "#4a90d9",
       ...(typeof r.hint === "string" && r.hint.trim() ? { hint: r.hint } : {}),
     }));
-  // 形の崩れた項目を落としつつ、既定値の配列を共有参照しないようコピーする
-  if (!Array.isArray(s.tagFieldSchema)) s.tagFieldSchema = DEFAULT_TAG_FIELD_SCHEMA;
-  s.tagFieldSchema = s.tagFieldSchema
-    .filter((r) => !!r && typeof r === "object" && typeof r.tag === "string")
-    .map((r) => {
-      const ph: Record<string, string> = {};
-      if (r.placeholders && typeof r.placeholders === "object") {
-        for (const [k, v] of Object.entries(r.placeholders)) if (typeof v === "string" && v.trim()) ph[k] = v;
-      }
-      return {
-        tag: r.tag,
-        required: Array.isArray(r.required) ? r.required.filter((f): f is string => typeof f === "string") : [],
-        suggested: Array.isArray(r.suggested) ? r.suggested.filter((f): f is string => typeof f === "string") : [],
-        ...(Object.keys(ph).length ? { placeholders: ph } : {}),
-      };
-    });
-  if (version < 8) {
-    // 既定に増えたタグ（サブタグ）の定義を、保存済みの定義を崩さずに足す
-    const have = new Set(s.tagFieldSchema.map((r) => normalizeTag(r.tag)));
-    for (const def of DEFAULT_TAG_FIELD_SCHEMA) {
-      if (have.has(normalizeTag(def.tag))) continue;
-      s.tagFieldSchema.push({ tag: def.tag, required: [...def.required], suggested: [...def.suggested] });
-    }
-  }
   if (version < 9) {
     // 開発のサブタグ「開発/バグ」を追加（バグ対応では原因・判断を必須にする）。
     // タグの選択肢: 開発タグを使っている設定にだけ、開発の並びの末尾に足す（色は開発に合わせる）
@@ -838,19 +409,7 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
         });
       }
     }
-    // フィールド定義: 無ければ既定を足す（保存済みの定義は変えない）
-    if (!s.tagFieldSchema.some((r) => normalizeTag(r.tag) === "開発/バグ")) {
-      const def = DEFAULT_TAG_FIELD_SCHEMA.find((r) => r.tag === "開発/バグ");
-      if (def) {
-        s.tagFieldSchema.push({
-          tag: def.tag,
-          required: [...def.required],
-          suggested: [...def.suggested],
-        });
-      }
-    }
   }
-  if (typeof s.validateRequiredOnSave !== "boolean") s.validateRequiredOnSave = true;
   if (!Array.isArray(s.recurring)) s.recurring = [];
   if (!s.recurringApplied || typeof s.recurringApplied !== "object") s.recurringApplied = {};
   if (!s.recurringInstances || typeof s.recurringInstances !== "object") s.recurringInstances = {};
@@ -882,27 +441,17 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   delete (s as unknown as Record<string, unknown>).defaultProjectIcon;
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
   if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
-  if (s.projectsViewStyle !== "table") s.projectsViewStyle = "tree";
   if (s.projectsFilter !== "today") s.projectsFilter = "all";
-  if (typeof s.petEnabled !== "boolean") s.petEnabled = DEFAULT_SETTINGS.petEnabled;
-  if (!s.petPos || !Number.isFinite(s.petPos.x) || !Number.isFinite(s.petPos.y)) s.petPos = null;
   if (typeof s.showTodaySummary !== "boolean") s.showTodaySummary = DEFAULT_SETTINGS.showTodaySummary;
   if (typeof s.summaryCollapsed !== "boolean") s.summaryCollapsed = false;
-  s.summaryStreakPercent = Number.isFinite(s.summaryStreakPercent)
-    ? Math.min(100, Math.max(0, Math.round(s.summaryStreakPercent)))
-    : DEFAULT_SETTINGS.summaryStreakPercent;
-  if (typeof s.bossBattle !== "boolean") s.bossBattle = DEFAULT_SETTINGS.bossBattle;
-  if (typeof s.bossBattleSound !== "boolean") s.bossBattleSound = DEFAULT_SETTINGS.bossBattleSound;
-  s.bossRankMidHours = Number.isFinite(s.bossRankMidHours) && s.bossRankMidHours >= 0 ? s.bossRankMidHours : DEFAULT_SETTINGS.bossRankMidHours;
-  s.bossRankBossHours =
-    Number.isFinite(s.bossRankBossHours) && s.bossRankBossHours >= 0 ? s.bossRankBossHours : DEFAULT_SETTINGS.bossRankBossHours;
-  if (typeof s.soloBattle !== "boolean") s.soloBattle = DEFAULT_SETTINGS.soloBattle;
-  s.soloRankMidHours =
-    Number.isFinite(s.soloRankMidHours) && s.soloRankMidHours >= 0 ? s.soloRankMidHours : DEFAULT_SETTINGS.soloRankMidHours;
-  s.soloRankBossHours =
-    Number.isFinite(s.soloRankBossHours) && s.soloRankBossHours >= 0 ? s.soloRankBossHours : DEFAULT_SETTINGS.soloRankBossHours;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
+  // 廃止した表示モード（2 週間・月）が保存されていたら既定に戻す
+  const modes: ViewMode[] = ["day", "3day", "week"];
+  if (!modes.includes(s.viewMode)) s.viewMode = DEFAULT_SETTINGS.viewMode;
+  if (!modes.includes(s.viewModeMobile)) s.viewModeMobile = DEFAULT_SETTINGS.viewModeMobile;
+  // 廃止した設定は保存ファイルから落とす（{ ...DEFAULT_SETTINGS, ...loaded } は未知のキーも残すため）
+  for (const key of REMOVED_SETTING_KEYS) delete (s as unknown as Record<string, unknown>)[key];
   s.settingsVersion = SETTINGS_VERSION;
   return s;
 }
@@ -1011,26 +560,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     // ---------- 保存形式 ----------
     new Setting(containerEl).setName("保存形式").setHeading();
 
-    new Setting(containerEl)
-      .setName("タスクの形式")
-      .setDesc(
-        "タスクブロック: 1タスクをノート内の1ブロック（見出し + 本文）として保存。" +
-          "本文に自由にメモを書け、タスク単位でリンクできます。" +
-          "リスト（旧形式）: 1つの見出しの下に1行ずつ並べる 1.x までの形式。"
-      )
-      .addDropdown((d) =>
-        d
-          .addOption("block", "タスクブロック（1タスク = 1ブロック）")
-          .addOption("list", "リスト（旧形式）")
-          .setValue(s.storageFormat)
-          .onChange(async (v) => {
-            s.storageFormat = v as StorageFormat;
-            await save();
-            this.display();
-          })
-      );
-
-    if (s.storageFormat === "block") {
+    {
       new Setting(containerEl)
         .setName("タスクの見出しレベル")
         .setDesc("このレベルの見出し + 直下の「- [ ] 09:00 - 10:00」行をタスクとして扱います。")
@@ -1111,12 +641,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
-      .setName(s.storageFormat === "block" ? "旧形式の見出し" : "見出し")
-      .setDesc(
-        s.storageFormat === "block"
-          ? "リスト（旧形式）で使っていた見出し。この下の予定は「変換」でタスクブロックにできます。"
-          : "この見出しの下に予定を書き込みます。ノート内の他の内容はそのまま保持されます。"
-      )
+      .setName("旧形式の見出し")
+      .setDesc("リスト（旧形式）で使っていた見出し。この下の予定は「変換」でタスクブロックにできます。")
       .addText((t) =>
         t
           .setPlaceholder(DEFAULT_SETTINGS.heading)
@@ -1143,16 +669,14 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("既定の表示")
       .setDesc(
-        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週 / 2週 / 月」でいつでも切り替えられます。" +
+        "タイムラインを開いたときの表示。ツールバーの「日 / 3日 / 週」でいつでも切り替えられます。" +
           "スマホでは画面が狭いため表示を別に記憶します（既定は日表示。ツールバーで切り替えるとそれを覚えます）。"
       )
       .addDropdown((d) =>
         d
           .addOption("week", "週（7日）")
-          .addOption("2week", "2週間（今週・来週の2段）")
           .addOption("3day", "3日")
           .addOption("day", "日（1日）")
-          .addOption("month", "月（カレンダー）")
           .setValue(s.viewMode)
           .onChange(async (v) => {
             s.viewMode = v as ViewMode;
@@ -1247,7 +771,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         })
       );
 
-    if (s.storageFormat === "block") {
+    {
       new Setting(containerEl)
         .setName("再スケジュール欄を表示")
         .setDesc("時刻を決めていないタスクを、左サイドバー（プロジェクトの下）の「再スケジュール」欄に日付付きで一覧します。タイムラインへドラッグで時刻を割り当てられます。")
@@ -1403,142 +927,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         );
     });
 
-    // ---------- タグ別フィールド ----------
-    new Setting(containerEl).setName("タグ別フィールド").setHeading();
-    new Setting(containerEl)
-      .setName("タグで必須・候補のフィールドを決める")
-      .setDesc(
-        "タスク編集ダイアログでタグを選ぶと、「必須」の欄が自動で開いて必須マークが付き、" +
-          "「候補」の欄が「＋」チップの先頭に並びます。フィールド名はダイアログの欄名" +
-          "（結果 / 原因 / 判断 / 残 / 他者 / 回答 / 状態 / Owner / 期限 / 完了条件 / ふりかえり など）を" +
-          "カンマ区切りで書きます。サブタグ（#管理/質問）は親タグ（#管理）の定義に従います。" +
-          "ここに無いタグを選んだときは従来どおりの表示です。" +
-          "各行の下の「文言」には、そのタグを選んだときに欄へ薄く出す書き方の例を「欄名: 例文」で1行1件書けます" +
-          "（空欄の欄は親タグ → 既定の文言）。"
-      )
-      .addButton((b) =>
-        b
-          .setButtonText("追加")
-          .setCta()
-          .onClick(async () => {
-            s.tagFieldSchema.push({ tag: "", required: ["結果"], suggested: [] });
-            await save();
-            this.display();
-          })
-      );
-    new Setting(containerEl)
-      .setName("必須フィールドが空のまま保存するとき警告")
-      .setDesc("空でも「このまま保存」を選べます（途中保存を妨げないため、保存自体は止めません）。")
-      .addToggle((t) =>
-        t.setValue(s.validateRequiredOnSave).onChange(async (v) => {
-          s.validateRequiredOnSave = v;
-          await save();
-        })
-      );
-    const parseFieldList = (v: string) =>
-      v
-        .split(/[,、，]/)
-        .map((f) => f.trim())
-        .filter(Boolean);
-    s.tagFieldSchema.forEach((rule, idx) => {
-      const row = new Setting(containerEl);
-      row.settingEl.addClass("dt-tag-schema-row");
-      const nameSpan = row.nameEl.createSpan();
-      const updateName = () =>
-        nameSpan.setText(rule.tag ? `#${normalizeTag(rule.tag)}` : "(タグ未設定)");
-      updateName();
-      row
-        .addText((t) => {
-          t.setPlaceholder("タグ（例: 障害）")
-            .setValue(rule.tag)
-            .onChange(async (v) => {
-              rule.tag = v.trim().replace(/^#+/, "");
-              updateName();
-              await save();
-            });
-          t.inputEl.addClass("dt-schema-tag");
-        })
-        .addText((t) => {
-          t.setPlaceholder("必須（例: 結果, 原因）")
-            .setValue(rule.required.join(", "))
-            .onChange(async (v) => {
-              rule.required = parseFieldList(v);
-              await save();
-            });
-          t.inputEl.addClass("dt-schema-fields");
-          t.inputEl.setAttr("title", "必須のフィールド名（カンマ区切り）");
-        })
-        .addText((t) => {
-          t.setPlaceholder("候補（例: 残, 他者）")
-            .setValue(rule.suggested.join(", "))
-            .onChange(async (v) => {
-              rule.suggested = parseFieldList(v);
-              await save();
-            });
-          t.inputEl.addClass("dt-schema-fields");
-          t.inputEl.setAttr("title", "候補のフィールド名（カンマ区切り。この順でチップの先頭に並びます）");
-        })
-        .addExtraButton((b) =>
-          b
-            .setIcon("arrow-up")
-            .setTooltip("上へ")
-            .setDisabled(idx === 0)
-            .onClick(async () => {
-              if (idx === 0) return;
-              [s.tagFieldSchema[idx - 1], s.tagFieldSchema[idx]] = [
-                s.tagFieldSchema[idx],
-                s.tagFieldSchema[idx - 1],
-              ];
-              await save();
-              this.display();
-            })
-        )
-        .addExtraButton((b) =>
-          b
-            .setIcon("trash")
-            .setTooltip("削除")
-            .onClick(async () => {
-              s.tagFieldSchema.splice(idx, 1);
-              await save();
-              this.display();
-            })
-        );
-      // 文言（プレースホルダー）: 「欄名: 例文」を1行1件。空なら親タグ → 既定の文言
-      const phRow = new Setting(containerEl);
-      phRow.settingEl.addClass("dt-tag-schema-ph-row");
-      phRow.setName("文言");
-      phRow.setDesc(
-        "欄名: 例文（1行1件）。欄名は " + PLACEHOLDER_FIELDS.join(" / ") + "。書かない欄は親タグ → 既定の文言"
-      );
-      phRow.addTextArea((ta) => {
-        const toText = (ph: Record<string, string> | undefined) =>
-          PLACEHOLDER_FIELDS.filter((f) => ph?.[f])
-            .map((f) => `${f}: ${ph?.[f] ?? ""}`)
-            .join("\n");
-        ta.setPlaceholder(
-          PLACEHOLDER_FIELDS.slice(0, 3)
-            .map((f) => `${f}: ${placeholderFor([], rule.tag, f)}`)
-            .join("\n")
-        )
-          .setValue(toText(rule.placeholders))
-          .onChange(async (v) => {
-            const ph: Record<string, string> = {};
-            for (const line of v.split(/\r?\n/)) {
-              const m = /^\s*([^:：]+?)\s*[:：]\s*(.*?)\s*$/.exec(line);
-              if (!m) continue;
-              const field = normalizeFieldLabel(m[1]);
-              if (!(PLACEHOLDER_FIELDS as readonly string[]).includes(field) || !m[2]) continue;
-              ph[field] = m[2];
-            }
-            if (Object.keys(ph).length) rule.placeholders = ph;
-            else delete rule.placeholders;
-            await save();
-          });
-        ta.inputEl.addClass("dt-schema-ph");
-        ta.inputEl.rows = 3;
-      });
-    });
-
     // ---------- 定期タスク ----------
     new Setting(containerEl).setName("定期タスク").setHeading();
     new Setting(containerEl)
@@ -1665,7 +1053,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("本日のサマリーを表示")
       .setDesc(
-        "サイドバーの下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスク・連続達成日数を表示します。" +
+        "サイドバーの下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスクを表示します。" +
           "見出しのクリックで1行に畳めます。タスクブロック形式のときだけ使えます。"
       )
       .addToggle((t) =>
@@ -1673,126 +1061,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           s.showTodaySummary = v;
           await save();
         })
-      );
-    new Setting(containerEl)
-      .setName("連続達成に数える達成率")
-      .setDesc(
-        "本日のサマリーの「連続達成」に数える1日の達成率（予定時間のうち完了したタスクぶんの割合。予定の無い日は件数）。" +
-          "100% にすると1日崩れただけで途切れるので、少し緩めがおすすめです。0 にすると連続達成を出しません。"
-      )
-      .addSlider((sl) =>
-        sl
-          .setLimits(0, 100, 5)
-          .setValue(s.summaryStreakPercent)
-          .setDynamicTooltip()
-          .onChange(async (v) => {
-            s.summaryStreakPercent = v;
-            await save();
-          })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトをボス戦として表示")
-      .setDesc(
-        "プロジェクトパネルの各行にモンスターと HP バーを出します。HP は子タスクの予定時間の合計で、ステップをチェックすると小さな一撃、" +
-          "タスクを完了にすると大きな一撃、最後のタスクを完了すると討伐の演出が入ります。モンスターはプロジェクト名から自動で決まり、" +
-          "プロジェクトノートに「- モンスター: ドラゴン」の行を書けば選べます。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.bossBattle).onChange(async (v) => {
-          s.bossBattle = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("対応中のプロジェクトのモンスターを画面に出す（ペット）")
-      .setDesc(
-        "いま対応中のタスク（計測中 → 現在時刻のタスク → 次のタスク の順）が結びついているプロジェクトのモンスターを、画面に浮かべて出します。" +
-          "ドラッグで好きな位置に動かせ（記憶されます）、クリックでそのタスクを編集、右クリックでメニュー。一撃・討伐の演出に合わせて動きます。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.petEnabled).onChange(async (v) => {
-          s.petEnabled = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("ボス戦の効果音")
-      .setDesc("一撃と討伐のときに短い打撃音を鳴らします。")
-      .addToggle((t) =>
-        t.setValue(s.bossBattleSound).onChange(async (v) => {
-          s.bossBattleSound = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("中級・ボスになる予定時間")
-      .setDesc(
-        "子タスクの予定時間の合計（時間）がこの値以上なら中級（★★）・ボス（★★★）のモンスターになります。それ未満は雑魚（★）。時刻の無いタスクは「既定の長さ」で数えます。"
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("中級 10")
-          .setValue(String(s.bossRankMidHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.bossRankMidHours = n;
-              await save();
-            }
-          })
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("ボス 40")
-          .setValue(String(s.bossRankBossHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.bossRankBossHours = n;
-              await save();
-            }
-          })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトなしのタスクも 1 件 1 体のモンスターにする")
-      .setDesc(
-        "プロジェクトに属さないタスクを、そのタスクだけを子に持つ仮のプロジェクトとして扱います（ノートは作らず、パネルにも出しません）。" +
-          "HP はそのタスクの予定時間で、完了するとそのまま討伐（短縮版の演出）。ペットもこのタスクのモンスターになります。姿はタスク名から決まります。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.soloBattle).onChange(async (v) => {
-          s.soloBattle = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("単独タスクが中級・ボスになる予定時間")
-      .setDesc(
-        "プロジェクトなしのタスク 1 件の予定時間（時間）がこの値以内なら雑魚（★）・中級（★★）、超えたらボス（★★★）。既定は 1 時間以内が雑魚、3 時間以内が中級。時刻の無いタスクは「既定の長さ」で数えます。"
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("中級 1")
-          .setValue(String(s.soloRankMidHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.soloRankMidHours = n;
-              await save();
-            }
-          })
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("ボス 3")
-          .setValue(String(s.soloRankBossHours))
-          .onChange(async (v) => {
-            const n = Number(v);
-            if (Number.isFinite(n) && n >= 0) {
-              s.soloRankBossHours = n;
-              await save();
-            }
-          })
       );
     new Setting(containerEl)
       .setName("プロジェクトの完了済みタスクを隠す")
@@ -1804,35 +1072,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           s.projectsHideDone = v;
           await save();
         })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトをフラットな一覧で表示")
-      .setDesc(
-        "グループの見出し（階層）を出さず、プロジェクトだけを一覧します。並びはグループ順のまま" +
-          "（ツリーと同じ: 設定の表示順 → 名前順 → 未分類は末尾。各グループの中は名前順）。" +
-          "グループ名は行のツールチップで確認できます。パネルの一覧ボタンでも切り替えられます。"
-      )
-      .addToggle((t) =>
-        t.setValue(s.projectsFlatList).onChange(async (v) => {
-          s.projectsFlatList = v;
-          await save();
-        })
-      );
-    new Setting(containerEl)
-      .setName("プロジェクトの表示形式")
-      .setDesc(
-        "ツリーは1行に名前と進捗をまとめたコンパクトな表示、テーブルは期日・進捗・予定・実績を列に並べて見比べられる表示です。" +
-          "パネルの表ボタンでも切り替えられます。テーブルはサイドバーの右端をドラッグして広げると見やすくなります。"
-      )
-      .addDropdown((d) =>
-        d
-          .addOption("tree", "ツリー")
-          .addOption("table", "テーブル")
-          .setValue(s.projectsViewStyle)
-          .onChange(async (v) => {
-            s.projectsViewStyle = v === "table" ? "table" : "tree";
-            await save();
-          })
       );
     // ツリーのグループ見出しに出す既定のアイコン。プレビュー付きの入力欄
     {
@@ -1952,7 +1191,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       );
 
     // ---------- 通知 ----------
-    new Setting(containerEl).setName("通知（リマインド・タイマー）").setHeading();
+    new Setting(containerEl).setName("通知（リマインド）").setHeading();
     new Setting(containerEl)
       .setName("タスクのリマインド")
       .setDesc("今日の未完了タスクについて、開始の少し前に通知を出します（Obsidian を開いている間だけ）。")
@@ -2005,7 +1244,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
       );
     new Setting(containerEl)
       .setName("音を鳴らす")
-      .setDesc("タイマー終了とリマインドのときに短いビープ音を鳴らします。")
+      .setDesc("リマインドのときに短いビープ音を鳴らします。")
       .addToggle((t) =>
         t.setValue(s.notifySound).onChange(async (v) => {
           s.notifySound = v;

@@ -151,7 +151,6 @@ export async function applyRecurring(
       const start = ov && ov.start !== undefined ? ov.start : rule.start;
       const end = ov && ov.end !== undefined ? ov.end : rule.end;
       // 旧リスト形式は時刻必須
-      if (start === null && !plugin.store.supportsUnscheduled) continue;
       const details = ov?.details !== undefined ? ov.details : rule.details ?? "";
       const steps = buildRuleSteps(rule);
       const draft = {

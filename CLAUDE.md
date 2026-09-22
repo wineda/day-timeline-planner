@@ -59,7 +59,7 @@ npm run gen:spec   # 保存形式の仕様書（docs/format.md, README の一覧
 1. **フィールドの追加は `src/markdown/fields.ts` に 1 件足す**（key / label / aliases / zone / insertAt / description / example）。
    解析（`parseBlockDocument`）・書き出し（`renderTaskBlock`）・編集（`updateTask`）・`TaskBlock` / `Task` / `TaskPatch` の型は、
    1 行の文字列の値ならこれだけで揃う。リンクや時間帯のような特別な値なら `blocks.ts` の `renderFieldLineOf` と `parseBlockDocument` に分岐を足す
-2. 編集ダイアログ（`src/modal.ts`）に欄を足す。設定「タグ別フィールド」から使う欄は**ラベル**で参照する（`test/settings-schema.test.ts` が整合を検証）
+2. 編集ダイアログ（`src/modal.ts`）に欄が要るなら「詳細」の中に足す。記録欄は結果・ふりかえり以外ダイアログに出さない方針（手書きか AI が書く）
 3. `test/fixtures/daily-fields.md` に実例を足し、`test/blocks.test.ts` の全フィールドの読み取り・「書き出しの並び」のテストを更新する
    （`src/spec.ts` の実例タスクにも足す。`test/spec.test.ts` が全フィールド入りであることを検証する）
 4. `npm run gen:spec` を実行して `docs/format.md` と README.md の一覧を生成し直す（手で直さない。CI が最新かを検証）

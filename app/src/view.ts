@@ -1,6 +1,5 @@
 import {
   ItemView,
-  MarkdownRenderer,
   MarkdownView,
   Menu,
   Notice,
@@ -20,22 +19,11 @@ import {
   ScheduledTask,
   Task,
   TaskDraft,
-  TaskSource,
   isScheduled,
   stepProgress,
   taskProgress,
 } from "./model";
-import {
-  ConfirmModal,
-  PromptModal,
-  ProjectDifficultyModal,
-  RemainingStepsModal,
-  RetrospectiveModal,
-  TaskModal,
-  formatActualRanges,
-  type OtherActual,
-  type RetroExtraField,
-} from "./modal";
+import { ConfirmModal, PromptModal, TaskModal, formatActualRanges, type OtherActual } from "./modal";
 import { subtractActualRanges, type ActualRange, type TaskStep, type TicketRef } from "./markdown/blocks";
 import {
   groupProjects,
@@ -54,37 +42,18 @@ import { iconName } from "./icons";
 import { DropdownMenu, type MenuLike } from "./dropdown";
 import { layoutEvents, type LayoutInfo } from "./layout";
 import {
+  DEFAULT_SETTINGS,
   colorForTags,
-  normalizeFieldLabel,
-  placeholderFor,
-  schemaForTags,
   ticketUrl,
   MAX_HOUR_HEIGHT,
   MIN_HOUR_HEIGHT,
   type Member,
-  type PlanActualMode,
   type ProjectsFilter,
   type SidebarTab,
   type ViewMode,
 } from "./settings";
 import { applyRecurring, instanceOf, noteRecurringDeletion, RecurringModal } from "./recurring";
-import { INBOX_DATE } from "./store";
-import { formatSeconds } from "./notify";
-import {
-  battleEvent,
-  hpRatio,
-  monsterLabel,
-  monsterOf,
-  playBattle,
-  soloSummary,
-  projectHp,
-  snapshotOf,
-  SPRITE_SIZE,
-  type BattleRules,
-  type BattleSnapshot,
-} from "./battle";
-import { monsterSVG } from "./bestiary";
-import { PetWidget, type PetInfo } from "./pet";
+import { BlockTaskStore, INBOX_DATE } from "./store";
 import {
   addDays,
   clamp,
@@ -98,7 +67,6 @@ import {
   startOfDay,
   startOfWeek,
   stripTags,
-  extractTags,
 } from "./util";
 
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
@@ -148,21 +116,15 @@ interface DayColumn {
   canvasEl: HTMLElement;
   eventsEl: HTMLElement;
   nowEl: HTMLElement | null;
-  /** この列が属する段（2週間表示では今週・来週の2段。それ以外の表示は1段だけ） */
+  /** この列が属する段 */
   row: TimelineRow;
 }
 
-/**
- * タイムラインの1段（曜日ヘッダー + 時間軸 + 日の列）。
- * 2週間表示では週ごとに1段を上下に重ね、他の表示では1段だけ作る。
- * 段ごとにヘッダー（sticky）と時間軸を持つので、列幅・文字の大きさは週表示と同じまま
- */
+/** タイムラインの1段（曜日ヘッダー + 時間軸 + 日の列）。いまは常に1段 */
 interface TimelineRow {
   /** 段の入れ物。sticky なヘッダーはこの中で止まり、次の段に押し出される */
   el: HTMLElement;
   headersEl: HTMLElement;
-  /** 2週間表示の段の見出し（「今週 8/30〜9/5」と週の予実合計）。他の表示では null */
-  weekLabelEl: HTMLElement | null;
   labelsEl: HTMLElement;
   daysEl: HTMLElement;
   columns: DayColumn[];
@@ -183,9 +145,6 @@ const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 /** 再スケジュール欄のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
 const RESCHEDULE_LOOKBACK_DAYS = 30;
 
-/** 残件の持ち越し先: 翌日 / 当日（同じノートに続きを作る） / Inbox */
-type CarryDest = "next-day" | "same-day" | "inbox";
-
 /** ビューの幅（px）がこれ未満なら「狭い画面」（スマホなど）。
  * サイドバーとタイムラインを並べると共倒れになるので、片方だけを全面に出して切り替える */
 const NARROW_VIEW_WIDTH = 500;
@@ -194,9 +153,6 @@ const NARROW_VIEW_WIDTH = 500;
 const SIDEBAR_MIN_WIDTH = 160;
 /** サイドバーの幅の上限（px）。実際の上限はビューの幅からも決まる（maxSidebarWidth） */
 const SIDEBAR_MAX_WIDTH = 800;
-
-/** プロジェクトのテーブル表示の列数（名前・期日・進捗・予定・実績） */
-const PROJECT_TABLE_COLS = 6;
 
 /** 本日のサマリーのバーをタスクごとに区切る上限。これより多いと区切り線だけになるので1本の棒にする */
 const MAX_SUMMARY_SEGMENTS = 40;
@@ -220,8 +176,6 @@ const VIEW_MODES: [ViewMode, string, string][] = [
   ["day", "日", "日表示"],
   ["3day", "3日", "3日表示"],
   ["week", "週", "週表示"],
-  ["2week", "2週", "2週間表示"],
-  ["month", "月", "月表示"],
 ];
 
 export class DayTimelineView extends ItemView {
@@ -242,27 +196,22 @@ export class DayTimelineView extends ItemView {
   private todayNumEl!: HTMLElement;
   /** 狭い画面でモードのセグメントの代わりに出すアイコンボタン */
   private modeMenuBtnEl!: HTMLElement;
-  private timerEl!: HTMLElement;
   private trackingEl!: HTMLElement;
   private modeBtns = new Map<ViewMode, HTMLElement>();
   /** 表示範囲（3日・週）の予実合計 */
   private rangeTotalEl!: HTMLElement;
-  /** 実際に使う 1時間あたりの高さ（px）。ズーム指定があるとビューの高さから決まる */
+  /** 実際に使う 1時間あたりの高さ（px） */
   private hourHeightPx = 60;
-  /** 月表示のマス（日付キー → 要素） */
-  private monthCells = new Map<string, { date: Date; el: HTMLElement; listEl: HTMLElement }>();
   private bannerEl!: HTMLElement;
   private inboxEl!: HTMLElement;
   private inboxTasks: Task[] = [];
   /** 表示範囲の外（今日から過去 RESCHEDULE_LOOKBACK_DAYS 日以内）のノートのタスク（日付キー → その日）。
-   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき・連続達成・今週のグラフ）に使う */
+   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき）に使う */
   private pastDays = new Map<string, { date: Date; tasks: Task[] }>();
   /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用。pastDays から作る） */
   private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
   /** サイドバーの下の「本日のサマリー」の器。出していないときは null */
   private summaryEl: HTMLElement | null = null;
-  /** ペット（対応中のプロジェクトのモンスター）。設定でオフなら null */
-  private pet: PetWidget | null = null;
   /** プロジェクトの集計（パネル用のキャッシュ） */
   private projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
@@ -270,13 +219,8 @@ export class DayTimelineView extends ItemView {
   /** パネルで畳んでいるプロジェクトグループ（"" = 未分類） */
   private collapsedGroups = new Set<string>();
   private scrollEl!: HTMLElement;
-  /** タイムラインの段（2週間表示では今週・来週の2段、他は1段）。columns は全段の列を通した一覧 */
+  /** タイムラインの段（いまは常に1段）。columns はその段の列の一覧 */
   private rows: TimelineRow[] = [];
-  /**
-   * 2週間表示の上段の週の始まり。基準日がこの2週間の中にある間は動かさない
-   * （下段の日を日付ピッカーや日報から選んでも、段が入れ替わらないように）
-   */
-  private twoWeekAnchor: Date | null = null;
   /** 幅が狭い（スマホなど）とき true。タイムラインとパネルを切り替えて片方だけ表示する */
   private isNarrow = false;
   /** 狭い画面で表示中の面 */
@@ -413,10 +357,7 @@ export class DayTimelineView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    this.closeMemoPopover();
     DropdownMenu.closeAll();
-    this.pet?.destroy();
-    this.pet = null;
     this.contentEl.empty();
   }
 
@@ -427,13 +368,8 @@ export class DayTimelineView extends ItemView {
     this.remeasureTimeline();
   }
 
-  /** タイムラインの高さの変化に追従する（ビューのリサイズ・隠れていたタイムラインの再表示時） */
+  /** 隠れていたタイムラインが再表示されたときなどに、初期位置へのスクロールをやり直す */
   private remeasureTimeline(): void {
-    // ズーム指定（4h/8h/12h）はビューの高さから縮尺を決めるので、高さが変わったら作り直す
-    if (this.mode !== "month" && this.usesAutoScale() && this.scrollEl) {
-      const h = this.computeHourHeight();
-      if (Math.abs(h - this.hourHeightPx) > 0.5) this.rebuildTimeline();
-    }
     if (this.shouldScroll) this.scrollToInitial();
   }
 
@@ -456,10 +392,9 @@ export class DayTimelineView extends ItemView {
     this.contentEl.toggleClass("is-pane-timeline", this.isNarrow && this.narrowPane === "timeline");
     this.contentEl.toggleClass("is-pane-panel", this.isNarrow && this.narrowPane === "panel");
     this.renderPaneToggle();
-    // 狭い画面では日付ラベルとチップの文言を短くする（renderHeader / renderTracking / renderTimer）
+    // 狭い画面では日付ラベルとチップの文言を短くする（renderHeader / renderTracking）
     if (this.dateLabelEl) this.renderHeader(); // 中で renderTracking も呼ばれる
     else this.renderTracking();
-    this.renderTimer();
   }
 
   /** タイムラインとツリー（パネル）のアイコンを親に並べる。アクティブ表示は呼び出し側で付ける */
@@ -517,7 +452,7 @@ export class DayTimelineView extends ItemView {
     this.mode = this.defaultViewMode(); // 設定画面で「既定の表示」を変えたときも追従する
     if (this.mode !== prevMode) this.alignThreeDayToToday();
     this.buildGrid();
-    this.remeasureTimeline(); // ヘッダーの高さが確定してから、ビューの高さに合わせた縮尺を取り直す
+    this.remeasureTimeline();
     this.shouldScroll = true;
     void this.reload();
   }
@@ -539,19 +474,6 @@ export class DayTimelineView extends ItemView {
         return addDays(this.date, 3 * dir);
       case "week":
         return addDays(this.date, 7 * dir);
-      case "2week": {
-        // 2週間ぶん進める。基準日が下段にあっても、上段の週を基準に曜日を保ったまま送る
-        const start = this.twoWeekStart();
-        const offset = Math.round(
-          (this.date.getTime() - startOfWeek(this.date, this.plugin.settings.weekStart).getTime()) / 86_400_000
-        );
-        return addDays(start, 14 * dir + offset);
-      }
-      case "month": {
-        const d = new Date(this.date.getFullYear(), this.date.getMonth() + dir, 1);
-        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-        return new Date(d.getFullYear(), d.getMonth(), Math.min(this.date.getDate(), last));
-      }
     }
   }
 
@@ -609,20 +531,20 @@ export class DayTimelineView extends ItemView {
     void this.plugin.persistSettings();
     this.alignThreeDayToToday();
     this.buildGrid();
-    this.remeasureTimeline(); // ヘッダーの高さが確定してから、ビューの高さに合わせた縮尺を取り直す
+    this.remeasureTimeline();
     this.shouldScroll = true;
     void this.reload();
   }
 
-  /** 日 → 3日 → 週 → 2週 → 月 → 日 … と切り替える */
+  /** 日 → 3日 → 週 → 日 … と切り替える */
   toggleViewMode(): void {
-    const order: ViewMode[] = ["day", "3day", "week", "2week", "month"];
+    const order: ViewMode[] = ["day", "3day", "week"];
     this.setViewMode(order[(order.indexOf(this.mode) + 1) % order.length]);
   }
 
   // ---------- 表示している日 ----------
 
-  /** 表示中の日付（日: 1日 / 3日: 基準日から3日 / 週: 7日 / 2週: 14日 / 月: カレンダーの 6 週分） */
+  /** 表示中の日付（日: 1日 / 3日: 基準日から3日 / 週: 7日） */
   private visibleDays(): Date[] {
     const ws = this.plugin.settings.weekStart;
     switch (this.mode) {
@@ -634,38 +556,7 @@ export class DayTimelineView extends ItemView {
         const first = startOfWeek(this.date, ws);
         return Array.from({ length: 7 }, (_v, i) => addDays(first, i));
       }
-      case "2week": {
-        const first = this.twoWeekStart();
-        return Array.from({ length: 14 }, (_v, i) => addDays(first, i));
-      }
-      case "month": {
-        const first = startOfWeek(new Date(this.date.getFullYear(), this.date.getMonth(), 1), ws);
-        return Array.from({ length: 42 }, (_v, i) => addDays(first, i));
-      }
     }
-  }
-
-  /**
-   * 2週間表示の上段の週の始まり。基準日が今の2週間に入っていればそのまま、
-   * 外れていれば基準日の週を上段にし直す
-   */
-  private twoWeekStart(): Date {
-    const a = this.twoWeekAnchor;
-    if (a && this.date >= a && this.date < addDays(a, 14)) return a;
-    const start = startOfWeek(this.date, this.plugin.settings.weekStart);
-    this.twoWeekAnchor = start;
-    return start;
-  }
-
-  /** タイムライン（時間軸）を出すモードか */
-  private isTimeline(): boolean {
-    return this.mode !== "month";
-  }
-
-  /** 縮尺をビューの高さから決めるモードか（4h/8h/12h のズーム、または 2週間表示の「2段を1画面に」） */
-  private usesAutoScale(): boolean {
-    const s = this.plugin.settings;
-    return s.zoomHours > 0 || (this.mode === "2week" && s.twoWeekFit);
   }
 
   /** 表示ONのメンバー（ブロック形式のときだけ） */
@@ -781,11 +672,6 @@ export class DayTimelineView extends ItemView {
       });
     });
     this.renderTracking();
-    // タイマーは動作中だけチップを出す（開始は ⋮ メニューの「タイマー…」から）
-    this.timerEl = bar.createEl("button", { cls: "dt-timer-chip", attr: { "aria-label": "タイマー" } });
-    this.timerEl.onclick = () => this.plugin.openTimerModal();
-    this.renderTimer();
-    this.register(this.plugin.timer.onChange(() => this.renderTimer()));
 
     const modeWrap = bar.createDiv("dt-mode");
     for (const [mode, label] of VIEW_MODES) {
@@ -800,7 +686,7 @@ export class DayTimelineView extends ItemView {
     // メニューはボタンの真下に出す（スマホでも画面下のシートにはしない）
     this.modeMenuBtnEl = bar.createEl("button", {
       cls: "dt-mode-menu-btn",
-      attr: { "aria-label": "表示の単位を選ぶ（日・3日・週・2週・月）" },
+      attr: { "aria-label": "表示の単位を選ぶ（日・3日・週）" },
     });
     setIcon(this.modeMenuBtnEl, iconName("columns"));
     this.modeMenuBtnEl.onclick = () => {
@@ -815,7 +701,7 @@ export class DayTimelineView extends ItemView {
 
     const addBtn = this.iconButton(bar, "plus", "タスクを追加", () => this.openCreateModal(this.date));
     addBtn.addClass("dt-toolbar-add");
-    this.menuButton(bar, "メニュー（表示・ノート・タイマー・定期タスク）", (menu) =>
+    this.menuButton(bar, "メニュー（表示・ノート・定期タスク）", (menu) =>
       this.buildMoreMenu(menu)
     );
 
@@ -914,7 +800,6 @@ export class DayTimelineView extends ItemView {
     this.scrollEl.addEventListener(
       "wheel",
       (ev: WheelEvent) => {
-        if (this.mode === "month") return; // 時間軸がないので既定の動作に任せる
         if (!ev.ctrlKey && !ev.metaKey) return;
         ev.preventDefault();
         ev.stopPropagation();
@@ -993,7 +878,7 @@ export class DayTimelineView extends ItemView {
       "touchstart",
       (ev: TouchEvent) => {
         if (ev.touches.length !== 2) return; // 2本目が置かれた瞬間だけ開始
-        if (this.mode === "month" || this.interacting || this.pinchZooming) return;
+        if (this.interacting || this.pinchZooming) return;
         // ev.touches は画面全体のタッチ。1本目がパネルなどタイムラインの外にあるなら
         // ピンチにしない（パネルのスクロールを止めてしまわないように）
         for (let i = 0; i < ev.touches.length; i++) {
@@ -1036,64 +921,32 @@ export class DayTimelineView extends ItemView {
   private applyPendingZoom(): void {
     const factor = this.pendingZoomFactor;
     this.pendingZoomFactor = 1;
-    if (this.mode === "month" || !this.scrollEl?.isConnected) return;
+    if (!this.scrollEl?.isConnected) return;
     const s = this.plugin.settings;
     const next = clamp(this.hourHeightPx * factor, MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT);
     if (Math.abs(next - this.hourHeightPx) < 0.01) return; // 既に上限・下限
-    // 手動ズームに入ったら「一度に表示する時間」(4h/8h/12h) は外し、「1時間の高さ」として記憶する。
+    // 「1時間の高さ」として記憶する。
     // 0.1px 単位に丸めるのは、トラックパッドの細かい delta でも値が進む（整数に丸めると止まる）ようにするため
-    s.zoomHours = 0;
-    if (this.mode === "2week") s.twoWeekFit = false; // 手で縮尺を変えたら「2段を1画面に」も外す
     s.hourHeight = Math.round(next * 10) / 10;
     this.persistZoomDebounced();
     this.rebuildTimeline(this.pendingZoomClientY);
   }
 
   /**
-   * ⋮ メニューの「表示」まわり: ズーム・予定/実績・メンバーの表示切替。
+   * ⋮ メニューの「表示」まわり: 縮尺・メンバーの表示切替。
    * 項目を1つでも足したら true（呼び出し側で区切り線を入れるかの判断に使う）
    */
   private buildViewMenu(menu: MenuLike): boolean {
     const s = this.plugin.settings;
-    let empty = true;
-    if (this.isTimeline()) {
-      empty = false;
-      // 一度に表示する時間の幅（30分単位で作業する日は 4時間 に寄せる、など）
-      menu.addItem((i) => i.setTitle("一度に表示する時間").setDisabled(true));
-      // 2週間表示だけ: 今週・来週の2段が1画面に収まる縮尺（既定）。下の項目を選ぶと外れる
-      const fit = this.mode === "2week" && s.twoWeekFit;
-      if (this.mode === "2week") {
-        menu.addItem((i) =>
-          i.setTitle("2段（今週・来週）を1画面に収める").setChecked(fit).onClick(() => this.setTwoWeekFit(true))
-        );
-      }
-      const zooms: [number, string][] = [
-        [4, "4時間（細かい作業向け）"],
-        [8, "8時間"],
-        [12, "12時間"],
-        [0, "標準（設定の「1時間あたりの高さ」）"],
-      ];
-      for (const [hours, label] of zooms) {
-        menu.addItem((i) =>
-          i.setTitle(label).setChecked(!fit && s.zoomHours === hours).onClick(() => this.setZoom(hours))
-        );
-      }
-      // 予定 / 予実 / 実績 の切替（ブロック形式のみ）
-      if (this.plugin.blockStore()) {
-        menu.addSeparator();
-        menu.addItem((i) => i.setTitle("予定と実績").setDisabled(true));
-        const paModes: [PlanActualMode, string][] = [
-          ["plan", "予定だけを表示"],
-          ["both", "予実（左に予定、右に実績）"],
-          ["actual", "実績だけを表示"],
-        ];
-        for (const [m, label] of paModes) {
-          menu.addItem((i) =>
-            i.setTitle(label).setChecked(s.paMode === m).onClick(() => this.setPaMode(m))
-          );
-        }
-      }
-    }
+    let empty = false;
+    // 縮尺は Ctrl+ホイール / ピンチで変える。ここでは既定に戻すだけ
+    menu.addItem((i) =>
+      i
+        .setTitle("縮尺を標準に戻す")
+        .setIcon("zoom-out")
+        .setDisabled(s.hourHeight === DEFAULT_SETTINGS.hourHeight)
+        .onClick(() => this.resetZoom())
+    );
     // メンバー（他の人の予定）の表示切替
     if (this.plugin.blockStore() && s.members.length > 0) {
       if (!empty) menu.addSeparator();
@@ -1125,7 +978,7 @@ export class DayTimelineView extends ItemView {
     return !empty;
   }
 
-  /** ツールバーの ⋮ メニュー: 表示オプション・ノート・タイマー・定期タスク */
+  /** ツールバーの ⋮ メニュー: 表示オプション・ノート・定期タスク */
   private buildMoreMenu(menu: MenuLike): void {
     // メニューの入口が「表示 ▾」と ⋮ の2つに割れていると、どちらに何があるか覚えられない。
     // 1行に収めるためもあり、表示オプションはこの先頭にまとめる
@@ -1137,9 +990,6 @@ export class DayTimelineView extends ItemView {
         .setTitle(`${exists ? "ノートを開く" : "ノートを作成して開く"}（${m.format("M月D日")}）`)
         .setIcon("file-text")
         .onClick(() => void this.openNote(this.date))
-    );
-    menu.addItem((i) =>
-      i.setTitle("タイマー…").setIcon("timer").onClick(() => this.plugin.openTimerModal())
     );
     menu.addItem((i) =>
       i.setTitle("定期タスクを管理").setIcon("repeat").onClick(() => void this.plugin.activateRecurringView())
@@ -1222,39 +1072,22 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** 表示中の日付に合わせて、時間軸と日ごとの列（月表示ならカレンダーのマス）を作る */
+  /** 表示中の日付に合わせて、時間軸と日ごとの列を作る */
   private buildGrid(): void {
     const s = this.plugin.settings;
-    this.hourHeightPx = this.computeHourHeight(); // scrollEl を空にする前（レイアウトが生きているうち）に測る
+    this.hourHeightPx = s.hourHeight;
     this.scrollEl.empty();
     this.columns = [];
     this.rows = [];
-    this.monthCells.clear();
     this.taskEls.clear();
 
     this.contentEl.toggleClass("is-week", this.mode === "week");
-    this.contentEl.toggleClass("is-2week", this.mode === "2week");
     this.contentEl.toggleClass("is-3day", this.mode === "3day");
     this.contentEl.toggleClass("is-day", this.mode === "day");
-    this.contentEl.toggleClass("is-month", this.mode === "month");
-    this.contentEl.toggleClass(
-      "is-multi-day",
-      this.mode === "week" || this.mode === "3day" || this.mode === "2week"
-    );
-
-    if (this.mode === "month") {
-      this.buildMonthGrid();
-      return;
-    }
+    this.contentEl.toggleClass("is-multi-day", this.mode === "week" || this.mode === "3day");
 
     const height = (s.endHour - s.startHour) * this.hourHeightPx;
-    const days = this.visibleDays();
-    // 2週間表示は 7 日ずつの段に分けて上下に重ねる（上段が基準日の週、下段がその翌週）。
-    // 列幅を週表示と同じに保つための作り。他の表示は 1 段だけ
-    const perRow = this.mode === "2week" ? 7 : days.length;
-    for (let i = 0; i < days.length; i += perRow) {
-      this.buildRow(days.slice(i, i + perRow), height);
-    }
+    this.buildRow(this.visibleDays(), height);
     this.renderDayHeaders();
   }
 
@@ -1263,9 +1096,8 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const rowEl = this.scrollEl.createDiv("dt-row");
 
-    // 曜日・日付のヘッダー（スクロールしても段の上に残る）。2週間表示では段の見出しをその上に足す
+    // 曜日・日付のヘッダー（スクロールしても段の上に残る）
     const headersEl = rowEl.createDiv("dt-day-headers");
-    const weekLabelEl = this.mode === "2week" ? headersEl.createDiv("dt-week-label") : null;
     headersEl.createDiv("dt-day-headers-spacer");
     const headerCells = headersEl.createDiv("dt-day-headers-cells");
 
@@ -1283,7 +1115,6 @@ export class DayTimelineView extends ItemView {
     const row: TimelineRow = {
       el: rowEl,
       headersEl,
-      weekLabelEl,
       labelsEl,
       daysEl,
       columns: [],
@@ -1313,54 +1144,6 @@ export class DayTimelineView extends ItemView {
       this.columns.push(col);
     }
     this.rows.push(row);
-  }
-
-  /** 月表示のカレンダー（曜日ヘッダー + 6 週 × 7 日のマス） */
-  private buildMonthGrid(): void {
-    const ws = this.plugin.settings.weekStart;
-    const wrap = this.scrollEl.createDiv("dt-month");
-    const head = wrap.createDiv("dt-month-weekdays");
-    for (let i = 0; i < 7; i++) {
-      const dow = (ws + i) % 7;
-      const c = head.createDiv({ cls: "dt-month-weekday", text: WEEKDAY_JA[dow] });
-      c.toggleClass("is-sunday", dow === 0);
-      c.toggleClass("is-saturday", dow === 6);
-    }
-    const grid = wrap.createDiv("dt-month-grid");
-    for (const date of this.visibleDays()) {
-      const cell = grid.createDiv("dt-month-cell");
-      const dow = date.getDay();
-      cell.toggleClass("is-today", isToday(date));
-      cell.toggleClass("is-sunday", dow === 0);
-      cell.toggleClass("is-saturday", dow === 6);
-      cell.toggleClass("is-other-month", date.getMonth() !== this.date.getMonth());
-      const top = cell.createDiv("dt-month-cell-head");
-      const num = top.createEl("button", {
-        cls: "dt-month-daynum",
-        text: date.getDate() === 1 ? `${date.getMonth() + 1}/1` : String(date.getDate()),
-        attr: { "aria-label": `${moment(date).format("M月D日 (ddd)")} を日表示で開く` },
-      });
-      num.onclick = (e) => {
-        e.stopPropagation();
-        this.date = startOfDay(date);
-        this.setViewMode("day");
-      };
-      const add = this.iconButton(top, "plus", "タスクを追加", () => this.openCreateModal(date));
-      add.addClass("dt-month-add");
-      const listEl = cell.createDiv("dt-month-list");
-      // 空きをクリック → その日にタスクを追加。
-      // モバイルではタップでその日の日表示を開く（Google カレンダー方式。誤って作成しない）
-      cell.addEventListener("click", (e) => {
-        if ((e.target as HTMLElement).closest(".dt-month-item, .dt-month-daynum, .dt-month-add")) return;
-        if (Platform.isMobile) {
-          this.date = startOfDay(date);
-          this.setViewMode("day");
-          return;
-        }
-        this.openCreateModal(date);
-      });
-      this.monthCells.set(dateKey(date), { date, el: cell, listEl });
-    }
   }
 
   private renderDayHeaders(): void {
@@ -1402,36 +1185,7 @@ export class DayTimelineView extends ItemView {
         });
       }
     }
-    this.renderWeekLabels();
   }
-
-  /**
-   * 2週間表示の段の見出し: 「今週」「来週」などの呼び名と日付の範囲。
-   * 週の予実合計は renderDayTotals が末尾の入れ物（dt-week-label-total）に入れる。
-   * 日をまたいだときも呼び名を付け替えられるよう、renderDayHeaders から毎回描き直す
-   */
-  private renderWeekLabels(): void {
-    const thisWeek = startOfWeek(startOfDay(new Date()), this.plugin.settings.weekStart);
-    for (const row of this.rows) {
-      if (!row.weekLabelEl || !row.columns.length) continue;
-      const first = row.columns[0].date;
-      const last = row.columns[row.columns.length - 1].date;
-      const diff = Math.round((first.getTime() - thisWeek.getTime()) / (7 * 86_400_000));
-      const rel =
-        diff === 0 ? "今週" : diff === 1 ? "来週" : diff === -1 ? "先週" : diff === 2 ? "再来週" : "";
-      const prevTotal = row.weekLabelEl.querySelector<HTMLElement>(".dt-week-label-total")?.textContent ?? "";
-      row.weekLabelEl.empty();
-      row.weekLabelEl.toggleClass("is-current", diff === 0);
-      if (rel) row.weekLabelEl.createSpan({ cls: "dt-week-label-rel", text: rel });
-      row.weekLabelEl.createSpan({
-        cls: "dt-week-label-range",
-        text: `${moment(first).format("M/D")}〜${moment(last).format("M/D")}`,
-      });
-      row.weekLabelEl.createSpan({ cls: "dt-week-label-total", text: prevTotal });
-    }
-  }
-
-  // ---------- データ ----------
 
   private onVaultChange(path: string): void {
     const inbox = this.plugin.inbox;
@@ -1475,13 +1229,10 @@ export class DayTimelineView extends ItemView {
     const store = this.plugin.store;
     const blockStore = this.plugin.blockStore();
     const days = this.visibleDays();
-    // 月表示では 6 週分のノートを先に作らないよう、定期タスクの自動反映はしない（薄く表示だけする）
-    if (this.isTimeline()) {
-      try {
-        await applyRecurring(this.plugin, days);
-      } catch (e) {
-        console.error(e);
-      }
+    try {
+      await applyRecurring(this.plugin, days);
+    } catch (e) {
+      console.error(e);
     }
     // プロジェクトの集計（パネル用）。Inbox の表示判定にも使うので先に読む
     if (this.plugin.projects && s.showProjects) {
@@ -1500,10 +1251,7 @@ export class DayTimelineView extends ItemView {
     const loaded = await Promise.all(
       days.map(async (d): Promise<[string, DayData]> => {
         const day = await store.load(d);
-        const legacyCount =
-          s.storageFormat === "block" && day.exists && blockStore
-            ? await blockStore.countLegacyEvents(d)
-            : 0;
+        const legacyCount = day.exists ? await store.countLegacyEvents(d) : 0;
         const tasks = [...day.tasks];
         for (const ms of memberStores) {
           try {
@@ -1543,16 +1291,6 @@ export class DayTimelineView extends ItemView {
           startOfWeek(this.date, this.plugin.settings.weekStart)
         );
         break;
-      case "2week": {
-        // 今の2週間の中なら段はそのまま（下段の日を選んでも上下が入れ替わらない）
-        const a = this.twoWeekStart();
-        sameRange = next >= a && next < addDays(a, 14);
-        break;
-      }
-      case "month":
-        sameRange =
-          next.getFullYear() === this.date.getFullYear() && next.getMonth() === this.date.getMonth();
-        break;
       default:
         sameRange = isSameDay(next, this.date);
     }
@@ -1581,8 +1319,7 @@ export class DayTimelineView extends ItemView {
     // 年は今年以外のときだけ添える（毎回読む情報ではない）。
     // 月をまたぐ週は、基準日ではなく「見えている範囲の真ん中の日」の月を出す
     //（8/30〜9/5 の週なら「9月」。TickTick と同じ見え方になる）
-    const rep =
-      this.mode === "month" || this.mode === "day" ? m : moment(days[Math.floor(days.length / 2)]);
+    const rep = this.mode === "day" ? m : moment(days[Math.floor(days.length / 2)]);
     const thisYear = new Date().getFullYear();
     const needYear = rep.year() !== thisYear;
     const narrow = this.isNarrow;
@@ -1592,7 +1329,7 @@ export class DayTimelineView extends ItemView {
       const ymd = needYear ? "YYYY年M月D日" : "M月D日";
       this.dateLabelEl.setText(m.format(narrow ? ymd : `${ymd} (ddd)`));
       this.dateLabelEl.setAttr("aria-label", `${m.format("YYYY年M月D日 (ddd)")}（日付を選ぶ）`);
-    } else if (!narrow && this.mode !== "month" && a.month() !== b.month()) {
+    } else if (!narrow && a.month() !== b.month()) {
       // 広い画面では月をまたぐ範囲を「8月〜9月」と示す（狭い画面は真ん中の月だけで十分）
       const af = a.year() !== thisYear ? "YYYY年M月" : "M月";
       const bf = b.year() !== a.year() ? "YYYY年M月" : "M月";
@@ -1605,18 +1342,12 @@ export class DayTimelineView extends ItemView {
       this.dateLabelEl.setText(rep.format(needYear ? "YYYY年M月" : "M月"));
       this.dateLabelEl.setAttr(
         "aria-label",
-        this.mode === "month"
-          ? `${m.format("YYYY年M月")}（日付を選ぶ）`
-          : `${a.format("YYYY年M月D日")} 〜 ${b.format("YYYY年M月D日")}（日付を選ぶ）`
+        `${a.format("YYYY年M月D日")} 〜 ${b.format("YYYY年M月D日")}（日付を選ぶ）`
       );
     }
-    // 今日が映っている間は「今日」を押す意味がないので隠し、そのぶんの幅をタイトルに回す。
-    // 月表示は前後の月のマスにも今日が入りうるので、月そのものが今月かで見る
+    // 今日が映っている間は「今日」を押す意味がないので隠し、そのぶんの幅をタイトルに回す
     const now = new Date();
-    const showsToday =
-      this.mode === "month"
-        ? now.getFullYear() === this.date.getFullYear() && now.getMonth() === this.date.getMonth()
-        : days.some((d) => isToday(d));
+    const showsToday = days.some((d) => isToday(d));
     this.todayBtnEl.toggleClass("is-hidden", showsToday);
     // 狭い画面のアイコン版「今日」には、今日の日付の数字を入れる（TickTick 風）
     this.todayNumEl.setText(String(now.getDate()));
@@ -1634,7 +1365,6 @@ export class DayTimelineView extends ItemView {
     // 本日のサマリーも同じタイミング（計測の開始・終了、30 秒ごと）で描き直す。
     // 「いま / 次」のタスクと計測ボタンの状態が時刻・計測状態で変わるため
     this.renderSummary();
-    this.updatePet();
     if (!this.trackingEl) return;
     const tr = this.plugin.settings.tracking;
     this.trackingEl.toggleClass("is-visible", !!tr);
@@ -1652,27 +1382,6 @@ export class DayTimelineView extends ItemView {
     );
   }
 
-  /** ツールバーのタイマー表示（動作中だけ。開始は ⋮ メニューから） */
-  private renderTimer(): void {
-    if (!this.timerEl) return;
-    const timer = this.plugin.timer;
-    const st = timer.getState();
-    if (st.endAt !== null) {
-      const label = st.label && !this.isNarrow ? ` ${st.label}` : "";
-      this.timerEl.setText(`⏱ ${formatSeconds(timer.remainingSeconds())}${label}`);
-      this.timerEl.toggleClass("is-visible", true);
-      this.timerEl.toggleClass("is-finished", false);
-    } else if (st.finished) {
-      this.timerEl.setText(`⏱ 終了${st.label && !this.isNarrow ? ` ${st.label}` : ""}`);
-      this.timerEl.toggleClass("is-visible", true);
-      this.timerEl.toggleClass("is-finished", true);
-      this.timerEl.onclick = () => timer.dismiss();
-      return;
-    } else {
-      this.timerEl.toggleClass("is-visible", false);
-    }
-    this.timerEl.onclick = () => this.plugin.openTimerModal();
-  }
 
   /** 旧形式の予定が残っているときの変換案内 */
   private renderBanner(): void {
@@ -1729,7 +1438,6 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const inbox = this.plugin.inbox;
     this.inboxEl.empty();
-    this.updatePet(); // パネルと同じデータ（今日のタスク・プロジェクトの集計）で描き直す
     const showInbox = !!inbox && s.showInbox;
     const showProjects = !!this.plugin.projects && s.showProjects;
     const reschedule = this.rescheduleGroups();
@@ -1822,16 +1530,6 @@ export class DayTimelineView extends ItemView {
       );
       openBtn.addClass("dt-inbox-open");
     } else if (active.id === "projects") {
-      const table = s.projectsViewStyle === "table";
-      const styleBtn = this.iconButton(
-        head,
-        table ? "list-tree" : "table",
-        table
-          ? "ツリー表示に切り替え"
-          : "テーブル表示に切り替え（期日・進捗・予定・実績を列で見る）",
-        () => this.toggleProjectsViewStyle()
-      );
-      styleBtn.addClass("dt-inbox-open");
       const kebab = this.menuButton(head, "プロジェクトのメニュー", (menu) =>
         this.buildProjectsMenu(menu, activeProjects)
       );
@@ -1998,12 +1696,6 @@ export class DayTimelineView extends ItemView {
     this.setAllProjectsExpanded(!this.areAllProjectsExpanded());
   }
 
-  /** プロジェクト一覧をグループごとのツリー ⇄ 階層なしのフラットな一覧で切り替える（パネルのボタン・コマンドから） */
-  /** プロジェクト一覧の絞り込み（すべて ⇄ 本日タスクあり）を切り替える（パネルの切替・コマンドから） */
-  toggleProjectsFilter(): void {
-    this.setProjectsFilter(this.plugin.settings.projectsFilter === "today" ? "all" : "today");
-  }
-
   private setProjectsFilter(f: ProjectsFilter): void {
     if (this.plugin.settings.projectsFilter === f) return;
     this.plugin.settings.projectsFilter = f;
@@ -2018,20 +1710,6 @@ export class DayTimelineView extends ItemView {
     return sum.children.some(
       (c) => c.date !== null && isSameDay(c.date, today) && !c.task.forwarded
     );
-  }
-
-  toggleProjectsFlatList(): void {
-    this.plugin.settings.projectsFlatList = !this.plugin.settings.projectsFlatList;
-    void this.plugin.persistSettings();
-    this.renderInbox();
-  }
-
-  /** プロジェクト一覧をツリー表示 ⇄ テーブル表示で切り替える（パネルのボタン・メニュー・コマンドから） */
-  toggleProjectsViewStyle(): void {
-    const s = this.plugin.settings;
-    s.projectsViewStyle = s.projectsViewStyle === "table" ? "tree" : "table";
-    void this.plugin.persistSettings();
-    this.renderInbox();
   }
 
   /** プロジェクトのパネルのヘッダー（⋮）から開くメニュー。active は進行中のプロジェクト */
@@ -2051,27 +1729,6 @@ export class DayTimelineView extends ItemView {
           .setIcon(allExpanded ? "chevrons-down-up" : "chevrons-up-down")
           .onClick(() => this.setAllProjectsExpanded(!allExpanded))
       );
-      const tableStyle = this.plugin.settings.projectsViewStyle === "table";
-      menu.addItem((i) =>
-        i
-          .setTitle(tableStyle ? "ツリーで表示" : "テーブルで表示（期日・進捗・予実を列で）")
-          .setIcon(tableStyle ? "list-tree" : "table")
-          .onClick(() => this.toggleProjectsViewStyle())
-      );
-      // グループ分けしているときだけ: ツリー ⇄ フラットな一覧の切り替え
-      if (active.some((s) => s.ref.group)) {
-        const flat = this.plugin.settings.projectsFlatList;
-        menu.addItem((i) =>
-          i
-            .setTitle(
-              flat
-                ? "グループごとのツリーで表示"
-                : "グループの見出しを出さずフラットに一覧"
-            )
-            .setIcon(flat ? "list-tree" : "list")
-            .onClick(() => this.toggleProjectsFlatList())
-        );
-      }
       const hideDone = this.plugin.settings.projectsHideDone;
       menu.addItem((i) =>
         i
@@ -2134,14 +1791,8 @@ export class DayTimelineView extends ItemView {
       active,
       this.plugin.settings.projectGroups.map((x) => x.name)
     );
-    // どのプロジェクトにもグループが無ければ見出しなしの一覧。
-    // 「フラットな一覧で表示」がオンのときも見出しを出さず、グループ順に並べたまま平らにする
-    const showGroupHeads =
-      groups.some((g) => g.name !== null) && !this.plugin.settings.projectsFlatList;
-    if (this.plugin.settings.projectsViewStyle === "table") {
-      this.renderProjectsTable(list, groups, showGroupHeads);
-      return;
-    }
+    // どのプロジェクトにもグループが無ければ見出しなしの一覧
+    const showGroupHeads = groups.some((g) => g.name !== null);
     if (!showGroupHeads) {
       for (const g of groups) {
         for (const sum of g.items) this.renderProjectRow(list, sum);
@@ -2156,7 +1807,7 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** グループの見出し行（ツリー・テーブル共通）。開閉のクリックを設定し、畳まれているかを返す */
+  /** グループの見出し行。開閉のクリックを設定し、畳まれているかを返す */
   private renderProjectGroupHead(
     parent: HTMLElement,
     g: ProjectGroup,
@@ -2188,113 +1839,8 @@ export class DayTimelineView extends ItemView {
     return collapsed;
   }
 
-  /**
-   * プロジェクトのテーブル表示: 期日・進捗・予定・実績を列に並べ、広いサイドバーで見比べられる。
-   * 行の操作（クリックで展開・タイムラインへドラッグで子タスク作成・右クリックメニュー）はツリーと同じ。
-   * 列が収まらない幅では横にスクロールできる
-   */
-  private renderProjectsTable(
-    list: HTMLElement,
-    groups: ProjectGroup[],
-    showGroupHeads: boolean
-  ): void {
-    list.addClass("is-table");
-    const table = list.createEl("table", { cls: "dt-projects-table" });
-    const headRow = table.createEl("thead").createEl("tr");
-    headRow.createEl("th", { text: "プロジェクト", cls: "dt-ptc-name" });
-    headRow.createEl("th", { text: "タグ", cls: "dt-ptc-tag" });
-    headRow.createEl("th", { text: "期日", cls: "dt-ptc-due" });
-    headRow.createEl("th", { text: "進捗", cls: "dt-ptc-num dt-ptc-progress" });
-    headRow.createEl("th", { text: "予定", cls: "dt-ptc-num" });
-    headRow.createEl("th", { text: "実績", cls: "dt-ptc-num" });
-    const body = table.createEl("tbody");
-    const groupIcons = this.groupIconMap();
-    for (const g of groups) {
-      if (showGroupHeads) {
-        const tr = body.createEl("tr", { cls: "dt-project-group-trow" });
-        const td = tr.createEl("td", { attr: { colspan: String(PROJECT_TABLE_COLS) } });
-        if (this.renderProjectGroupHead(td, g, groupIcons)) continue;
-      }
-      for (const sum of g.items) this.renderProjectTableRow(body, sum);
-    }
-  }
 
-  /** テーブル表示のプロジェクト1件分（行 + 展開時の子タスク行） */
-  private renderProjectTableRow(body: HTMLElement, sum: ProjectSummary): void {
-    const expanded = this.expandedProjects.has(sum.ref.linktext);
-    const tr = body.createEl("tr", { cls: "dt-project-trow" });
-    tr.toggleClass("is-expanded", expanded);
-    const nameTd = tr.createEl("td", { cls: "dt-ptc-name" });
-    const nameWrap = nameTd.createDiv("dt-ptc-name-wrap");
-    const chev = nameWrap.createDiv("dt-project-chevron");
-    setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    if (this.plugin.settings.bossBattle) {
-      const rules = this.battleRules();
-      const m = monsterOf(sum, rules);
-      const icon = nameWrap.createDiv("dt-boss-sprite is-small");
-      icon.innerHTML = monsterSVG(m, sum.children.length ? hpRatio(projectHp(sum, rules)) : 1, 20);
-      icon.setAttr("aria-label", monsterLabel(m));
-    }
-    const nameEl = nameWrap.createSpan({ cls: "dt-project-name", text: sum.ref.name });
-    // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
-    this.attachProjectNamePreview(nameEl, sum.ref.linktext);
-    const fields = sum.fields;
-    if (fields?.ticket) this.renderProjectTicketBadge(nameWrap, fields.ticket);
-    tr.createEl("td", { cls: "dt-ptc-tag" }); // タグの列はタスクの行だけ
-    const dueTd = tr.createEl("td", { cls: "dt-ptc-due" });
-    if (fields?.due) {
-      const dueEl = dueTd.createSpan({ cls: "dt-project-due", text: this.projectDueLabel(fields) });
-      if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
-    }
-    // 進捗の列はタスクの行だけに出す（プロジェクトの件数は行が見づらくなるため出さない。
-    // 件数はツリー表示・プロジェクトノートのタスク一覧で見られる）
-    tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" });
-    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.planMin) });
-    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(sum.actMin) });
-    // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
-    this.attachProjectRowBehavior(tr, chev, sum);
 
-    if (!expanded) return;
-    const detailCell = (): HTMLElement =>
-      body
-        .createEl("tr", { cls: "dt-project-detail-trow" })
-        .createEl("td", { attr: { colspan: String(PROJECT_TABLE_COLS) } });
-    if (fields?.docs.length) this.renderProjectDocs(detailCell(), sum, fields.docs);
-    const shown = this.visibleProjectChildren(sum);
-    if (!sum.children.length) {
-      detailCell().createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
-    } else if (!shown.length) {
-      detailCell().createSpan({
-        cls: "dt-tray-empty",
-        text: `完了済み ${sum.children.length} 件を非表示`,
-      });
-    }
-    for (const child of shown) this.renderProjectChildTableRow(body, child);
-  }
-
-  /** テーブル表示の子タスク1行（日付・予定・実績を親と同じ列に揃える） */
-  private renderProjectChildTableRow(body: HTMLElement, child: ProjectChild): void {
-    const t = child.task;
-    const tr = body.createEl("tr", { cls: "dt-project-child-trow" });
-    // 持ち越し先で完了した [>] も完了として見せる（引き継いだ先で終わった仕事）
-    tr.toggleClass("is-done", isChildSettled(child));
-    const wrap = tr.createEl("td", { cls: "dt-ptc-name" }).createDiv("dt-ptc-child");
-    this.renderChildCheckbox(wrap, child);
-    wrap.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-    this.renderChildTagBadge(tr.createEl("td", { cls: "dt-ptc-tag" }), t);
-    // 期日の列: タスクは「本日（青）」「未定（オレンジ）」の印だけ。日付そのものは行のツールチップで
-    this.renderChildDateDot(tr.createEl("td", { cls: "dt-ptc-due" }), child);
-    // 進捗の列: 消化率をバーと % で見せる。持ち越し先で完了した [>] は完了と同じく 100%
-    this.renderStepProgressBar(
-      tr.createEl("td", { cls: "dt-ptc-num dt-ptc-progress" }),
-      child.settledByCarry ? { ...t, done: true } : t
-    );
-    const plan = t.start !== null && t.end !== null ? t.end - t.start : 0;
-    const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
-    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(plan) });
-    tr.createEl("td", { cls: "dt-ptc-num", text: hmm(act) });
-    this.attachProjectChildBehavior(tr, child);
-  }
 
   /** プロジェクト1件分（行 + 展開時の子タスク一覧）をツリー表示のパネルへ描画する */
   private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
@@ -2304,31 +1850,24 @@ export class DayTimelineView extends ItemView {
     row.dataset.dtProject = sum.ref.linktext;
     const chev = row.createDiv("dt-project-chevron");
     setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    // ボス戦: モンスターを左に置き、右を「名前の行」と「HP バーの行」の2段にする
-    const boss = this.plugin.settings.bossBattle;
-    row.toggleClass("is-boss", boss);
-    const body = boss ? row.createDiv("dt-boss-body") : row;
-    const line1 = boss ? body.createDiv("dt-boss-line") : row;
-    if (boss) this.renderBossSprite(row, body, sum);
-    const nameEl = line1.createSpan({ cls: "dt-project-name", text: sum.ref.name });
+    const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
     if (fields?.due) {
-      const dueEl = line1.createSpan({
+      const dueEl = row.createSpan({
         cls: "dt-project-due",
         text: `期日 ${this.projectDueLabel(fields)}`,
       });
       if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
     }
-    if (fields?.ticket) this.renderProjectTicketBadge(line1, fields.ticket);
-    const stats = line1.createSpan({ cls: "dt-project-stats" });
+    if (fields?.ticket) this.renderProjectTicketBadge(row, fields.ticket);
+    const stats = row.createSpan({ cls: "dt-project-stats" });
     // 予実の合計は行が見づらくなるため出さない（テーブル表示・プロジェクトノートのタスク一覧・予実レポートで見られる）
     stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
     if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
-    if (boss) this.renderBossHp(body, sum);
     // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
     // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
     this.attachProjectRowBehavior(row, chev, sum);
@@ -2360,215 +1899,6 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /** ボス戦のルール（ランクの閾値と、時刻の無いタスクの重さ）。設定から作る */
-  private battleRules(): BattleRules {
-    const s = this.plugin.settings;
-    return {
-      midHours: s.bossRankMidHours,
-      bossHours: s.bossRankBossHours,
-      defaultMinutes: s.defaultDurationMinutes,
-      soloMidHours: s.soloRankMidHours,
-      soloBossHours: s.soloRankBossHours,
-    };
-  }
-
-  /** ボス戦: プロジェクト行の左のモンスター。row の先頭（シェブロンの次）ではなく body の前に置く */
-  private renderBossSprite(row: HTMLElement, before: HTMLElement, sum: ProjectSummary): void {
-    const rules = this.battleRules();
-    const m = monsterOf(sum, rules);
-    const hp = projectHp(sum, rules);
-    const ratio = sum.children.length ? hpRatio(hp) : 1;
-    const size = SPRITE_SIZE[m.rank];
-    const el = createDiv("dt-boss-sprite");
-    el.style.width = `${size}px`;
-    el.style.height = `${size}px`;
-    el.innerHTML = monsterSVG(m, ratio, size);
-    el.setAttr("aria-label", monsterLabel(m));
-    row.insertBefore(el, before);
-  }
-
-  /** ボス戦: プロジェクト行の2段目（HP バーと残り HP。討伐済みなら総工数） */
-  private renderBossHp(body: HTMLElement, sum: ProjectSummary): void {
-    const rules = this.battleRules();
-    const hp = projectHp(sum, rules);
-    const line = body.createDiv("dt-boss-line dt-boss-hp");
-    const bar = line.createDiv("dt-boss-bar");
-    const ratio = sum.children.length ? hpRatio(hp) : 1;
-    const fill = bar.createDiv("dt-boss-fill");
-    fill.style.width = `${ratio * 100}%`;
-    fill.toggleClass("is-mid", ratio <= 0.5 && ratio > 0.2);
-    fill.toggleClass("is-low", ratio <= 0.2 && ratio > 0);
-    const text = line.createSpan("dt-boss-hpt");
-    if (!sum.children.length) {
-      text.setText("HP —");
-    } else if (hp.remain <= 0) {
-      line.addClass("is-dead");
-      text.setText(`討伐！ 総工数 ${hmm(sum.actMin || sum.planMin)}`);
-    } else {
-      text.setText(`HP ${hmm(Math.round(hp.remain))} / ${hmm(Math.round(hp.total))}`);
-    }
-    line.setAttr(
-      "aria-label",
-      `HP はプロジェクトの子タスクの予定時間の合計（時刻の無いタスクは ${rules.defaultMinutes} 分）。ステップのチェックとタスクの完了で減ります`
-    );
-  }
-
-  /**
-   * 保存で起きた出来事をボス戦の演出にする。プロジェクトに結びついていないタスクなら何もしない。
-   * reload のあとに呼ぶ（this.projectData が保存後の集計になっている前提）
-   */
-  private playBattleFor(task: Task, data: TaskDraft, before: BattleSnapshot, sourcePath: string): void {
-    const s = this.plugin.settings;
-    if (!s.bossBattle || !s.showProjects) return;
-    const link = data.project !== undefined ? data.project : task.project;
-    // プロジェクトに属さないタスクは 1 件 1 体（設定でオン）。保存後の状態を写して仮のプロジェクトにする
-    const sum = link ? this.projectSummaryFor(link, sourcePath) : this.soloSummaryOf(this.applyDraft(task, data), sourcePath, null);
-    if (!sum) return;
-    const rules = this.battleRules();
-    const ev = battleEvent(before, task, data, rules);
-    if (!ev.smallHits && !ev.bigDamage) return;
-    const opts = {
-      monster: monsterOf(sum, rules),
-      title: sum.ref.name,
-      hp: projectHp(sum, rules),
-      totalWork: sum.actMin || sum.planMin,
-      event: ev,
-      sound: s.bossBattleSound,
-      host: this.contentEl,
-      brief: sum.solo,
-    };
-    // ペットを出しているときは、ペットが画面の中央へ来て演出を受ける（討伐なら消え、残っていれば元の位置へ戻る）
-    const pet = this.ensurePet();
-    if (pet) {
-      void pet.playBattle(opts);
-      return;
-    }
-    const anchor =
-      this.inboxEl?.querySelector<HTMLElement>(`.dt-project-row[data-dt-project="${CSS.escape(sum.ref.linktext)}"]`) ??
-      null;
-    void playBattle({ ...opts, anchor });
-  }
-
-  /** 保存内容（TaskDraft）を反映したタスクの写し（HP の計算用。ノートを読み直さずに済ませる） */
-  private applyDraft(task: Task, data: TaskDraft): Task {
-    return {
-      ...task,
-      title: data.title,
-      start: data.start,
-      end: data.end,
-      done: data.done,
-      forwarded: task.forwarded || data.forward === true,
-      steps: data.steps ?? task.steps,
-      actual: data.actual ?? task.actual,
-    };
-  }
-
-  /**
-   * プロジェクトに属さないタスクを「1 件 1 体」の仮のプロジェクトにする。
-   * 設定「プロジェクトなしのタスクも 1 件 1 体」がオフなら null。他人の予定は対象にしない
-   */
-  private soloSummaryOf(task: Task, path: string, date: Date | null): ProjectSummary | null {
-    if (!this.plugin.settings.soloBattle || task.project || task.owner) return null;
-    return soloSummary(task, path, date);
-  }
-
-  /** タスクのプロジェクトリンクを、パネルの集計（projectData）の1件に照合する。進行中のものだけ */
-  private projectSummaryFor(link: string | null | undefined, sourcePath: string): ProjectSummary | null {
-    if (!link) return null;
-    const dest = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
-    const key = dest?.path ?? link + ".md";
-    return this.projectData.find((x) => !x.done && x.ref.linktext + ".md" === key) ?? null;
-  }
-
-  // ---------- ペット（対応中のプロジェクトのモンスター） ----------
-
-  /** いまペットが表しているもの（演出の照合に使う） */
-  private petInfo: PetInfo | null = null;
-
-  /**
-   * ペットの対象: 計測中のタスク → 今日の「いま / 次 / 未了 / 未定」のうちプロジェクトに結びついたもの。
-   * 見つからなければ null（ペットは出さない）
-   */
-  private petTarget(): { date: Date; task: Task; label: string } | null {
-    // 単独タスク（1 件 1 体）がオンなら、プロジェクトの無いタスクも対象にする
-    const solo = this.plugin.settings.soloBattle;
-    const tr = this.plugin.settings.tracking;
-    if (tr) {
-      const date = parseDateKey(tr.date);
-      const t = date ? this.tasksOn(date)?.find((x) => x.blockId === tr.blockId && (x.owner ?? null) === tr.owner) : null;
-      if (date && t && (t.project || (solo && !t.owner))) return { date, task: t, label: "計測中" };
-    }
-    const today = startOfDay(new Date());
-    const all = this.tasksOn(today) ?? [];
-    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded && (solo || !!t.project));
-    const pick = this.pickFocusTask(undone);
-    return pick ? { date: today, task: pick.task, label: pick.label } : null;
-  }
-
-  /** ペットのウィジェット。設定でペットが有効なら作って返し、無効なら片付けて null */
-  private ensurePet(): PetWidget | null {
-    const s = this.plugin.settings;
-    if (!s.petEnabled || !s.bossBattle || !s.showProjects || !this.plugin.projects) {
-      this.pet?.destroy();
-      this.pet = null;
-      this.petInfo = null;
-      return null;
-    }
-    if (!this.pet) {
-      this.pet = new PetWidget({
-        getPosition: () => this.plugin.settings.petPos,
-        setPosition: (p) => {
-          this.plugin.settings.petPos = p;
-          void this.plugin.persistSettings();
-        },
-        onClick: () => {
-          const t = this.petTarget();
-          if (t) this.openEditModal(t.date, t.task);
-        },
-        onOpenProject: () => {
-          if (this.petInfo && !this.petInfo.solo) void this.plugin.openProject(this.petInfo.projectLink);
-        },
-        onHide: () => {
-          this.plugin.settings.petEnabled = false;
-          void this.plugin.persistSettings();
-          this.updatePet();
-        },
-      });
-    }
-    return this.pet;
-  }
-
-  /** ペットを描き直す（再読み込み・30 秒ごと・計測の開始と終了で呼ぶ） */
-  private updatePet(): void {
-    const pet = this.ensurePet();
-    if (!pet) return;
-    const target = this.petTarget();
-    let sum: ProjectSummary | null = null;
-    if (target) {
-      const path = this.storeOf(target.task).pathFor(target.date);
-      sum = target.task.project
-        ? this.projectSummaryFor(target.task.project, path)
-        : this.soloSummaryOf(target.task, path, target.date);
-    }
-    if (!target || !sum) {
-      this.petInfo = null;
-      pet.update(null);
-      return;
-    }
-    const rules = this.battleRules();
-    const info: PetInfo = {
-      monster: monsterOf(sum, rules),
-      hp: projectHp(sum, rules),
-      projectLink: sum.ref.linktext,
-      projectName: sum.ref.name,
-      taskTitle: this.displayTitle(target.task),
-      label: target.label,
-      solo: sum.solo === true,
-    };
-    this.petInfo = info;
-    pet.update(info);
-  }
-
   /**
    * 子タスクのタグのバッジ（設定「タグの色」に登録されたタグだけ。サブタグがあればそちら）。
    * タイムラインの色と同じ色の枠と左の帯で、どの種類の作業かがパネルでも分かる
@@ -2584,26 +1914,6 @@ export class DayTimelineView extends ItemView {
     badge.style.setProperty("--dt-chip-color", color);
   }
 
-  /**
-   * テーブル表示の「進捗」セル: タスクの消化率をバーと % で出す。
-   * ステップが記録されていないタスクはステップ1件として数えるので、
-   * タスクを完了にすれば 100% になる
-   */
-  private renderStepProgressBar(td: HTMLElement, t: Task): void {
-    const sp = taskProgress(t);
-    const pct = Math.round(sp.ratio * 100);
-    const wrap = td.createDiv("dt-progress");
-    wrap.toggleClass("is-complete", sp.done >= sp.total);
-    const bar = wrap.createDiv("dt-progress-bar");
-    bar.createDiv("dt-progress-fill").style.width = `${pct}%`;
-    wrap.createSpan({ cls: "dt-progress-text", text: `${pct}%` });
-    td.setAttr(
-      "aria-label",
-      stepProgress(t)
-        ? `ステップ ${sp.done}/${sp.total} 完了（${pct}%）`
-        : `${t.done ? "完了" : "未完了"}（${pct}%）`
-    );
-  }
 
   /** プロジェクトの期日の表示文字列（日付として読めれば M/D、年が違えば YYYY/M/D、読めなければ書かれたまま） */
   private projectDueLabel(fields: ProjectFields): string {
@@ -2756,30 +2066,6 @@ export class DayTimelineView extends ItemView {
     else if (today) dateEl.addClass("is-today");
   }
 
-  /**
-   * テーブル表示の子タスクの期日セル: 今日のタスクは青の●、日付未定・時刻未定（＝遅れ）はオレンジの●。
-   * それ以外の日付は出さない（一覧で見たいのは「今日やるか、まだ決めていないか」だけなので）
-   */
-  private renderChildDateDot(td: HTMLElement, child: ProjectChild): void {
-    const t = child.task;
-    const scheduled = t.start !== null && t.end !== null;
-    const today = !!child.date && isToday(child.date);
-    let cls = "";
-    let label = "";
-    if (child.date === null) {
-      cls = "is-undated";
-      label = "日付未定";
-    } else if (!scheduled && !t.forwarded) {
-      // 持ち越し済み [>] は閉じた記録なので「遅れ」の印は出さない
-      cls = "is-unscheduled";
-      label = `時刻未定（${child.date.getMonth() + 1}/${child.date.getDate()}）`;
-    } else if (today) {
-      cls = "is-today";
-      label = "本日";
-    }
-    if (!cls) return;
-    td.createSpan({ cls: "dt-project-child-dot " + cls, attr: { title: label, "aria-label": label } });
-  }
 
   /** 子タスク行のふるまい（ツールチップ・ドラッグ・クリック・右クリックメニュー）。ツリー・テーブル共通 */
   private attachProjectChildBehavior(item: HTMLElement, child: ProjectChild): void {
@@ -2954,24 +2240,6 @@ export class DayTimelineView extends ItemView {
       );
     }
     menu.addSeparator();
-    if (this.plugin.settings.bossBattle) {
-      menu.addItem((i) =>
-        i
-          .setTitle("難易度を変更…")
-          .setIcon("swords")
-          .onClick(() =>
-            new ProjectDifficultyModal(this.app, {
-              projectName: sum.ref.name,
-              initial: { difficulty: sum.fields?.difficulty ?? null, monster: sum.fields?.monster || null },
-              onSubmit: async (c) => {
-                const ok = await this.plugin.projects?.setDifficulty(sum.ref.linktext, c.difficulty, c.monster);
-                if (!ok) new Notice("難易度を保存できませんでした");
-                await this.reload();
-              },
-            }).open()
-          )
-      );
-    }
     menu.addItem((i) =>
       i.setTitle("プロジェクトを完了にする").setIcon("check-circle-2").onClick(() => this.completeProject(sum))
     );
@@ -3113,7 +2381,7 @@ export class DayTimelineView extends ItemView {
    * 月表示では時刻なしのタスクもマスの中に出すので欄は使わない */
   private rescheduleGroups(): { date: Date; tasks: Task[] }[] {
     const s = this.plugin.settings;
-    if (!this.isTimeline() || !s.showUnscheduledTray || !this.plugin.store.supportsUnscheduled) return [];
+    if (!s.showUnscheduledTray) return [];
     const visible = this.columns
       .map((c) => ({ date: c.date, tasks: this.dataFor(c.date).tasks.filter((t) => !isScheduled(t)) }))
       .filter((g) => g.tasks.length > 0);
@@ -3125,7 +2393,7 @@ export class DayTimelineView extends ItemView {
   private needsPastDays(): boolean {
     const s = this.plugin.settings;
     if (!this.plugin.blockStore()) return false;
-    return (this.isTimeline() && s.showUnscheduledTray) || s.showTodaySummary;
+    return s.showUnscheduledTray || s.showTodaySummary;
   }
 
   /**
@@ -3159,7 +2427,7 @@ export class DayTimelineView extends ItemView {
     past: Map<string, { date: Date; tasks: Task[] }>
   ): { date: Date; tasks: Task[] }[] {
     const s = this.plugin.settings;
-    if (!this.isTimeline() || !s.showUnscheduledTray) return [];
+    if (!s.showUnscheduledTray) return [];
     const out: { date: Date; tasks: Task[] }[] = [];
     for (const { date, tasks: all } of past.values()) {
       const tasks = all.filter((t) => !isScheduled(t) && !t.done && !t.forwarded);
@@ -3179,24 +2447,6 @@ export class DayTimelineView extends ItemView {
     return this.pastDays.get(key)?.tasks ?? null;
   }
 
-  /**
-   * 連続達成: 達成率が閾値以上の日が何日続いているか。
-   * 今日は達成していれば数え、まだ届いていなくても途切れとは見なさない（まだ途中なので）。
-   * タスクの無い日（休日など）は数えず飛ばす。読んでいる範囲（過去 30 日）で打ち切る
-   */
-  private summaryStreak(threshold: number): number {
-    if (threshold <= 0) return 0;
-    const today = startOfDay(new Date());
-    let n = 0;
-    for (let i = 0; i <= RESCHEDULE_LOOKBACK_DAYS; i++) {
-      const tasks = this.tasksOn(addDays(today, -i));
-      const ratio = tasks ? dayStats(tasks).ratio : null;
-      if (ratio === null) continue;
-      if (ratio >= threshold) n++;
-      else if (i > 0) break;
-    }
-    return n;
-  }
 
   /**
    * サイドバーの下の「本日のサマリー」。renderInbox で器（summaryEl）を作り、
@@ -3321,40 +2571,6 @@ export class DayTimelineView extends ItemView {
       }
     }
     this.renderSummaryNext(body, today, all);
-    this.renderSummaryWeek(body, today);
-    // 記録の埋まり具合: 完了タスクで、タグの必須欄（結果など）が空のもの、または 15 分以上でふりかえりが空のもの
-    //（完了時のポップアップと同じ条件）。達成率とは切り離し、色を付けずに出す
-    const schema = this.plugin.settings.tagFieldSchema;
-    const unfilled = all.filter((t) => {
-      if (t.owner || !t.done || t.forwarded) return false;
-      const def = schemaForTags(schema, t.tags);
-      const required = def ? def.required.map(normalizeFieldLabel) : ["結果"];
-      if (def && !def.required.length) return false; // #私用 など、記録の要らないタグ
-      const values: Record<string, string> = {
-        結果: t.result,
-        原因: t.cause,
-        判断: t.judgment,
-        残: t.remaining,
-        回答: t.answer,
-        完了条件: t.doneCondition,
-        Owner: t.ownerName,
-        次アクション: t.nextAction,
-        期限: t.due,
-      };
-      if (required.some((l) => l in values && !values[l].trim())) return true;
-      return isScheduled(t) && t.end - t.start >= 15 && !t.retrospective.trim();
-    });
-    if (unfilled.length) {
-      const note = body.createDiv({
-        cls: "dt-summary-note",
-        text: `結果・ふりかえりの未記入 ${unfilled.length} 件`,
-      });
-      note.setAttr(
-        "aria-label",
-        [...unfilled.map((t) => "・" + this.displayTitle(t)), "クリックで先頭のタスクを編集"].join("\n")
-      );
-      note.addEventListener("click", () => this.openEditModal(today, unfilled[0]));
-    }
   }
 
   /**
@@ -3396,13 +2612,8 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * 「いま / 次にやる1件」の行。現在時刻にかかっている未完了タスク → これから始まるタスク →
-   * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
-   * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
-   */
-  /**
    * 今日の未完了タスクから「いま取り組む1件」を選ぶ: 現在時刻にかかっているもの → これから始まるもの →
-   * 時刻を過ぎて残っているもの → 時刻未定、の順（サマリーの「いま / 次」とペットで共用）
+   * 時刻を過ぎて残っているもの → 時刻未定、の順
    */
   private pickFocusTask(undone: Task[]): { task: Task; label: string; kind: string } | null {
     if (!undone.length) return null;
@@ -3416,6 +2627,11 @@ export class DayTimelineView extends ItemView {
     return { task: undone[0], label: "未定", kind: "unscheduled" };
   }
 
+  /**
+   * 「いま / 次にやる1件」の行。現在時刻にかかっている未完了タスク → これから始まるタスク →
+   * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
+   * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
+   */
   private renderSummaryNext(parent: HTMLElement, today: Date, all: Task[]): void {
     const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded);
     const pick = this.pickFocusTask(undone);
@@ -3496,57 +2712,6 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-  /** 連続達成の日数と、今週 7 日ぶんの達成率の小さな棒グラフ */
-  private renderSummaryWeek(parent: HTMLElement, today: Date): void {
-    const s = this.plugin.settings;
-    const threshold = s.summaryStreakPercent / 100;
-    const foot = parent.createDiv("dt-summary-foot");
-    if (s.summaryStreakPercent > 0) {
-      const streak = this.summaryStreak(threshold);
-      const el = foot.createSpan("dt-summary-streak");
-      el.toggleClass("is-active", streak > 0);
-      setIcon(el.createSpan("dt-summary-streak-icon"), "flame");
-      el.createSpan({ text: streak > 0 ? `${streak}日連続` : "連続 0日" });
-      el.setAttr(
-        "aria-label",
-        `達成率 ${s.summaryStreakPercent}% 以上の日が` +
-          (streak > 0 ? ` ${streak} 日続いています` : "まだ続いていません") +
-          "\n（タスクの無い日は数えません。今日はまだ途中なので、届いていなくても途切れません。設定で閾値を変えられます）"
-      );
-    }
-    const week = foot.createDiv("dt-summary-week");
-    week.setAttr("aria-label", "今週の達成率");
-    const first = startOfWeek(today, s.weekStart);
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(first, i);
-      const bar = week.createDiv("dt-summary-week-day");
-      const fill = bar.createDiv();
-      const future = date > today;
-      const st = future ? null : (() => {
-        const tasks = this.tasksOn(date);
-        return tasks ? dayStats(tasks) : null;
-      })();
-      const ratio = st?.ratio ?? null;
-      bar.toggleClass("is-today", isSameDay(date, today));
-      bar.toggleClass("is-future", future);
-      bar.toggleClass("is-empty", !future && ratio === null);
-      if (ratio !== null) {
-        fill.style.height = `${Math.round(clamp(ratio, 0, 1) * 100)}%`;
-        bar.toggleClass("is-hit", threshold > 0 && ratio >= threshold);
-      }
-      const label = `${date.getMonth() + 1}/${date.getDate()} (${WEEKDAY_JA[date.getDay()]})`;
-      bar.setAttr(
-        "aria-label",
-        future
-          ? label
-          : ratio === null || !st
-            ? `${label}: タスクなし`
-            : `${label}: ${Math.round(ratio * 100)}%（${st.done}/${st.total} 件）`
-      );
-      // 過去の日をクリックでその日へ
-      if (!future) bar.addEventListener("click", () => this.showDate(date));
-    }
-  }
 
   /** 再スケジュールのタブの中身: 時刻を決めていないタスクを日付順に縦に一覧。
    * 旧・タイムライン上部の「未スケジュール」トレイの置き換え。＋ボタンはパネルのヘッダー側に出る */
@@ -3596,15 +2761,10 @@ export class DayTimelineView extends ItemView {
   }
 
   private renderEvents(): void {
-    if (this.mode === "month") {
-      this.renderMonth();
-      this.renderDayTotals(); // 範囲合計の表示を消す
-      return;
-    }
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
-    const pa = this.paMode();
+    // 予定は左のレーン、実績は右のレーン
     this.taskEls.clear();
 
     let anyBar = false;
@@ -3612,26 +2772,22 @@ export class DayTimelineView extends ItemView {
       col.eventsEl.empty();
       const tasks = this.dataFor(col.date).tasks;
 
-      if (pa !== "actual") {
-        const visible = tasks.filter(isScheduled).filter((t) => t.end > dayStart && t.start < dayEnd);
-        const layout = layoutEvents(visible);
-        const lane = pa === "both" ? { left: 0, width: 0.5 } : { left: 0, width: 1 };
-        for (const task of visible) {
-          this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, lane, pa === "both");
-          anyBar = true;
-        }
+      const visible = tasks.filter(isScheduled).filter((t) => t.end > dayStart && t.start < dayEnd);
+      const layout = layoutEvents(visible);
+      for (const task of visible) {
+        this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, { left: 0, width: 0.5 }, true);
+        anyBar = true;
       }
-      if (pa !== "plan") {
+      {
         // 実績は区間ごとに1本のバーにする（idx = タスク内の何番目の区間か。ドラッグ修正に使う）
         const items = tasks.flatMap((t) =>
           t.actual
             .map((r, idx) => ({ start: r.start, end: r.end, task: t, idx }))
             .filter((it) => it.end > dayStart && it.start < dayEnd)
         );
-        const layout = layoutEvents(items);
-        const lane = pa === "both" ? { left: 0.5, width: 0.5 } : { left: 0, width: 1 };
+        const actualLayout = layoutEvents(items);
         for (const item of items) {
-          this.renderActualBar(col, item, layout.get(item) ?? { col: 0, cols: 1 }, lane);
+          this.renderActualBar(col, item, actualLayout.get(item) ?? { col: 0, cols: 1 }, { left: 0.5, width: 0.5 });
           anyBar = true;
         }
       }
@@ -3641,11 +2797,9 @@ export class DayTimelineView extends ItemView {
       this.columns[0].eventsEl.createDiv({
         cls: "dt-empty-hint",
         text:
-          pa === "actual"
-            ? "実績はまだありません。タスクの編集ダイアログの「実績」欄で記録できます"
-            : this.mode === "day"
-              ? "空いている時間をクリック、またはドラッグしてタスクを追加"
-              : "空いている時間をクリック / ドラッグしてタスクを追加",
+          this.mode === "day"
+            ? "空いている時間をクリック、またはドラッグしてタスクを追加"
+            : "空いている時間をクリック / ドラッグしてタスクを追加",
       });
     }
     this.updateNowLine();
@@ -3849,7 +3003,6 @@ export class DayTimelineView extends ItemView {
       this.openEditModal(col.date, task);
     });
     const beginMove = (e: PointerEvent, viaLongPress: boolean) => {
-      const toNote = e.ctrlKey || e.metaKey;
       const dur = item.end - item.start;
       let newStart = item.start;
       this.startDrag(el, e, {
@@ -3870,8 +3023,7 @@ export class DayTimelineView extends ItemView {
             if (viaLongPress) {
               this.swallowNextClick();
               this.showTaskMenu(col.date, task, ev);
-            } else if (toNote) void this.showMemoPopover(col.date, task, ev);
-            else this.openEditModal(col.date, task);
+            } else this.openEditModal(col.date, task);
             return;
           }
           if (newStart === item.start) {
@@ -3966,13 +3118,12 @@ export class DayTimelineView extends ItemView {
 
   /** 各日の予定・実績の合計を日付ヘッダーに、表示範囲の合計をヘッダー（3日・週）に出す */
   private renderDayTotals(): void {
-    const show = this.mode !== "month" && !!this.plugin.blockStore();
     let rangePlan = 0;
     let rangeAct = 0;
     for (const row of this.rows) {
       let rowPlan = 0;
       let rowAct = 0;
-      if (show) {
+      {
         for (const col of row.columns) {
           let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
           const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
@@ -4003,16 +3154,13 @@ export class DayTimelineView extends ItemView {
       }
       rangePlan += rowPlan;
       rangeAct += rowAct;
-      // 2週間表示: 段の見出しの右端にその週の合計
-      const totalEl = row.weekLabelEl?.querySelector<HTMLElement>(".dt-week-label-total");
-      if (totalEl) totalEl.setText(show && (rowPlan || rowAct) ? this.formatRangeTotal(rowPlan, rowAct) : "");
     }
-    // 週・2週・3日表示のヘッダーに範囲合計
+    // 週・3日表示のヘッダーに範囲合計
     if (this.rangeTotalEl) {
       let text = "";
-      const multi = this.mode === "week" || this.mode === "3day" || this.mode === "2week";
-      if (show && multi && (rangePlan || rangeAct)) {
-        const label = this.mode === "week" ? "週" : this.mode === "2week" ? "2週" : "計";
+      const multi = this.mode === "week" || this.mode === "3day";
+      if (multi && (rangePlan || rangeAct)) {
+        const label = this.mode === "week" ? "週" : "計";
         text = `${label}: ${this.formatRangeTotal(rangePlan, rangeAct)}`;
       }
       this.rangeTotalEl.setText(text);
@@ -4027,92 +3175,6 @@ export class DayTimelineView extends ItemView {
       `予 ${hmm(plan)}・実 ${hmm(act)}` +
       (plan && act ? `（${diff >= 0 ? "+" : "-"}${hmm(Math.abs(diff))}）` : "")
     );
-  }
-
-  /** 月表示: 各マスにその日のタスクを並べる */
-  private renderMonth(): void {
-    const s = this.plugin.settings;
-    this.taskEls.clear();
-    const today = startOfDay(new Date());
-    const rules = s.recurring.filter((r) => r.enabled && r.title.trim() && r.weekdays.length);
-
-    for (const [key, cell] of this.monthCells) {
-      cell.listEl.empty();
-      const tasks = [...this.dataFor(cell.date).tasks].sort((a, b) => {
-        if (a.start === null && b.start === null) return 0;
-        if (a.start === null) return 1;
-        if (b.start === null) return -1;
-        return a.start - b.start;
-      });
-      for (const task of tasks) {
-        const item = cell.listEl.createDiv("dt-month-item");
-        item.toggleClass("is-done", task.done);
-        item.toggleClass("is-forwarded", task.forwarded);
-        item.toggleClass("is-unscheduled", !isScheduled(task));
-        if (task.owner) {
-          item.addClass("is-member");
-          const mc = this.plugin.memberOf(task.owner)?.color;
-          if (mc) item.style.setProperty("--dt-member-color", mc);
-        } else {
-          const color = this.taskColor(task);
-          if (color) {
-            item.addClass("has-tag-color");
-            item.style.setProperty("--dt-event-bg", color);
-            const fg = contrastTextColor(color);
-            if (fg) item.style.setProperty("--dt-event-fg", fg);
-          }
-        }
-        {
-          const owner = this.ownerName(task);
-          if (owner) item.createSpan({ cls: "dt-owner-label", text: owner });
-        }
-        if (isScheduled(task)) {
-          item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(task.start) });
-        }
-        item.createSpan({ cls: "dt-month-item-title", text: this.displayTitle(task) });
-        if (task.ticket) item.createSpan({ cls: "dt-month-item-ticket", text: `#${task.ticket.id}` });
-        item.setAttr(
-          "aria-label",
-          (isScheduled(task) ? `${minutesToHHMM(task.start)} - ${minutesToHHMM(task.end)}  ` : "") +
-            (task.title || "(無題)") +
-            (task.preview ? `\n${task.preview}` : "")
-        );
-        this.registerTaskEl(`${key}|${task.key}`, item);
-        item.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (e.ctrlKey || e.metaKey) void this.showMemoPopover(cell.date, task, e);
-          else this.openEditModal(cell.date, task);
-        });
-        item.addEventListener("contextmenu", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          this.showTaskMenu(cell.date, task, e);
-        });
-        this.attachHoverPreview(item, cell.date, task);
-      }
-      // まだノートに入れていない将来の定期タスクは薄く表示。取り消した回は打ち消し線で出す
-      if (cell.date >= today && s.autoApplyRecurring) {
-        const applied = new Set(s.recurringApplied[key] ?? []);
-        for (const r of rules) {
-          if (!r.weekdays.includes(cell.date.getDay())) continue;
-          const inst = instanceOf(s, key, r.id);
-          if (inst?.skipped) {
-            const item = cell.listEl.createDiv("dt-month-item is-recurring-preview is-recurring-skipped");
-            if (r.start !== null) item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(r.start) });
-            item.createSpan({ cls: "dt-month-item-title", text: r.title });
-            item.setAttr("aria-label", "定期タスク（この日は取り消し済み。管理画面から入れ直せます）");
-            continue;
-          }
-          if (applied.has(r.id)) continue;
-          const ov = inst?.override;
-          const start = ov && ov.start !== undefined ? ov.start : r.start;
-          const item = cell.listEl.createDiv("dt-month-item is-recurring-preview");
-          if (start !== null) item.createSpan({ cls: "dt-month-item-time", text: minutesToHHMM(start) });
-          item.createSpan({ cls: "dt-month-item-title", text: r.title });
-          item.setAttr("aria-label", "定期タスク（この日を開くとノートに入ります）");
-        }
-      }
-    }
   }
 
   /** タグに対応する色をブロックに当てる */
@@ -4157,11 +3219,10 @@ export class DayTimelineView extends ItemView {
       col.nowEl.style.top = this.minutesToPx(m) + "px";
     }
 
-    // 全列をまたぐ線と目盛りのラベルは段ごと。今日がある段（2週間表示なら今週の段）にだけ出す
+    // 全列をまたぐ線と目盛りのラベルは段ごと。今日がある段にだけ出す
     const top = this.minutesToPx(m);
     for (const row of this.rows) {
-      const showAll =
-        inRange && this.mode !== "month" && row.daysEl.isConnected && row.columns.some((c) => isToday(c.date));
+      const showAll = inRange && row.daysEl.isConnected && row.columns.some((c) => isToday(c.date));
       if (!showAll) {
         row.nowLineEl?.remove();
         row.nowLineEl = null;
@@ -4191,18 +3252,7 @@ export class DayTimelineView extends ItemView {
 
   private scrollToInitial(): void {
     if (!this.scrollEl || this.scrollEl.clientHeight === 0) return; // まだ表示されていない
-    if (this.mode === "month") {
-      this.scrollEl.scrollTop = 0;
-      this.shouldScroll = false;
-      return;
-    }
     const s = this.plugin.settings;
-    if (this.mode === "2week" && s.twoWeekFit) {
-      // 2段が1画面に収まる縮尺のときは、上段の先頭から（両方の週が見える位置）
-      this.scrollEl.scrollTop = 0;
-      this.shouldScroll = false;
-      return;
-    }
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
     const hasToday = this.columns.some((c) => isToday(c.date));
@@ -4212,7 +3262,6 @@ export class DayTimelineView extends ItemView {
       target = Math.min(...scheduled.map((t) => t.start)) - 30;
     }
     target = clamp(target, dayStart, dayEnd);
-    // 2週間表示で今日が下段にあるときは、その段の中の時刻へ
     const row = this.rows.find((r) => r.columns.some((c) => isToday(c.date))) ?? this.rows[0];
     this.scrollEl.scrollTop = Math.max(0, this.rowOffset(row) + this.minutesToPx(target));
     this.shouldScroll = false;
@@ -4321,7 +3370,7 @@ export class DayTimelineView extends ItemView {
     if (!sc || sc.clientHeight === 0) return; // まだ表示されていない
     const rect = el.getBoundingClientRect();
     const scRect = sc.getBoundingClientRect();
-    const headerH = this.mode === "month" ? 0 : (this.rows[0]?.headersEl.offsetHeight ?? 0);
+    const headerH = this.rows[0]?.headersEl.offsetHeight ?? 0;
     const margin = 16;
     const top = rect.top - scRect.top + sc.scrollTop; // スクロール領域の中での位置
     const bottom = top + rect.height;
@@ -4369,148 +3418,6 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-  // ---------- 作業メモのポップアップ（Ctrl/Cmd + クリック / 右クリック「作業メモを見る」） ----------
-
-  /** 表示中の作業メモのポップアップ（1つだけ） */
-  private memoPopoverEl: HTMLElement | null = null;
-  private memoPopoverCleanup: (() => void) | null = null;
-
-  /**
-   * タスクの作業メモ（ステップ・備考）を、ノートも編集ダイアログも開かずにその場のポップアップで見る。
-   * ステップはその場でチェックでき、「編集」で作業メモのタブを開いたダイアログへ、「ノートで開く」でブロックへ飛べる。
-   * 記録（結果など）は出さない: 作業中に見返したいのは手順と手元のメモだけなので
-   */
-  private async showMemoPopover(date: Date, task: Task, e: MouseEvent): Promise<void> {
-    this.closeMemoPopover();
-    const pop = document.body.createDiv({ cls: "dt-memo-popover", attr: { role: "dialog", "aria-label": "作業メモ" } });
-    this.memoPopoverEl = pop;
-    pop.style.left = `${e.clientX + 8}px`;
-    pop.style.top = `${e.clientY + 8}px`;
-
-    const head = pop.createDiv("dt-memo-pop-head");
-    const titleWrap = head.createDiv("dt-memo-pop-title");
-    titleWrap.createSpan({ cls: "dt-memo-pop-label", text: "作業メモ" });
-    titleWrap.createSpan({ cls: "dt-memo-pop-name", text: this.displayTitle(task), attr: { title: task.title } });
-    const actions = head.createDiv("dt-memo-pop-actions");
-    const button = (icon: string, label: string, onClick: () => void) => {
-      const b = actions.createEl("button", { cls: "dt-memo-pop-btn", attr: { type: "button", "aria-label": label, title: label } });
-      setIcon(b, iconName(icon));
-      b.onclick = (ev: MouseEvent) => {
-        ev.stopPropagation();
-        onClick();
-      };
-    };
-    button("pencil", "作業メモを編集", () => {
-      this.closeMemoPopover();
-      this.openEditModal(date, task, "memo");
-    });
-    // プロジェクトが結びついていれば、そのノートを直接開くアイコン（作業中は案件ノートを見ながら進めることが多い）
-    const projectLink = task.project;
-    if (projectLink) {
-      button("folder-open", `プロジェクトノートを開く: ${projectDisplayName(projectLink)}`, () => {
-        this.closeMemoPopover();
-        void this.plugin.openProject(projectLink);
-      });
-    }
-    button("file-text", "ノートで開く", () => {
-      this.closeMemoPopover();
-      void this.openTaskInNote(date, task);
-    });
-    button("x", "閉じる", () => this.closeMemoPopover());
-
-    const body = pop.createDiv("dt-memo-pop-body");
-    await this.renderMemoPopoverBody(body, date, task);
-    if (this.memoPopoverEl !== pop) return; // 描画中に閉じられた
-
-    // 画面からはみ出す分は寄せる（右・下にあふれたら左・上へ）
-    const rect = pop.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = e.clientX + 8;
-    let top = e.clientY + 8;
-    if (left + rect.width > vw - 8) left = Math.max(8, e.clientX - rect.width - 8);
-    if (top + rect.height > vh - 8) top = Math.max(8, vh - rect.height - 8);
-    pop.style.left = `${left}px`;
-    pop.style.top = `${top}px`;
-
-    // 外側のクリック・Esc で閉じる（このクリック自体で閉じないよう、登録は次のティックで）
-    const onDown = (ev: PointerEvent) => {
-      if (!pop.contains(ev.target as Node)) this.closeMemoPopover();
-    };
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") this.closeMemoPopover();
-    };
-    window.setTimeout(() => {
-      if (this.memoPopoverEl !== pop) return;
-      document.addEventListener("pointerdown", onDown, true);
-      document.addEventListener("keydown", onKey, true);
-      this.memoPopoverCleanup = () => {
-        document.removeEventListener("pointerdown", onDown, true);
-        document.removeEventListener("keydown", onKey, true);
-      };
-    }, 0);
-  }
-
-  private closeMemoPopover(): void {
-    this.memoPopoverCleanup?.();
-    this.memoPopoverCleanup = null;
-    this.memoPopoverEl?.remove();
-    this.memoPopoverEl = null;
-  }
-
-  /** ポップアップの中身（ステップのチェックリスト + 備考の Markdown）。ステップの切替後にも呼んで描き直す */
-  private async renderMemoPopoverBody(body: HTMLElement, date: Date, task: Task): Promise<void> {
-    body.empty();
-    const sourcePath = this.storeOf(task).pathFor(date);
-    const steps = task.steps.filter((st) => st.text.trim());
-    if (steps.length) {
-      const sec = body.createDiv("dt-memo-pop-steps");
-      const done = steps.filter((st) => st.done).length;
-      sec.createDiv({ cls: "dt-memo-pop-sec", text: `ステップ ${done} / ${steps.length}` });
-      const bar = sec.createDiv("dt-memo-pop-bar");
-      bar.createDiv().style.width = `${(done / steps.length) * 100}%`;
-      for (const [idx, st] of steps.entries()) {
-        const row = sec.createDiv("dt-memo-pop-step");
-        row.toggleClass("is-done", st.done);
-        const cb = row.createEl("input", { type: "checkbox", attr: { "aria-label": st.text } });
-        cb.checked = st.done;
-        cb.addEventListener("change", () => void this.toggleMemoStep(body, date, task, idx, cb.checked));
-        row.createSpan({ cls: "dt-memo-pop-step-text", text: st.text });
-        const children = st.children.map((l) => l.replace(/^\s+/, "")).filter((l) => l.trim());
-        if (children.length) {
-          const sub = row.createDiv("dt-memo-pop-step-sub markdown-rendered");
-          await MarkdownRenderer.render(this.app, children.join("\n"), sub, sourcePath, this);
-        }
-      }
-    }
-    if (task.details.trim()) {
-      const sec = body.createDiv("dt-memo-pop-details");
-      sec.createDiv({ cls: "dt-memo-pop-sec", text: "備考" });
-      const md = sec.createDiv("dt-memo-pop-md markdown-rendered");
-      await MarkdownRenderer.render(this.app, task.details, md, sourcePath, this);
-    }
-    if (!steps.length && !task.details.trim()) {
-      body.createDiv({
-        cls: "dt-memo-pop-empty",
-        text: "作業メモはまだありません。「作業メモを編集」でステップや備考を書けます",
-      });
-    }
-  }
-
-  /** ポップアップのチェックでステップの完了を切り替えて保存し、最新のタスクで描き直す */
-  private async toggleMemoStep(body: HTMLElement, date: Date, task: Task, index: number, done: boolean): Promise<void> {
-    const steps = task.steps.map((st) => ({ ...st, children: [...st.children] }));
-    const visible = steps.filter((st) => st.text.trim());
-    if (!visible[index]) return;
-    visible[index].done = done;
-    await this.commitUpdate(date, task, { ...this.draftOf(task), steps });
-    if (!this.memoPopoverEl) return;
-    const fresh = (this.data.get(dateKey(date))?.tasks ?? []).find(
-      (t) => (task.blockId ? t.blockId === task.blockId : t.key === task.key)
-    );
-    if (fresh) await this.renderMemoPopoverBody(body, date, fresh);
-  }
-
   /** Ctrl/Cmd + ホバーでノートの該当ブロックをプレビュー */
   private attachHoverPreview(el: HTMLElement, date: Date, task: Task): void {
     if (!task.blockId) return;
@@ -4556,36 +3463,11 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * 1時間あたりの高さ。ズーム指定（4h/8h/12h）があればビューの高さから逆算する。
-   * 2週間表示の「2段を1画面に」は、表示時間帯の全体 × 2段がビューに収まる高さ
-   */
-  private computeHourHeight(): number {
-    const s = this.plugin.settings;
-    // 直前のレイアウトのヘッダーが今のモードと同じ作り（2週間表示なら段の見出し付き）で、
-    // 表示されている（日表示ではヘッダーが無く 0 になる）ときだけ実測を使う
-    const first = this.rows[0];
-    const sameKind = !!first && (this.mode === "2week") === !!first.weekLabelEl;
-    const measured = sameKind && first.headersEl.isConnected ? first.headersEl.offsetHeight : 0;
-    const headerH = measured > 0 ? measured : this.mode === "2week" ? 52 : 30;
-    const viewH = this.scrollEl?.clientHeight ?? 0;
-    if (this.mode === "2week" && s.twoWeekFit) {
-      // 段ごとにヘッダーとグリッドの上下の余白（dt-grid の padding 12 + 24px）、段の間に区切り線（2px）がある
-      const avail = viewH - 2 * (headerH + 36) - 2;
-      if (avail < 100) return s.hourHeight; // まだレイアウトされていない
-      return clamp(avail / 2 / (s.endHour - s.startHour), MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT);
-    }
-    if (!s.zoomHours) return s.hourHeight;
-    const avail = viewH - headerH;
-    if (avail < 100) return s.hourHeight; // まだレイアウトされていない
-    return Math.max(avail / s.zoomHours, 24);
-  }
-
-  /**
    * 縮尺が変わったときに、いま見えている時刻を保ったままグリッドを作り直す。
    * anchorClientY を渡すと、その画面位置（ポインタ位置）の時刻を動かさないように合わせる
    */
   private rebuildTimeline(anchorClientY?: number): void {
-    if (this.mode === "month" || !this.scrollEl) return;
+    if (!this.scrollEl) return;
     const s = this.plugin.settings;
     // ポインタのある段（2週間表示）を覚えておき、作り直した後も同じ段で合わせる
     const anchorRow = anchorClientY != null ? this.rowAt(anchorClientY) : null;
@@ -4605,39 +3487,14 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  private setZoom(hours: number): void {
+  /** 縮尺（1時間あたりの高さ）を既定値に戻す（Ctrl+ホイール / ピンチで変えたぶんを取り消す） */
+  private resetZoom(): void {
     const s = this.plugin.settings;
-    const fit = this.mode === "2week" && s.twoWeekFit;
-    if (s.zoomHours === hours && !fit) return;
-    s.zoomHours = hours;
-    if (this.mode === "2week") s.twoWeekFit = false; // 明示的にズームを選んだら「2段を1画面に」は外す
+    if (s.hourHeight === DEFAULT_SETTINGS.hourHeight) return;
+    s.hourHeight = DEFAULT_SETTINGS.hourHeight;
     void this.plugin.persistSettings();
     this.renderHeader();
     this.rebuildTimeline();
-  }
-
-  /** 2週間表示の「2段を1画面に収める」を切り替える */
-  private setTwoWeekFit(on: boolean): void {
-    const s = this.plugin.settings;
-    if (s.twoWeekFit === on) return;
-    s.twoWeekFit = on;
-    void this.plugin.persistSettings();
-    this.rebuildTimeline();
-  }
-
-  private setPaMode(mode: PlanActualMode): void {
-    const s = this.plugin.settings;
-    if (s.paMode === mode) return;
-    s.paMode = mode;
-    void this.plugin.persistSettings();
-    this.renderHeader();
-    if (this.mode === "month") return;
-    this.renderEvents();
-  }
-
-  /** 予実の表示モード（旧リスト形式では予定のみ） */
-  private paMode(): PlanActualMode {
-    return this.plugin.blockStore() ? this.plugin.settings.paMode : "plan";
   }
 
   /** 画面の Y 座標を、その段の時間軸での時刻（分）にする */
@@ -4979,7 +3836,6 @@ export class DayTimelineView extends ItemView {
       this.openEditModal(col.date, task);
     });
     const beginMove = (e: PointerEvent, viaLongPress: boolean) => {
-      const toNote = e.ctrlKey || e.metaKey;
       const dur = task.end - task.start;
       // 掴んだ位置がブロックの上端から何分か（別の段へ運ぶとき、その段の時間軸で上端を出すのに使う）
       const grabOffset = this.clientYToMinutes(e.clientY, col.row) - task.start;
@@ -5019,8 +3875,7 @@ export class DayTimelineView extends ItemView {
             if (viaLongPress) {
               this.swallowNextClick(); // 合成 click がメニューに当たって即閉じないように
               this.showTaskMenu(col.date, task, ev);
-            } else if (toNote) void this.showMemoPopover(col.date, task, ev);
-            else this.openEditModal(col.date, task);
+            } else this.openEditModal(col.date, task);
             return;
           }
           const draft = { ...this.draftOf(task), start: newStart, end: newStart + dur };
@@ -5167,14 +4022,6 @@ export class DayTimelineView extends ItemView {
     menu.addItem((i) =>
       i.setTitle("編集").setIcon("pencil").onClick(() => this.openEditModal(date, task))
     );
-    if (this.plugin.blockStoreFor(task.owner)) {
-      menu.addItem((i) =>
-        i
-          .setTitle("作業メモを見る")
-          .setIcon("list-checks")
-          .onClick(() => void this.showMemoPopover(date, task, e))
-      );
-    }
     menu.addItem((i) =>
       i
         .setTitle(task.done ? "未完了に戻す" : "完了にする")
@@ -5220,7 +4067,7 @@ export class DayTimelineView extends ItemView {
         );
       }
     }
-    if (this.storeOf(task).supportsUnscheduled && isScheduled(task)) {
+    if (isScheduled(task)) {
       menu.addItem((i) =>
         i
           .setTitle("時刻を外す（未スケジュールへ）")
@@ -5233,35 +4080,9 @@ export class DayTimelineView extends ItemView {
         i
           .setTitle("翌日へ持ち越す（記録を残す）")
           .setIcon("corner-down-right")
-          .onClick(() => void this.commitCarryOver(date, task, "next-day"))
+          .onClick(() => void this.commitCarryOver(date, task))
       );
-      menu.addItem((i) =>
-        i
-          .setTitle("当日内で続きを作る（記録を残す）")
-          .setIcon("repeat")
-          .onClick(() => void this.commitCarryOver(date, task, "same-day"))
-      );
-      if (!task.owner && this.plugin.inbox) {
-        menu.addItem((i) =>
-          i
-            .setTitle("Inbox へ持ち越す（記録を残す）")
-            .setIcon("inbox")
-            .onClick(() => void this.commitCarryOver(date, task, "inbox"))
-        );
-      }
     }
-    menu.addItem((i) =>
-      i
-        .setTitle("前日へ送る")
-        .setIcon("arrow-left")
-        .onClick(() => void this.commitMove(date, task, addDays(date, -1)))
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle("翌日へ送る")
-        .setIcon("arrow-right")
-        .onClick(() => void this.commitMove(date, task, addDays(date, 1)))
-    );
     if (this.plugin.blockStore() && this.plugin.settings.members.length) {
       const targets: { id: string | null; name: string }[] = [
         { id: null, name: "自分" },
@@ -5344,14 +4165,10 @@ export class DayTimelineView extends ItemView {
       mode: "create",
       initial: { ...preset, title: preset?.title ?? "", start, end, done: false },
       snapMinutes: s.snapMinutes,
-      allowUnscheduled: this.plugin.store.supportsUnscheduled,
+      allowUnscheduled: true,
       dateField: { value: dateKey(date) },
       tagChoices: s.tagColors,
-      tagFieldSchema: s.tagFieldSchema,
-      validateRequiredOnSave: s.validateRequiredOnSave,
-      memberNames: s.members.map((m) => m.name),
-      reminderDefault: this.plugin.blockStore() ? s.reminderDefaultMinutes : undefined,
-      showDoneCondition: !!this.plugin.blockStore(),
+      reminderDefault: s.reminderDefaultMinutes,
       trackers: s.trackers,
       owners: this.ownerChoices(),
       initialOwner: null,
@@ -5389,10 +4206,6 @@ export class DayTimelineView extends ItemView {
       },
       unscheduledHint: `時刻なし — 日付を決めずに登録します（プロジェクトパネルに「未定」として並びます。時刻を入れると ${dayLabel} に登録）`,
       tagChoices: s.tagColors,
-      tagFieldSchema: s.tagFieldSchema,
-      validateRequiredOnSave: s.validateRequiredOnSave,
-      memberNames: s.members.map((m) => m.name),
-      showDoneCondition: true,
       trackers: s.trackers,
       ...this.projectOptions(),
       onSubmit: async (data, dateSel) => {
@@ -5414,12 +4227,10 @@ export class DayTimelineView extends ItemView {
     }).open();
   }
 
-  private openEditModal(date: Date, task: Task, pane?: "record" | "memo"): void {
+  private openEditModal(date: Date, task: Task): void {
     // 自動保存のたびに参照を最新へ差し替える（タイトルや時刻が変わると照合できなくなるため）
     let current = task;
     const wasDone = task.done;
-    // ボス戦の演出は、自動保存のたびではなく閉じるときに「開いてから」の差分でまとめて出す
-    const opened = snapshotOf(task);
     const serially = serialQueue();
     // 日付を空にして「日付未定（Inbox）」へ戻せるのは、自分のタスクで Inbox があるときだけ
     const allowClearDate = !!this.plugin.inbox && !task.owner;
@@ -5427,24 +4238,19 @@ export class DayTimelineView extends ItemView {
       mode: "edit",
       initial: this.draftOf(task),
       snapMinutes: this.plugin.settings.snapMinutes,
-      allowUnscheduled: this.plugin.store.supportsUnscheduled,
+      allowUnscheduled: true,
       dateField: {
         value: dateKey(date),
         allowEmpty: allowClearDate,
         hint: allowClearDate ? "空にすると日付未定（Inbox）へ移します" : undefined,
       },
       tagChoices: this.plugin.settings.tagColors,
-      tagFieldSchema: this.plugin.settings.tagFieldSchema,
-      validateRequiredOnSave: this.plugin.settings.validateRequiredOnSave,
-      memberNames: this.plugin.settings.members.map((m) => m.name),
-      reminderDefault: this.plugin.blockStore() ? this.plugin.settings.reminderDefaultMinutes : undefined,
-      showDoneCondition: !!this.plugin.blockStore(),
-      showActual: !!this.plugin.blockStore(),
+      reminderDefault: this.plugin.settings.reminderDefaultMinutes,
+      showActual: true,
       trackers: this.plugin.settings.trackers,
       owners: this.ownerChoices(),
       initialOwner: task.owner ?? null,
       otherActuals: this.otherActualsFor(date, task.owner ?? null, task.key),
-      initialPane: pane,
       ...this.projectOptions(),
       onAutoSave: async (data) => {
         // 持ち主・日付の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
@@ -5453,7 +4259,7 @@ export class DayTimelineView extends ItemView {
         return next !== null;
       },
       onSubmit: (data, dateSel) =>
-        serially(() => this.commitEditSubmit(date, current, data, dateSel, wasDone, opened)),
+        serially(() => this.commitEditSubmit(date, current, data, dateSel, wasDone)),
       onDelete: () => serially(() => this.commitDelete(date, current)),
       onOpenNote: () => serially(() => this.openTaskInNote(date, current)),
     }).open();
@@ -5468,17 +4274,16 @@ export class DayTimelineView extends ItemView {
     task: Task,
     data: TaskDraft,
     dateSel: Date | null | undefined,
-    wasDone: boolean,
-    before?: BattleSnapshot
+    wasDone: boolean
   ): Promise<void> {
     // 日付が変わっていない（または欄が無い）: これまでどおり
     if (dateSel === undefined || (dateSel !== null && isSameDay(dateSel, date))) {
-      return this.commitUpdate(date, task, data, wasDone, before);
+      return this.commitUpdate(date, task, data, wasDone);
     }
     // 持ち主の変更と同時はノートをまたぐ移動が重なるため、持ち主の変更を優先する
     if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
       new Notice("持ち主と日付は同時に変えられないため、日付は変更していません");
-      return this.commitUpdate(date, task, data, wasDone, before);
+      return this.commitUpdate(date, task, data, wasDone);
     }
     if (dateSel === null) return this.commitDayToInbox(date, task, data);
     return this.commitMove(date, task, dateSel, data);
@@ -5527,7 +4332,7 @@ export class DayTimelineView extends ItemView {
   private otherActualsFor(date: Date, owner: string | null, exceptKey?: string): OtherActual[] {
     return (this.data.get(dateKey(date))?.tasks ?? [])
       .filter((t) => t.key !== exceptKey && (t.owner ?? null) === (owner ?? null) && t.actual.length)
-      .map((t) => ({ title: stripTags(t.title) || "(無題)", tags: t.tags, ranges: t.actual }));
+      .map((t) => ({ title: stripTags(t.title) || "(無題)", ranges: t.actual }));
   }
 
   /** 編集・追加ダイアログに渡すプロジェクトまわりの共通オプション */
@@ -5572,55 +4377,22 @@ export class DayTimelineView extends ItemView {
     date: Date,
     task: Task,
     data: TaskDraft,
-    wasDone = task.done,
-    before?: BattleSnapshot
+    wasDone = task.done
   ): Promise<void> {
     // 持ち主が変わった場合は、別のノートへブロックごと移す
     if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
       await this.commitChangeOwner(date, task, data);
       return;
     }
-    // 未完了 → 完了で未チェックのステップが残っていれば、先に確認する
-    if (this.maybeConfirmRemainingSteps(date, task, data, wasDone, before)) return;
-    await this.performUpdate(date, task, data, wasDone, before);
+    await this.performUpdate(date, task, data, wasDone);
   }
 
-  /**
-   * 未完了 → 完了にするとき、未チェックのステップが残っていれば確認ダイアログを出す。
-   * 「残:」を書かずに完了にすると、日報などの下流で残件が完了扱いのまま埋もれてしまうため。
-   * ダイアログを出したら true（続きは選択に応じて performUpdate / commitCarryOver が行う）
-   */
-  private maybeConfirmRemainingSteps(
-    date: Date,
-    task: Task,
-    data: TaskDraft,
-    wasDone: boolean,
-    before?: BattleSnapshot
-  ): boolean {
-    if (!this.plugin.blockStoreFor(task.owner)) return false; // ブロック形式のみ
-    if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
-    const steps = data.steps ?? task.steps;
-    const unchecked = steps.filter((st) => !st.done && st.text.trim()).map((st) => st.text.trim());
-    if (!unchecked.length) return false;
-    // すでに「残:」が書いてあれば、改めては聞かない
-    const remaining = data.remaining !== undefined ? data.remaining : task.remaining;
-    if (remaining.trim()) return false;
-    new RemainingStepsModal(this.app, {
-      taskTitle: stripTags(data.title || task.title),
-      steps: unchecked,
-      onComplete: (rem) => this.performUpdate(date, task, rem ? { ...data, remaining: rem } : data, wasDone, before),
-      onCarryOver: !task.forwarded ? () => this.commitCarryOver(date, task, "next-day") : undefined,
-      onCarryOverSameDay: !task.forwarded ? () => this.commitCarryOver(date, task, "same-day") : undefined,
-    }).open();
-    return true;
-  }
 
   private async performUpdate(
     date: Date,
     task: Task,
     data: TaskDraft,
-    wasDone = task.done,
-    before: BattleSnapshot = snapshotOf(task)
+    wasDone = task.done
   ): Promise<void> {
     // 未完了 → 完了で実績が空なら、自動で実績を入れる
     const auto = this.autoActual(date, task, data, wasDone);
@@ -5636,12 +4408,7 @@ export class DayTimelineView extends ItemView {
     }
     await this.reload();
     if (updated) {
-      this.playBattleFor(task, data, before, this.storeOf(task).pathFor(date));
-      const prompted = this.maybePromptRetrospective(date, task, data, wasDone);
-      // ふりかえりのポップアップが出ないときは、自動記録したことだけ知らせる
-      if (auto && !prompted) {
-        new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
-      }
+      if (auto) new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
       // 「未完了 → 完了」でプロジェクトの子が全部完了したら、プロジェクトの完了を提案
       if (data.done && !wasDone) {
         void this.maybeSuggestProjectDone(data.project !== undefined ? data.project : task.project);
@@ -5725,7 +4492,7 @@ export class DayTimelineView extends ItemView {
 
   /** 保存で ID が付いたり内容が変わったりしたあと、同じタスクを探し直す */
   private async relocateTask(
-    store: TaskSource,
+    store: BlockTaskStore,
     date: Date,
     task: Task,
     draft: TaskDraft
@@ -5746,88 +4513,6 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  /**
-   * 完了にしたとき、選んだタグで必須の欄（結果。障害なら原因・判断、質問なら回答 …）が空なら、
-   * その欄だけを聞くポップアップを出す（Rules/Work記録チェック担当ルール.md: 完了 [x] に結果が無いと 🔴）。
-   * 15分以上のタスクはふりかえりが空でも出す。実績の確認・修正欄も一緒に出す。ポップアップを出したら true
-   */
-  private maybePromptRetrospective(date: Date, task: Task, data: TaskDraft, wasDone = task.done): boolean {
-    if (!this.plugin.blockStore()) return false; // ブロック形式のみ
-    if (!data.done || wasDone) return false; // 「未完了 → 完了」のときだけ
-    const start = data.start ?? task.start;
-    const end = data.end ?? task.end;
-    const duration = start !== null && end !== null ? end - start : 0;
-    const merged = { ...this.draftOf(task), ...data };
-    const title = data.title ?? task.title;
-    const tags = extractTags(title);
-    const schema = this.plugin.settings.tagFieldSchema;
-    const def = schemaForTags(schema, tags);
-    // 選んだタグの必須欄のうち空のもの（結果は先頭に。定義の無いタグは結果だけ）
-    const required = def ? def.required.map(normalizeFieldLabel) : ["結果"];
-    const valueOf: Record<string, () => string> = {
-      結果: () => merged.result ?? "",
-      原因: () => merged.cause ?? "",
-      判断: () => merged.judgment ?? "",
-      残: () => merged.remaining ?? "",
-      回答: () => merged.answer ?? "",
-      完了条件: () => merged.doneCondition ?? "",
-      Owner: () => merged.ownerName ?? "",
-      次アクション: () => merged.nextAction ?? "",
-      期限: () => merged.due ?? "",
-    };
-    const keyOf: Record<string, string> = {
-      原因: "cause",
-      判断: "judgment",
-      残: "remaining",
-      回答: "answer",
-      完了条件: "doneCondition",
-      Owner: "ownerName",
-      次アクション: "nextAction",
-      期限: "due",
-    };
-    const missing = required.filter((l) => valueOf[l] && !valueOf[l]().trim());
-    const retro = merged.retrospective ?? "";
-    const needRetro = duration >= 15 && !retro.trim() && (!def || def.required.length > 0);
-    if (!missing.length && !needRetro) return false;
-    const tag = tags.find((t) => schemaForTags(schema, [t])) ?? tags[0] ?? "";
-    const phField = (f: string) => placeholderFor(schema, tag, f as never);
-    const extraFields: RetroExtraField[] = missing
-      .filter((l) => l !== "結果" && keyOf[l])
-      .map((l) => ({
-        key: keyOf[l],
-        label: l,
-        kind: l === "回答" ? "answer" : "text",
-        placeholder: l === "期限" ? "YYYY-MM-DD" : phField(l),
-      }));
-    const recorded = data.actual !== undefined ? data.actual : task.actual;
-    const result = merged.result ?? "";
-    new RetrospectiveModal(this.app, {
-      taskTitle: stripTags(title),
-      durationLabel: duration ? formatDuration(duration) : "時刻なし",
-      actual: recorded,
-      result,
-      resultPlaceholder: phField("結果"),
-      retroPlaceholder: phField("ふりかえり"),
-      extraFields,
-      doneSteps: (merged.steps ?? []).filter((st) => st.done).map((st) => st.text),
-      onSave: async (text, actual, resultText, extras) => {
-        try {
-          const patch: TaskDraft = { ...data };
-          if (text) patch.retrospective = text;
-          if (resultText.trim() !== (result ?? "").trim()) patch.result = resultText;
-          if (actual !== undefined) patch.actual = actual;
-          for (const [k, v] of Object.entries(extras)) (patch as unknown as Record<string, string>)[k] = v;
-          const ok = await this.storeOf(task).update(date, task, patch);
-          if (!ok) new Notice("完了の記録を保存できませんでした。ノートが変更された可能性があります。");
-        } catch (e) {
-          console.error(e);
-          new Notice("完了の記録を保存できませんでした: " + String(e));
-        }
-        await this.reload();
-      },
-    }).open();
-    return true;
-  }
 
   private async commitDelete(date: Date, task: Task): Promise<void> {
     const doDelete = async () => {
@@ -5885,14 +4570,11 @@ export class DayTimelineView extends ItemView {
 
   /**
    * 残件の持ち越し: タスクは動かさず、今日のブロックを [>] で閉じて
-   * 続きのブロックを翌日・当日（同じノート）・Inbox のどれかに作る。実績・本文は今日の記録として残る。
-   * 当日内は「1回目が終わらず、同じ日にもう一度取り組む」ためのもので、続きは未スケジュールで
-   * 同じノートの末尾に入る（再スケジュールのトレイからタイムラインへドラッグして2回目の時刻を決める）
+   * 続きのブロックを翌日に作る。実績・本文は今日の記録として残る
    */
-  private async commitCarryOver(date: Date, task: Task, dest: CarryDest): Promise<void> {
+  private async commitCarryOver(date: Date, task: Task): Promise<void> {
     const store = this.plugin.blockStoreFor(task.owner);
-    const inbox = this.plugin.inbox;
-    if (!store || (dest === "inbox" && (!inbox || task.owner))) {
+    if (!store) {
       new Notice("持ち越しはタスクブロック形式のときだけ使えます");
       return;
     }
@@ -5916,10 +4598,9 @@ export class DayTimelineView extends ItemView {
         .filter((st) => !st.done)
         .map((st) => ({ ...st, children: [...(st.children ?? [])] }));
       const newId = newBlockId();
-      const toStore = dest === "inbox" ? inbox! : store;
-      const toDate = dest === "inbox" ? INBOX_DATE : dest === "same-day" ? date : addDays(date, 1);
-      const toLink = `${toStore.pathFor(toDate).replace(/\.md$/, "")}#^${newId}`;
-      await toStore.createWithId(toDate, {
+      const toDate = addDays(date, 1);
+      const toLink = `${store.pathFor(toDate).replace(/\.md$/, "")}#^${newId}`;
+      await store.createWithId(toDate, {
         title: task.title,
         start: null,
         end: null,
@@ -5949,20 +4630,13 @@ export class DayTimelineView extends ItemView {
       else {
         const name = stripTags(task.title) || "(無題)";
         const rem = remaining.length ? `（残ステップ ${remaining.length} 件）` : "";
-        new Notice(
-          dest === "inbox"
-            ? `「${name}」を Inbox へ持ち越しました${rem}`
-            : dest === "same-day"
-              ? `「${name}」の続きを当日に作りました${rem}。再スケジュールのトレイからタイムラインへドラッグして2回目の時刻を決められます`
-              : `「${name}」を翌日へ持ち越しました${rem}。明日の未スケジュールのトレイに入ります`
-        );
+        new Notice(`「${name}」を翌日へ持ち越しました${rem}。明日の未スケジュールのトレイに入ります`);
       }
     } catch (e) {
       console.error(e);
       new Notice("持ち越せませんでした: " + String(e));
     }
     await this.reload();
-    await this.reloadInbox();
   }
 
   /** タスクの持ち主を変える（別のフォルダのノートへブロックごと移す） */
@@ -6007,10 +4681,6 @@ export class DayTimelineView extends ItemView {
         hint: "日付未定。日付を入れると、その日のノートへ移します",
       },
       tagChoices: this.plugin.settings.tagColors,
-      tagFieldSchema: this.plugin.settings.tagFieldSchema,
-      validateRequiredOnSave: this.plugin.settings.validateRequiredOnSave,
-      memberNames: this.plugin.settings.members.map((m) => m.name),
-      showDoneCondition: true,
       showActual: true,
       trackers: this.plugin.settings.trackers,
       ...this.projectOptions(),
@@ -6066,18 +4736,14 @@ export class DayTimelineView extends ItemView {
   private async commitInboxUpdate(task: Task, data: TaskDraft): Promise<void> {
     const inbox = this.plugin.inbox;
     if (!inbox) return;
-    const before = snapshotOf(task);
-    let updated = false;
     try {
       const ok = await inbox.update(INBOX_DATE, task, { ...data, start: null, end: null });
       if (!ok) new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
-      updated = !!ok;
     } catch (e) {
       console.error(e);
       new Notice("タスクを保存できませんでした: " + String(e));
     }
     await this.reload();
-    if (updated) this.playBattleFor(task, { ...data, start: null, end: null }, before, inbox.pathFor(INBOX_DATE));
   }
 
   private async commitInboxDelete(task: Task): Promise<void> {
@@ -6185,19 +4851,11 @@ function hmm(min: number): string {
 }
 
 /** "YYYY-MM-DD" の日付キーを Date に戻す（読めなければ null） */
-function parseDateKey(key: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
-  if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-/** 分を "6.5" のような小数1桁の時間表示に（日ヘッダーの予実合計用）。"9.0" は "9" に詰める */
 function hoursDecimal(min: number): string {
   return (min / 60).toFixed(1).replace(/\.0$/, "");
 }
 
-/** 1日の消化度（本日のサマリー・連続達成・今週のグラフ用） */
+/** 1日の消化度（本日のサマリー用） */
 interface DayStats {
   /** 数える対象の件数（自分のタスク。持ち越し済み [>] は除く） */
   total: number;

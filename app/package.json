@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "mock": "node mock/build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "bump": "node scripts/bump.mjs",

@@ -42,7 +42,7 @@ export interface FieldDef {
   insertAt: FieldInsertAt;
   /** タイムラインの本文プレビューに出すか（false のものは別の形 — バー・バッジなど — で出す） */
   preview: boolean;
-  /** AI（日報・振り返り）が読む欄か。編集画面では「記録」タブ */
+  /** AI（日報・振り返り）が読む欄か */
   aiReads: boolean;
   /** 説明（README と AI 向け仕様に出す） */
   description: string;
@@ -137,7 +137,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "いつまでに終えるか（YYYY-MM-DD）。編集画面では Owner・完了条件・次アクションと一緒に「未完了セット」の枠にまとまる",
+      "いつまでに終えるか（YYYY-MM-DD）",
     example: "2026-08-20",
   },
   {
@@ -150,7 +150,7 @@ export const FIELDS = [
     preview: false,
     aiReads: true,
     description:
-      "何ができたら終わりか。編集画面の「完了条件」欄と相互に反映され、空にすると行ごと消える。無いときにダイアログで入力するとメタ行の直下に追加される",
+      "何ができたら終わりか（ノートに手で書く。編集画面には欄が無い）",
     example: "今日の担当が決まっている",
   },
   // ---------- record: ステップの後ろに並ぶ、作業の記録 ----------
@@ -164,7 +164,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "何がどこまで終わったかの記録。完了時のポップアップと編集画面の「結果」欄に相互に反映。日報・週報の元データになる",
+      "何がどこまで終わったかの記録。編集画面の「詳細」にある「結果」欄と相互に反映。日報・週報の元データになる",
     example: "GenericRFI_BODY の誤検知と特定",
   },
   {
@@ -201,7 +201,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "完了にした後に残った作業。未チェックのステップが残るタスクを完了にすると、ここへ書き込むかを確認する",
+      "完了にした後に残った作業",
     example: "恒久対応の検討",
   },
   {
@@ -215,7 +215,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "ボールが相手にあるものの記録。値は「相手 / 内容」。1タスクに複数行書ける（唯一の複数行フィールド）。編集画面では「相手」と「内容」の2欄で1件ずつ入力する",
+      "ボールが相手にあるものの記録。値は「相手 / 内容」。1タスクに複数行書ける（唯一の複数行フィールド）",
     example: "田中 / ルール変更の承認",
   },
   {
@@ -241,7 +241,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "タスクの状態。編集画面では一覧から選び、中断のときだけ理由を付けて「中断(理由)」として保存する",
+      "タスクの状態。中断のときは「中断(理由)」のように理由を付ける",
     example: "中断(承認待ち)",
     values: STATUS_KINDS,
   },
@@ -256,7 +256,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "タスクのオーナー（ボールを持っている人）。「誰の予定か」（どのメンバーのノートにあるか）とは別の記録。メンバー設定があれば入力候補に出る",
+      "タスクのオーナー（ボールを持っている人）。「誰の予定か」（どのメンバーのノートにあるか）とは別の記録",
     example: "鈴木",
   },
   {
@@ -269,7 +269,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "未完了事項の次の一手。編集画面では Owner・期限・完了条件と一緒に「未完了セット」の枠にまとまり、翌日へ持ち越すと続きのブロックに引き継がれる",
+      "未完了事項の次の一手。翌日へ持ち越すと続きのブロックに引き継がれる",
     example: "承認が下りたら本番に反映",
   },
   {
@@ -282,7 +282,7 @@ export const FIELDS = [
     preview: true,
     aiReads: true,
     description:
-      "作業してみてどうだったか・次はどう改善するか。完了時のポップアップから保存するとステップの後ろに追記される",
+      "作業してみてどうだったか・次はどう改善するか。編集画面の「詳細」にある「ふりかえり」欄と相互に反映",
     example: "調査に時間がかかった",
   },
 ] as const satisfies readonly FieldDef[];
