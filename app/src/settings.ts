@@ -5,7 +5,6 @@ import { RecurringModal, describeRule, propagateAndNotify } from "./recurring";
 import { requestNotificationPermission, showAlert } from "./notify";
 
 export type ViewLocation = "tab" | "right" | "left";
-export type StorageFormat = "block" | "list";
 export type InsertPosition = "time" | "end";
 export type ViewMode = "day" | "3day" | "week";
 /** 左サイドバーのタブ */
@@ -554,6 +553,10 @@ const REMOVED_SETTING_KEYS = [
   // プロジェクト一覧のテーブル表示・フラット表示（v2.120 で廃止。ツリーだけに）
   "projectsViewStyle",
   "projectsFlatList",
+  // 本日のサマリーの連続達成・今週の棒グラフ（v2.120 で廃止）
+  "summaryStreakPercent",
+  // 旧リスト形式（1.x）の読み書き（v2.120 で廃止。読み取りと変換コマンドは残る）
+  "storageFormat",
 ];
 
 export interface DayTimelineSettings {
@@ -568,13 +571,11 @@ export interface DayTimelineSettings {
    * ここにあるファイル名に YYYY-MM-DD を含むノートをその日の日報として表示する
    */
   dailyReportFolder: string;
-  /** 旧リスト形式で予定を書き込む見出し（例: "## タイムスケジュール"）。移行元にもなる */
+  /** 旧リスト形式（1.x）の見出し（例: "## タイムスケジュール"）。変換コマンドの移行元で、この見出しはタスクとして扱わない */
   heading: string;
   /** ノート新規作成時に使うテンプレートのパス（任意） */
   templatePath: string;
 
-  /** 保存形式: "block" = 1タスク = 1ブロック / "list" = 見出しの下のリスト（旧形式） */
-  storageFormat: StorageFormat;
   /** タスクとみなす見出しレベル（1〜6） */
   taskHeadingLevel: number;
   /** タスクを置く親見出し（"" ならファイル直下） */
@@ -661,8 +662,6 @@ export interface DayTimelineSettings {
   showTodaySummary: boolean;
   /** 本日のサマリーを見出しの1行に畳んでいるか（見出しのクリックで切替。記憶される） */
   summaryCollapsed: boolean;
-  /** 連続達成（ストリーク）に数える1日の達成率（%）。予定時間ベース（予定の無い日は件数ベース）。0 なら連続達成を出さない */
-  summaryStreakPercent: number;
 
   /** タスクのリマインドを出すか */
   reminderEnabled: boolean;
@@ -685,7 +684,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   dailyReportFolder: DEFAULT_DAILY_REPORT_FOLDER,
   heading: "## タイムスケジュール",
   templatePath: "",
-  storageFormat: "block",
   taskHeadingLevel: 2,
   taskRootHeading: "",
   insertPosition: "time",
@@ -727,7 +725,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   sidebarTab: "inbox",
   showTodaySummary: true,
   summaryCollapsed: false,
-  summaryStreakPercent: 80,
   reminderEnabled: true,
   reminderDefaultMinutes: 5,
   notifySound: true,
@@ -860,9 +857,6 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   if (s.projectsFilter !== "today") s.projectsFilter = "all";
   if (typeof s.showTodaySummary !== "boolean") s.showTodaySummary = DEFAULT_SETTINGS.showTodaySummary;
   if (typeof s.summaryCollapsed !== "boolean") s.summaryCollapsed = false;
-  s.summaryStreakPercent = Number.isFinite(s.summaryStreakPercent)
-    ? Math.min(100, Math.max(0, Math.round(s.summaryStreakPercent)))
-    : DEFAULT_SETTINGS.summaryStreakPercent;
   if (!Array.isArray(s.trackers)) s.trackers = [];
   if (!Array.isArray(s.members)) s.members = [];
   // 廃止した表示モード（2 週間・月）が保存されていたら既定に戻す
@@ -979,26 +973,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     // ---------- 保存形式 ----------
     new Setting(containerEl).setName("保存形式").setHeading();
 
-    new Setting(containerEl)
-      .setName("タスクの形式")
-      .setDesc(
-        "タスクブロック: 1タスクをノート内の1ブロック（見出し + 本文）として保存。" +
-          "本文に自由にメモを書け、タスク単位でリンクできます。" +
-          "リスト（旧形式）: 1つの見出しの下に1行ずつ並べる 1.x までの形式。"
-      )
-      .addDropdown((d) =>
-        d
-          .addOption("block", "タスクブロック（1タスク = 1ブロック）")
-          .addOption("list", "リスト（旧形式）")
-          .setValue(s.storageFormat)
-          .onChange(async (v) => {
-            s.storageFormat = v as StorageFormat;
-            await save();
-            this.display();
-          })
-      );
-
-    if (s.storageFormat === "block") {
+    {
       new Setting(containerEl)
         .setName("タスクの見出しレベル")
         .setDesc("このレベルの見出し + 直下の「- [ ] 09:00 - 10:00」行をタスクとして扱います。")
@@ -1079,12 +1054,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
-      .setName(s.storageFormat === "block" ? "旧形式の見出し" : "見出し")
-      .setDesc(
-        s.storageFormat === "block"
-          ? "リスト（旧形式）で使っていた見出し。この下の予定は「変換」でタスクブロックにできます。"
-          : "この見出しの下に予定を書き込みます。ノート内の他の内容はそのまま保持されます。"
-      )
+      .setName("旧形式の見出し")
+      .setDesc("リスト（旧形式）で使っていた見出し。この下の予定は「変換」でタスクブロックにできます。")
       .addText((t) =>
         t
           .setPlaceholder(DEFAULT_SETTINGS.heading)
@@ -1213,7 +1184,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         })
       );
 
-    if (s.storageFormat === "block") {
+    {
       new Setting(containerEl)
         .setName("再スケジュール欄を表示")
         .setDesc("時刻を決めていないタスクを、左サイドバー（プロジェクトの下）の「再スケジュール」欄に日付付きで一覧します。タイムラインへドラッグで時刻を割り当てられます。")
@@ -1631,7 +1602,7 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("本日のサマリーを表示")
       .setDesc(
-        "サイドバーの下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスク・連続達成日数を表示します。" +
+        "サイドバーの下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスクを表示します。" +
           "見出しのクリックで1行に畳めます。タスクブロック形式のときだけ使えます。"
       )
       .addToggle((t) =>
@@ -1639,22 +1610,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
           s.showTodaySummary = v;
           await save();
         })
-      );
-    new Setting(containerEl)
-      .setName("連続達成に数える達成率")
-      .setDesc(
-        "本日のサマリーの「連続達成」に数える1日の達成率（予定時間のうち完了したタスクぶんの割合。予定の無い日は件数）。" +
-          "100% にすると1日崩れただけで途切れるので、少し緩めがおすすめです。0 にすると連続達成を出しません。"
-      )
-      .addSlider((sl) =>
-        sl
-          .setLimits(0, 100, 5)
-          .setValue(s.summaryStreakPercent)
-          .setDynamicTooltip()
-          .onChange(async (v) => {
-            s.summaryStreakPercent = v;
-            await save();
-          })
       );
     new Setting(containerEl)
       .setName("プロジェクトの完了済みタスクを隠す")

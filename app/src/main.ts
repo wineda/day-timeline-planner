@@ -7,12 +7,12 @@ import {
   migrateSettings,
   ticketUrl,
 } from "./settings";
-import { BlockTaskStore, INBOX_DATE, InboxStore, ListTaskStore, MemberStore, migrateNote } from "./store";
+import { BlockTaskStore, INBOX_DATE, InboxStore, MemberStore, migrateNote } from "./store";
 import { RecurringModal } from "./recurring";
 import { RecurringManagerView, VIEW_TYPE_RECURRING } from "./recurring-view";
 import { ProjectCreateModal, TaskModal } from "./modal";
 import { ReminderService, requestNotificationPermission } from "./notify";
-import type { Task, TaskSource } from "./model";
+import type { Task } from "./model";
 import { normalizeBlockOptions, parseMetaLine, renderMetaLine } from "./markdown/blocks";
 import { renderFormatSpec, type SpecContext } from "./spec";
 import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, stripTags } from "./util";
@@ -32,12 +32,12 @@ import { DayTimelineView, PROJECT_HOVER_SOURCE, VIEW_TYPE_DAY_TIMELINE } from ".
 
 export default class DayTimelinePlugin extends Plugin {
   settings: DayTimelineSettings = { ...DEFAULT_SETTINGS };
-  store!: TaskSource;
-  /** Inbox（ブロック形式のときだけ。旧リスト形式では null） */
-  inbox: InboxStore | null = null;
-  /** プロジェクト（大きなタスク）。ブロック形式のときだけ */
-  projects: ProjectStore | null = null;
-  /** メンバー ID → その人の予定のストア（ブロック形式のときだけ） */
+  store!: BlockTaskStore;
+  /** Inbox（日付を決めていないタスクのノート） */
+  inbox!: InboxStore;
+  /** プロジェクト（大きなタスク） */
+  projects!: ProjectStore;
+  /** メンバー ID → その人の予定のストア */
   memberStores = new Map<string, MemberStore>();
   reminders!: ReminderService;
 
@@ -113,8 +113,7 @@ export default class DayTimelinePlugin extends Plugin {
       name: "このノートの予定をタスクブロックに変換",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
-        if (!file || file.extension !== "md" || this.settings.storageFormat !== "block")
-          return false;
+        if (!file || file.extension !== "md") return false;
         if (!checking) void this.migrateFile(file);
         return true;
       },
@@ -142,7 +141,6 @@ export default class DayTimelinePlugin extends Plugin {
       id: "make-heading-task",
       name: "カーソル位置の見出しをタスクにする",
       editorCheckCallback: (checking, editor, view) => {
-        if (this.settings.storageFormat !== "block") return false;
         if (!(view instanceof MarkdownView)) return false;
         const pos = this.findHeadingForCursor(editor);
         if (pos === null) return false;
@@ -508,45 +506,37 @@ export default class DayTimelinePlugin extends Plugin {
 
   /** 設定に合わせて読み書きの実装を作り直す */
   createStore(): void {
-    this.store =
-      this.settings.storageFormat === "list"
-        ? new ListTaskStore(this.app, () => this.settings)
-        : new BlockTaskStore(this.app, () => this.settings);
-    this.inbox =
-      this.settings.storageFormat === "list" ? null : new InboxStore(this.app, () => this.settings);
-    this.projects =
-      this.settings.storageFormat === "list" ? null : new ProjectStore(this.app, () => this.settings);
+    this.store = new BlockTaskStore(this.app, () => this.settings);
+    this.inbox = new InboxStore(this.app, () => this.settings);
+    this.projects = new ProjectStore(this.app, () => this.settings);
     this.memberStores = new Map();
-    if (this.settings.storageFormat !== "list") {
-      for (const m of this.settings.members) {
-        const id = m.id;
-        this.memberStores.set(
-          id,
-          new MemberStore(this.app, () => this.settings, () => this.settings.members.find((x) => x.id === id) ?? m)
-        );
-      }
+    for (const m of this.settings.members) {
+      const id = m.id;
+      this.memberStores.set(
+        id,
+        new MemberStore(this.app, () => this.settings, () => this.settings.members.find((x) => x.id === id) ?? m)
+      );
     }
   }
 
   /** タスクの持ち主に応じたストア（自分 / メンバー） */
-  storeFor(owner: string | null | undefined): TaskSource {
+  storeFor(owner: string | null | undefined): BlockTaskStore {
     if (!owner) return this.store;
     return this.memberStores.get(owner) ?? this.store;
   }
 
-  /** ブロック形式の持ち主別ストア（旧形式なら null） */
-  blockStoreFor(owner: string | null | undefined): BlockTaskStore | null {
-    const st = this.storeFor(owner);
-    return st instanceof BlockTaskStore ? st : null;
+  /** storeFor と同じ（旧リスト形式を廃止する前は「ブロック形式なら」の絞り込みだった） */
+  blockStoreFor(owner: string | null | undefined): BlockTaskStore {
+    return this.storeFor(owner);
   }
 
   memberOf(owner: string | null | undefined) {
     return owner ? this.settings.members.find((m) => m.id === owner) ?? null : null;
   }
 
-  /** ブロック形式のときだけ使える機能のための型付きアクセス */
-  blockStore(): BlockTaskStore | null {
-    return this.store instanceof BlockTaskStore ? this.store : null;
+  /** 自分のストア（旧リスト形式を廃止する前は「ブロック形式なら」の絞り込みだった） */
+  blockStore(): BlockTaskStore {
+    return this.store;
   }
 
   /** 開いているタイムラインビュー（無ければ null） */

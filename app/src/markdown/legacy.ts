@@ -5,10 +5,9 @@
  *   - [ ] 09:00 - 10:00 朝会
  *       - 議題: 進捗確認
  *
- * 1.x からのノートをそのまま読み書きできるように残してある。
+ * 1.x からのノートをタスクブロックへ変換する（migrate.ts）ための読み取り側だけを残してある。
  * このファイルも Obsidian の API に依存しない。
  */
-import { minutesToHHMM } from "../util";
 import { parseHeadingSetting, trimBlankLines } from "./blocks";
 
 /** リスト形式の1件 */
@@ -43,10 +42,6 @@ const EVENT_LINE_RE =
   /^[-*+]\s+(?:\[(.)\]\s+)?(\d{1,2}):(\d{2})\s*(?:-|–|—|~|〜|～)\s*(\d{1,2}):(\d{2})\s*(.*?)\s*$/;
 const HEADING_RE = /^(#{1,6})\s+(.*?)\s*$/;
 const FENCE_RE = /^\s*(```|~~~)/;
-
-export function eventSignature(e: ListEvent): string {
-  return `${e.start}|${e.end}|${e.done ? 1 : 0}|${e.title}`;
-}
 
 /** 見出しのセクション範囲を探す（コードブロック内・frontmatter は無視） */
 function findSection(lines: string[], headingText: string): ListSection | null {
@@ -126,50 +121,6 @@ export function parseListNote(content: string, headingSetting: string): ParsedLi
     }
   }
   return { lines, eol, section, events, extras };
-}
-
-/** 予定1件を Markdown の行に */
-function serializeEvent(e: ListEvent, useCheckbox: boolean): string[] {
-  let box: string | null;
-  if (e.checkChar === undefined) box = useCheckbox || e.done ? " " : null;
-  else if (e.checkChar === null) box = e.done ? "x" : null;
-  else box = e.checkChar;
-  if (box !== null) {
-    if (e.done && !/x/i.test(box)) box = "x";
-    if (!e.done && /x/i.test(box)) box = " ";
-  }
-  const prefix = box === null ? "- " : `- [${box}] `;
-  const title = e.title.trim();
-  const line = `${prefix}${minutesToHHMM(e.start)} - ${minutesToHHMM(e.end)}${title ? " " + title : ""}`;
-  return [line, ...e.children];
-}
-
-/** 解析結果 + 新しい予定リスト → ノート全文 */
-export function serializeListNote(
-  parsed: ParsedListNote,
-  events: ListEvent[],
-  headingSetting: string,
-  useCheckbox: boolean
-): string {
-  const sorted = [...events].sort((a, b) => a.start - b.start || a.end - b.end);
-  const body: string[] = [];
-  for (const e of sorted) body.push(...serializeEvent(e, useCheckbox));
-  body.push(...parsed.extras);
-
-  const { eol, lines, section } = parsed;
-  if (section) {
-    const before = lines.slice(0, section.bodyStart);
-    const after = lines.slice(section.bodyEnd);
-    const out = [...before, ...body];
-    if (after.length) out.push("", ...after);
-    return out.join(eol).replace(/(\r?\n)*$/, "") + eol;
-  }
-
-  const { level, text } = parseHeadingSetting(headingSetting);
-  const headingLine = "#".repeat(level) + " " + text;
-  const original = lines.join(eol).replace(/\s+$/, "");
-  const sectionText = [headingLine, ...body].join(eol);
-  return (original ? original + eol + eol : "") + sectionText + eol;
 }
 
 /** 予定にぶら下がっていた行のインデントを揃えて外す */

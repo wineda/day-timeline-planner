@@ -1,6 +1,6 @@
 import { App, TFile, normalizePath, moment } from "obsidian";
 import { memberFolder, type DayTimelineSettings, type Member } from "./settings";
-import type { DayTasks, Task, TaskDraft, TaskSource } from "./model";
+import type { DayTasks, Task, TaskDraft } from "./model";
 import {
   TaskBlock,
   bodyPreview,
@@ -20,12 +20,7 @@ import {
   sortTasksByTime,
   updateTask,
 } from "./markdown/edit";
-import {
-  ListEvent,
-  eventSignature,
-  parseListNote,
-  serializeListNote,
-} from "./markdown/legacy";
+import { parseListNote } from "./markdown/legacy";
 import { migrateListToBlocks } from "./markdown/migrate";
 import { emptyTextFields, pickTextFields } from "./markdown/fields";
 import { extractTags, minutesToHHMM, startOfDay } from "./util";
@@ -36,10 +31,8 @@ const DELETION_LOG_HEADER = `# 操作ログ
 Day Timeline Planner がタスクを削除したときの記録です。「消えたタスク」が意図した削除だったかを後から確かめられます（設定「削除したタスクの記録を残す」でオフにできます）。
 `;
 
-/** 日付 → ノートの対応と、ノートの作成。保存形式によらず共通 */
-abstract class NoteStore implements TaskSource {
-  abstract readonly supportsUnscheduled: boolean;
-  abstract readonly supportsBody: boolean;
+/** 日付 → ノートの対応と、ノートの作成 */
+abstract class NoteStore {
   /** このストアが扱う人（null = 自分）。読み込んだタスクに刻印する */
   readonly ownerId: string | null = null;
 
@@ -86,11 +79,6 @@ abstract class NoteStore implements TaskSource {
   abstract moveToDate(from: Date, task: Task, to: Date): Promise<boolean | null>;
   abstract linkTo(date: Date, task: Task): Promise<string | null>;
 
-  /** 新規ノートの中身を形式ごとに整える（既定はテンプレートのまま） */
-  protected initialSkeleton(content: string): string {
-    return content;
-  }
-
   /** ノートが無ければ（テンプレート付きで）作成して返す */
   async ensureFile(date: Date): Promise<TFile> {
     const existing = this.getFile(date);
@@ -99,7 +87,7 @@ abstract class NoteStore implements TaskSource {
     const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     await this.ensureFolder(dir);
 
-    const content = this.initialSkeleton(await this.initialContent(date));
+    const content = await this.initialContent(date);
     // 直前に他の処理で作られている可能性もあるので再確認
     const again = this.getFile(date);
     if (again) return again;
@@ -168,9 +156,6 @@ abstract class NoteStore implements TaskSource {
 // ---------------------------------------------------------------------------
 
 export class BlockTaskStore extends NoteStore {
-  readonly supportsUnscheduled = true;
-  readonly supportsBody = true;
-
   private options(): InsertOptions {
     const s = this.getSettings();
     const legacyText = parseHeadingSetting(s.heading).text;
@@ -232,7 +217,6 @@ export class BlockTaskStore extends NoteStore {
   }
 
   private refOf(task: Task): TaskRef {
-    if (task.ref.kind !== "block") throw new Error("block store got a list task");
     return task.ref;
   }
 
@@ -438,141 +422,6 @@ export class MemberStore extends BlockTaskStore {
 
 /** Inbox 用のダミー日付（pathFor では使われない） */
 export const INBOX_DATE = new Date(2000, 0, 1);
-
-// ---------------------------------------------------------------------------
-// 旧形式: 見出しの下のリスト（1.x 互換）
-// ---------------------------------------------------------------------------
-
-export class ListTaskStore extends NoteStore {
-  readonly supportsUnscheduled = false;
-  readonly supportsBody = false;
-
-  protected initialSkeleton(content: string): string {
-    const s = this.getSettings();
-    if (parseListNote(content, s.heading).section) return content;
-    const { level, text } = parseHeadingSetting(s.heading);
-    const headingLine = "#".repeat(level) + " " + text;
-    const trimmed = content.replace(/\s+$/, "");
-    return (trimmed ? trimmed + "\n\n" : "") + headingLine + "\n";
-  }
-
-  async load(date: Date): Promise<DayTasks> {
-    const path = this.pathFor(date);
-    const file = this.getFile(date);
-    if (!file) return { path, exists: false, tasks: [] };
-    const content = await this.app.vault.cachedRead(file);
-    const parsed = parseListNote(content, this.getSettings().heading);
-    return { path, exists: true, tasks: parsed.events.map((e) => this.toTask(e)) };
-  }
-
-  private toTask(e: ListEvent): Task {
-    return {
-      key: `list:${eventSignature(e)}`,
-      title: e.title,
-      start: e.start,
-      end: e.end,
-      done: e.done,
-      preview: "",
-      blockId: null,
-      tags: extractTags([e.title, ...e.children].join("\n")),
-      reminder: null,
-      ...emptyTextFields(),
-      steps: [],
-      others: [],
-      actual: [],
-      project: null,
-      forwarded: false,
-      carryTo: null,
-      carryFrom: null,
-      details: "",
-      ticket: null,
-      owner: null,
-      ref: { kind: "list", event: e },
-    };
-  }
-
-  private eventOf(task: Task): ListEvent {
-    if (task.ref.kind !== "list") throw new Error("list store got a block task");
-    return task.ref.event;
-  }
-
-  private draftToEvent(draft: TaskDraft, base?: ListEvent): ListEvent | null {
-    if (draft.start === null || draft.end === null) return null; // 旧形式は時刻必須
-    return {
-      start: draft.start,
-      end: draft.end,
-      title: draft.title,
-      done: draft.done,
-      children: base?.children ?? [],
-      checkChar: base?.checkChar,
-    };
-  }
-
-  private mutate(date: Date, fn: (events: ListEvent[]) => ListEvent[] | null): Promise<boolean> {
-    const s = this.getSettings();
-    return this.process(date, (content) => {
-      const parsed = parseListNote(content, s.heading);
-      const next = fn(parsed.events);
-      if (next === null) return null;
-      return serializeListNote(parsed, next, s.heading, s.useCheckbox);
-    });
-  }
-
-  private findIndex(events: ListEvent[], target: ListEvent): number {
-    const sig = eventSignature(target);
-    return events.findIndex((e) => eventSignature(e) === sig);
-  }
-
-  async create(date: Date, draft: TaskDraft): Promise<boolean> {
-    const ev = this.draftToEvent(draft);
-    if (!ev) return false;
-    return this.mutate(date, (events) => [...events, ev]);
-  }
-
-  async update(date: Date, task: Task, draft: TaskDraft): Promise<boolean> {
-    const original = this.eventOf(task);
-    return this.mutate(date, (events) => {
-      const idx = this.findIndex(events, original);
-      if (idx < 0) return null;
-      const ev = this.draftToEvent(draft, events[idx]);
-      if (!ev) return null;
-      const next = [...events];
-      next[idx] = ev;
-      return next;
-    });
-  }
-
-  async remove(date: Date, task: Task): Promise<boolean> {
-    const original = this.eventOf(task);
-    return this.mutate(date, (events) => {
-      const idx = this.findIndex(events, original);
-      if (idx < 0) return null;
-      const next = [...events];
-      next.splice(idx, 1);
-      return next;
-    });
-  }
-
-  async moveToDate(from: Date, task: Task, to: Date): Promise<boolean | null> {
-    const original = this.eventOf(task);
-    let carried: ListEvent | null = null;
-    const removed = await this.mutate(from, (events) => {
-      const idx = this.findIndex(events, original);
-      if (idx < 0) return null;
-      carried = events[idx];
-      const next = [...events];
-      next.splice(idx, 1);
-      return next;
-    });
-    if (!removed || !carried) return false;
-    const ev = carried as ListEvent;
-    return this.mutate(to, (events) => [...events, ev]);
-  }
-
-  async linkTo(_date: Date, _task: Task): Promise<string | null> {
-    return null; // 旧形式にブロックID は無い
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 移行

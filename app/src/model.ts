@@ -1,22 +1,17 @@
 /**
  * ビューが扱うタスクの型。
- * 保存形式（ブロック形式 / 旧リスト形式）の違いは TaskSource が吸収する。
  */
-import type { TFile } from "obsidian";
-import type { ListEvent } from "./markdown/legacy";
 import type { ActualRange, ReminderSetting, TaskStep, TicketRef } from "./markdown/blocks";
 import type { TextFieldValues } from "./markdown/fields";
 
-/** ソースだけが解釈する参照情報 */
-export type TaskRefData =
-  | {
-      kind: "block";
-      id: string | null;
-      title: string;
-      start: number | null;
-      end: number | null;
-    }
-  | { kind: "list"; event: ListEvent };
+/** ストアだけが解釈する参照情報（ノート内のブロックの特定に使う） */
+export interface TaskRefData {
+  kind: "block";
+  id: string | null;
+  title: string;
+  start: number | null;
+  end: number | null;
+}
 
 /**
  * ビューが扱うタスク。
@@ -159,25 +154,4 @@ export interface DayTasks {
   path: string;
   exists: boolean;
   tasks: Task[];
-}
-
-/** 保存形式ごとの読み書き */
-export interface TaskSource {
-  /** 未スケジュールのタスクを扱えるか */
-  readonly supportsUnscheduled: boolean;
-  /** ブロック単位で本文を持てるか */
-  readonly supportsBody: boolean;
-
-  pathFor(date: Date): string;
-  getFile(date: Date): TFile | null;
-  ensureFile(date: Date): Promise<TFile>;
-  load(date: Date): Promise<DayTasks>;
-
-  create(date: Date, draft: TaskDraft): Promise<boolean>;
-  update(date: Date, task: Task, draft: TaskDraft): Promise<boolean>;
-  remove(date: Date, task: Task): Promise<boolean>;
-  /** 別の日へ移す。対応していなければ null を返す */
-  moveToDate(from: Date, task: Task, to: Date): Promise<boolean | null>;
-  /** ノートの該当箇所へのリンク（"path#^id"）。無ければ null */
-  linkTo(date: Date, task: Task): Promise<string | null>;
 }

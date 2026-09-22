@@ -19,7 +19,6 @@ import {
   ScheduledTask,
   Task,
   TaskDraft,
-  TaskSource,
   isScheduled,
   stepProgress,
   taskProgress,
@@ -66,7 +65,7 @@ import {
   type ViewMode,
 } from "./settings";
 import { applyRecurring, instanceOf, noteRecurringDeletion, RecurringModal } from "./recurring";
-import { INBOX_DATE } from "./store";
+import { BlockTaskStore, INBOX_DATE } from "./store";
 import {
   addDays,
   clamp,
@@ -220,7 +219,7 @@ export class DayTimelineView extends ItemView {
   private inboxEl!: HTMLElement;
   private inboxTasks: Task[] = [];
   /** 表示範囲の外（今日から過去 RESCHEDULE_LOOKBACK_DAYS 日以内）のノートのタスク（日付キー → その日）。
-   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき・連続達成・今週のグラフ）に使う */
+   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき）に使う */
   private pastDays = new Map<string, { date: Date; tasks: Task[] }>();
   /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用。pastDays から作る） */
   private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
@@ -1265,10 +1264,7 @@ export class DayTimelineView extends ItemView {
     const loaded = await Promise.all(
       days.map(async (d): Promise<[string, DayData]> => {
         const day = await store.load(d);
-        const legacyCount =
-          s.storageFormat === "block" && day.exists && blockStore
-            ? await blockStore.countLegacyEvents(d)
-            : 0;
+        const legacyCount = day.exists ? await store.countLegacyEvents(d) : 0;
         const tasks = [...day.tasks];
         for (const ms of memberStores) {
           try {
@@ -2398,7 +2394,7 @@ export class DayTimelineView extends ItemView {
    * 月表示では時刻なしのタスクもマスの中に出すので欄は使わない */
   private rescheduleGroups(): { date: Date; tasks: Task[] }[] {
     const s = this.plugin.settings;
-    if (!s.showUnscheduledTray || !this.plugin.store.supportsUnscheduled) return [];
+    if (!s.showUnscheduledTray) return [];
     const visible = this.columns
       .map((c) => ({ date: c.date, tasks: this.dataFor(c.date).tasks.filter((t) => !isScheduled(t)) }))
       .filter((g) => g.tasks.length > 0);
@@ -2464,24 +2460,6 @@ export class DayTimelineView extends ItemView {
     return this.pastDays.get(key)?.tasks ?? null;
   }
 
-  /**
-   * 連続達成: 達成率が閾値以上の日が何日続いているか。
-   * 今日は達成していれば数え、まだ届いていなくても途切れとは見なさない（まだ途中なので）。
-   * タスクの無い日（休日など）は数えず飛ばす。読んでいる範囲（過去 30 日）で打ち切る
-   */
-  private summaryStreak(threshold: number): number {
-    if (threshold <= 0) return 0;
-    const today = startOfDay(new Date());
-    let n = 0;
-    for (let i = 0; i <= RESCHEDULE_LOOKBACK_DAYS; i++) {
-      const tasks = this.tasksOn(addDays(today, -i));
-      const ratio = tasks ? dayStats(tasks).ratio : null;
-      if (ratio === null) continue;
-      if (ratio >= threshold) n++;
-      else if (i > 0) break;
-    }
-    return n;
-  }
 
   /**
    * サイドバーの下の「本日のサマリー」。renderInbox で器（summaryEl）を作り、
@@ -2606,40 +2584,6 @@ export class DayTimelineView extends ItemView {
       }
     }
     this.renderSummaryNext(body, today, all);
-    this.renderSummaryWeek(body, today);
-    // 記録の埋まり具合: 完了タスクで、タグの必須欄（結果など）が空のもの、または 15 分以上でふりかえりが空のもの
-    //（完了時のポップアップと同じ条件）。達成率とは切り離し、色を付けずに出す
-    const schema = this.plugin.settings.tagFieldSchema;
-    const unfilled = all.filter((t) => {
-      if (t.owner || !t.done || t.forwarded) return false;
-      const def = schemaForTags(schema, t.tags);
-      const required = def ? def.required.map(normalizeFieldLabel) : ["結果"];
-      if (def && !def.required.length) return false; // #私用 など、記録の要らないタグ
-      const values: Record<string, string> = {
-        結果: t.result,
-        原因: t.cause,
-        判断: t.judgment,
-        残: t.remaining,
-        回答: t.answer,
-        完了条件: t.doneCondition,
-        Owner: t.ownerName,
-        次アクション: t.nextAction,
-        期限: t.due,
-      };
-      if (required.some((l) => l in values && !values[l].trim())) return true;
-      return isScheduled(t) && t.end - t.start >= 15 && !t.retrospective.trim();
-    });
-    if (unfilled.length) {
-      const note = body.createDiv({
-        cls: "dt-summary-note",
-        text: `結果・ふりかえりの未記入 ${unfilled.length} 件`,
-      });
-      note.setAttr(
-        "aria-label",
-        [...unfilled.map((t) => "・" + this.displayTitle(t)), "クリックで先頭のタスクを編集"].join("\n")
-      );
-      note.addEventListener("click", () => this.openEditModal(today, unfilled[0]));
-    }
   }
 
   /**
@@ -2681,13 +2625,8 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * 「いま / 次にやる1件」の行。現在時刻にかかっている未完了タスク → これから始まるタスク →
-   * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
-   * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
-   */
-  /**
    * 今日の未完了タスクから「いま取り組む1件」を選ぶ: 現在時刻にかかっているもの → これから始まるもの →
-   * 時刻を過ぎて残っているもの → 時刻未定、の順（サマリーの「いま / 次」とペットで共用）
+   * 時刻を過ぎて残っているもの → 時刻未定、の順
    */
   private pickFocusTask(undone: Task[]): { task: Task; label: string; kind: string } | null {
     if (!undone.length) return null;
@@ -2701,6 +2640,11 @@ export class DayTimelineView extends ItemView {
     return { task: undone[0], label: "未定", kind: "unscheduled" };
   }
 
+  /**
+   * 「いま / 次にやる1件」の行。現在時刻にかかっている未完了タスク → これから始まるタスク →
+   * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
+   * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
+   */
   private renderSummaryNext(parent: HTMLElement, today: Date, all: Task[]): void {
     const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded);
     const pick = this.pickFocusTask(undone);
@@ -2781,57 +2725,6 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-  /** 連続達成の日数と、今週 7 日ぶんの達成率の小さな棒グラフ */
-  private renderSummaryWeek(parent: HTMLElement, today: Date): void {
-    const s = this.plugin.settings;
-    const threshold = s.summaryStreakPercent / 100;
-    const foot = parent.createDiv("dt-summary-foot");
-    if (s.summaryStreakPercent > 0) {
-      const streak = this.summaryStreak(threshold);
-      const el = foot.createSpan("dt-summary-streak");
-      el.toggleClass("is-active", streak > 0);
-      setIcon(el.createSpan("dt-summary-streak-icon"), "flame");
-      el.createSpan({ text: streak > 0 ? `${streak}日連続` : "連続 0日" });
-      el.setAttr(
-        "aria-label",
-        `達成率 ${s.summaryStreakPercent}% 以上の日が` +
-          (streak > 0 ? ` ${streak} 日続いています` : "まだ続いていません") +
-          "\n（タスクの無い日は数えません。今日はまだ途中なので、届いていなくても途切れません。設定で閾値を変えられます）"
-      );
-    }
-    const week = foot.createDiv("dt-summary-week");
-    week.setAttr("aria-label", "今週の達成率");
-    const first = startOfWeek(today, s.weekStart);
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(first, i);
-      const bar = week.createDiv("dt-summary-week-day");
-      const fill = bar.createDiv();
-      const future = date > today;
-      const st = future ? null : (() => {
-        const tasks = this.tasksOn(date);
-        return tasks ? dayStats(tasks) : null;
-      })();
-      const ratio = st?.ratio ?? null;
-      bar.toggleClass("is-today", isSameDay(date, today));
-      bar.toggleClass("is-future", future);
-      bar.toggleClass("is-empty", !future && ratio === null);
-      if (ratio !== null) {
-        fill.style.height = `${Math.round(clamp(ratio, 0, 1) * 100)}%`;
-        bar.toggleClass("is-hit", threshold > 0 && ratio >= threshold);
-      }
-      const label = `${date.getMonth() + 1}/${date.getDate()} (${WEEKDAY_JA[date.getDay()]})`;
-      bar.setAttr(
-        "aria-label",
-        future
-          ? label
-          : ratio === null || !st
-            ? `${label}: タスクなし`
-            : `${label}: ${Math.round(ratio * 100)}%（${st.done}/${st.total} 件）`
-      );
-      // 過去の日をクリックでその日へ
-      if (!future) bar.addEventListener("click", () => this.showDate(date));
-    }
-  }
 
   /** 再スケジュールのタブの中身: 時刻を決めていないタスクを日付順に縦に一覧。
    * 旧・タイムライン上部の「未スケジュール」トレイの置き換え。＋ボタンはパネルのヘッダー側に出る */
@@ -2884,8 +2777,7 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
-    // 予定は左のレーン、実績は右のレーン（旧リスト形式には実績が無いので予定を全幅に）
-    const both = !!this.plugin.blockStore();
+    // 予定は左のレーン、実績は右のレーン
     this.taskEls.clear();
 
     let anyBar = false;
@@ -2895,12 +2787,11 @@ export class DayTimelineView extends ItemView {
 
       const visible = tasks.filter(isScheduled).filter((t) => t.end > dayStart && t.start < dayEnd);
       const layout = layoutEvents(visible);
-      const lane = both ? { left: 0, width: 0.5 } : { left: 0, width: 1 };
       for (const task of visible) {
-        this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, lane, both);
+        this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, { left: 0, width: 0.5 }, true);
         anyBar = true;
       }
-      if (both) {
+      {
         // 実績は区間ごとに1本のバーにする（idx = タスク内の何番目の区間か。ドラッグ修正に使う）
         const items = tasks.flatMap((t) =>
           t.actual
@@ -3240,13 +3131,12 @@ export class DayTimelineView extends ItemView {
 
   /** 各日の予定・実績の合計を日付ヘッダーに、表示範囲の合計をヘッダー（3日・週）に出す */
   private renderDayTotals(): void {
-    const show = !!this.plugin.blockStore();
     let rangePlan = 0;
     let rangeAct = 0;
     for (const row of this.rows) {
       let rowPlan = 0;
       let rowAct = 0;
-      if (show) {
+      {
         for (const col of row.columns) {
           let el = col.headerEl.querySelector<HTMLElement>(".dt-day-total");
           const tasks = this.dataFor(col.date).tasks.filter((t) => !t.owner);
@@ -3282,7 +3172,7 @@ export class DayTimelineView extends ItemView {
     if (this.rangeTotalEl) {
       let text = "";
       const multi = this.mode === "week" || this.mode === "3day";
-      if (show && multi && (rangePlan || rangeAct)) {
+      if (multi && (rangePlan || rangeAct)) {
         const label = this.mode === "week" ? "週" : "計";
         text = `${label}: ${this.formatRangeTotal(rangePlan, rangeAct)}`;
       }
@@ -4190,7 +4080,7 @@ export class DayTimelineView extends ItemView {
         );
       }
     }
-    if (this.storeOf(task).supportsUnscheduled && isScheduled(task)) {
+    if (isScheduled(task)) {
       menu.addItem((i) =>
         i
           .setTitle("時刻を外す（未スケジュールへ）")
@@ -4288,7 +4178,7 @@ export class DayTimelineView extends ItemView {
       mode: "create",
       initial: { ...preset, title: preset?.title ?? "", start, end, done: false },
       snapMinutes: s.snapMinutes,
-      allowUnscheduled: this.plugin.store.supportsUnscheduled,
+      allowUnscheduled: true,
       dateField: { value: dateKey(date) },
       tagChoices: s.tagColors,
       tagFieldSchema: s.tagFieldSchema,
@@ -4369,7 +4259,7 @@ export class DayTimelineView extends ItemView {
       mode: "edit",
       initial: this.draftOf(task),
       snapMinutes: this.plugin.settings.snapMinutes,
-      allowUnscheduled: this.plugin.store.supportsUnscheduled,
+      allowUnscheduled: true,
       dateField: {
         value: dateKey(date),
         allowEmpty: allowClearDate,
@@ -4661,7 +4551,7 @@ export class DayTimelineView extends ItemView {
 
   /** 保存で ID が付いたり内容が変わったりしたあと、同じタスクを探し直す */
   private async relocateTask(
-    store: TaskSource,
+    store: BlockTaskStore,
     date: Date,
     task: Task,
     draft: TaskDraft
@@ -5110,7 +5000,7 @@ function hoursDecimal(min: number): string {
   return (min / 60).toFixed(1).replace(/\.0$/, "");
 }
 
-/** 1日の消化度（本日のサマリー・連続達成・今週のグラフ用） */
+/** 1日の消化度（本日のサマリー用） */
 interface DayStats {
   /** 数える対象の件数（自分のタスク。持ち越し済み [>] は除く） */
   total: number;
