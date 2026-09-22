@@ -436,12 +436,12 @@ export class TaskModal extends Modal {
       this.updateActualDesc();
     }
 
-    // ---- プロジェクト・誰の予定か（横並び）----
-    const pairMain = contentEl.createDiv("dt-row-pair");
-    if (this.opts.projects) this.buildProjectSection(pairMain);
+    // ---- プロジェクト・誰の予定か（1行ずつ。横に並べるとラベル列が潰れる）----
+    if (this.opts.projects) this.buildProjectSection(contentEl);
     if (this.opts.owners?.length) {
       const owners = this.opts.owners;
-      const ownerSetting = new Setting(pairMain).setName("誰の予定か");
+      const ownerSetting = new Setting(contentEl).setName("誰の予定か");
+      ownerSetting.settingEl.addClass("dt-owner-setting");
       tip(
         ownerSetting.settingEl,
         this.opts.mode === "edit"
@@ -463,7 +463,6 @@ export class TaskModal extends Modal {
       });
       paintDot();
     }
-    if (!pairMain.childElementCount) pairMain.remove();
 
     // ---- タグ（親タグ → サブタグの2段。書き込むのは最も深い1つ）----
     if (this.tagChoices.length) {
@@ -806,6 +805,7 @@ export class TaskModal extends Modal {
   private buildProjectSection(contentEl: HTMLElement): Setting {
     const projects = this.opts.projects ?? [];
     const setting = new Setting(contentEl).setName("プロジェクト");
+    setting.settingEl.addClass("dt-project-setting");
     setting.settingEl.setAttr(
       "title",
       "大きなタスクにまとめると、日をまたいでメモや進捗を共有できます。↗ ボタンでプロジェクトノートを開けます。"
