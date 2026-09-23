@@ -1785,8 +1785,22 @@
 
 /* ---------- モーダル ---------- */
 .dt-modal .setting-item {
-  border-top: none;
   padding: 8px 0;
+}
+/* 行の区切り線はダイアログ側で 1 本だけ引く。Obsidian やテーマが .setting-item に引く線と
+   プラグイン自身の線が重なって二重線になっていたので、テーマの線は消して（詳細度を上げて勝たせる）、
+   直接の子要素の間にだけ引き直す。「実績」は「時間」の直下に詰めるので線を引かない */
+.modal.dt-modal .modal-content .setting-item {
+  border-top: none;
+  border-bottom: none;
+}
+.modal.dt-modal .modal-content > :not(:first-child),
+.modal.dt-modal .dt-details-body,
+.modal.dt-modal .dt-details-body > :not(:first-child) {
+  border-top: 1px solid var(--background-modifier-border);
+}
+.modal.dt-modal .modal-content > .dt-tight {
+  border-top: none;
 }
 .dt-modal .dt-title-input {
   width: 100%;
@@ -2110,9 +2124,7 @@
 }
 /* ステップ */
 .dt-steps {
-  padding: 6px 0 4px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 4px;
+  padding: 6px 0 8px;
 }
 .dt-steps-head {
   display: flex;
