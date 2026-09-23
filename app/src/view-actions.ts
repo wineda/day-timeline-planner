@@ -7,7 +7,7 @@ import { Menu, Notice, moment, setIcon } from "obsidian";
 import { Task, TaskDraft, isScheduled } from "./model";
 import { ConfirmModal, TaskModal, formatActualRanges, type OtherActual } from "./modal";
 import { subtractActualRanges, type ActualRange } from "./markdown/blocks";
-import { projectDisplayName } from "./project";
+import { projectDisplayName, type ProjectDoc } from "./project";
 import { newBlockId } from "./markdown/id";
 import { noteRecurringDeletion, RecurringModal } from "./recurring";
 import { BlockTaskStore, INBOX_DATE } from "./store";
@@ -23,163 +23,248 @@ import {
   stripTags,
 } from "./util";
 import type { DayTimelineView } from "./view";
-import { TRANSFER_CONFLICT_MESSAGE, serialQueue } from "./view-shared";
+import { TRANSFER_CONFLICT_MESSAGE, addSubmenu, serialQueue } from "./view-shared";
 
 export class ActionsMixin {
-  /** 日付未定（Inbox のノートにある）タスクの右クリックメニュー（Inbox・プロジェクトパネル共通） */
+  /**
+   * 日付未定（Inbox のノートにある）タスクの右クリックメニュー（Inbox・プロジェクトパネル共通）。
+   * 並びはタスクのメニュー（showTaskMenu）と同じ: このタスク → 予定を動かす → 開く → 削除
+   */
   showInboxTaskMenu(this: DayTimelineView, task: Task, e: MouseEvent): void {
-    const menu = new Menu();
-    menu.addItem((i) => i.setTitle("編集").setIcon("pencil").onClick(() => this.openInboxEditModal(task)));
-    menu.addItem((i) =>
-      i
-        .setTitle(task.done ? "未完了に戻す" : "完了にする")
-        .setIcon("check")
-        .onClick(() => void this.commitInboxUpdate(task, { ...this.draftOf(task), done: !task.done }))
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle("今日へ送る（未スケジュール）")
-        .setIcon("calendar")
-        .onClick(() => void this.commitInboxToDay(task, startOfDay(new Date())))
-    );
-    if (this.mode === "day" && !isToday(this.date)) {
+    const docs = task.project ? this.projectDocsFor(task.project) : Promise.resolve([]);
+    void docs.then((docList) => {
+      const menu = new Menu();
+      menu.addItem((i) => i.setTitle("編集…").setIcon("pencil").onClick(() => this.openInboxEditModal(task)));
       menu.addItem((i) =>
         i
-          .setTitle(`${moment(this.date).format("M月D日")} へ送る（未スケジュール）`)
-          .setIcon("calendar")
-          .onClick(() => void this.commitInboxToDay(task, this.date))
+          .setTitle(task.done ? "未完了に戻す" : "完了にする")
+          .setIcon("check")
+          .onClick(() => void this.commitInboxUpdate(task, { ...this.draftOf(task), done: !task.done }))
       );
-    }
-    menu.addItem((i) =>
-      i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openInboxTaskInNote(task))
-    );
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle("削除").setIcon("trash").onClick(() => void this.commitInboxDelete(task))
-    );
-    menu.showAtMouseEvent(e);
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i
+          .setTitle("今日へ送る（時刻なし）")
+          .setIcon("calendar")
+          .onClick(() => void this.commitInboxToDay(task, startOfDay(new Date())))
+      );
+      if (this.mode === "day" && !isToday(this.date)) {
+        menu.addItem((i) =>
+          i
+            .setTitle(`${moment(this.date).format("M月D日")}へ送る（時刻なし）`)
+            .setIcon("calendar")
+            .onClick(() => void this.commitInboxToDay(task, this.date))
+        );
+      }
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openInboxTaskInNote(task))
+      );
+      if (task.project) this.addDocumentsSubmenu(menu, task.project, docList, true);
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i.setTitle("削除").setIcon("trash").onClick(() => void this.commitInboxDelete(task))
+      );
+      menu.showAtPosition({ x: e.clientX, y: e.clientY });
+    });
   }
 
-  /** タスクの右クリックメニュー（タイムライン・トレイ共通） */
+  /**
+   * タスクの右クリックメニュー（タイムライン・一覧共通）。
+   * 区切りで 5 つに分ける: このタスク（編集・完了・計測）→ 予定を動かす（時刻・持ち越し・Inbox・渡す）
+   * → 開く（ノート・ドキュメント・チケット）→ 定期タスク → 削除。
+   * 「渡す」（メンバー）と「ドキュメント」（プロジェクトノートとそのドキュメントの行）はサブメニュー
+   */
   showTaskMenu(this: DayTimelineView, date: Date, task: Task, e: MouseEvent): void {
-    const menu = new Menu();
-    menu.addItem((i) =>
-      i.setTitle("編集").setIcon("pencil").onClick(() => this.openEditModal(date, task))
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle(task.done ? "未完了に戻す" : "完了にする")
-        .setIcon("check")
-        .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), done: !task.done }))
-    );
-    if (this.plugin.blockStoreFor(task.owner)) {
-      const tr = this.plugin.settings.tracking;
-      const isTracking =
-        !!tr && !!task.blockId && tr.blockId === task.blockId && (tr.owner ?? null) === (task.owner ?? null);
+    const docs = task.project ? this.projectDocsFor(task.project) : Promise.resolve([]);
+    void docs.then((docList) => {
+      const menu = new Menu();
+      const s = this.plugin.settings;
+
+      // ---- このタスク ----
       menu.addItem((i) =>
-        isTracking
-          ? i
-              .setTitle("計測を終了して実績に記録")
-              .setIcon("square")
-              .onClick(() => void this.plugin.stopTaskTracking(true))
-          : i
-              .setTitle("実績の計測を開始")
-              .setIcon("play")
-              .onClick(() => void this.plugin.startTaskTracking(date, task))
+        i.setTitle("編集…").setIcon("pencil").onClick(() => this.openEditModal(date, task))
       );
-    }
-    menu.addItem((i) =>
-      i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openTaskInNote(date, task))
-    );
-    if (task.project && this.plugin.projects) {
-      const link = task.project;
       menu.addItem((i) =>
         i
-          .setTitle(`プロジェクト「${projectDisplayName(link)}」を開く`)
-          .setIcon("arrow-up-right")
-          .onClick(() => void this.plugin.openProject(link))
+          .setTitle(task.done ? "未完了に戻す" : "完了にする")
+          .setIcon("check")
+          .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), done: !task.done }))
       );
-    }
-    {
-      const url = this.ticketUrlOf(task);
-      if (url && task.ticket) {
+      {
+        const tr = s.tracking;
+        const isTracking =
+          !!tr && !!task.blockId && tr.blockId === task.blockId && (tr.owner ?? null) === (task.owner ?? null);
         menu.addItem((i) =>
-          i
-            .setTitle(`チケット #${task.ticket?.id} を開く`)
-            .setIcon("external-link")
-            .onClick(() => window.open(url))
+          isTracking
+            ? i
+                .setTitle("計測を終了して実績に記録")
+                .setIcon("square")
+                .onClick(() => void this.plugin.stopTaskTracking(true))
+            : i
+                .setTitle("実績の計測を開始")
+                .setIcon("play")
+                .onClick(() => void this.plugin.startTaskTracking(date, task))
         );
       }
-    }
-    if (isScheduled(task)) {
-      menu.addItem((i) =>
-        i
-          .setTitle("時刻を外す（未スケジュールへ）")
-          .setIcon("timer-off")
-          .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), start: null, end: null }))
-      );
-    }
-    if (this.plugin.blockStoreFor(task.owner) && !task.done && !task.forwarded) {
-      menu.addItem((i) =>
-        i
-          .setTitle("翌日へ持ち越す（記録を残す）")
-          .setIcon("corner-down-right")
-          .onClick(() => void this.commitCarryOver(date, task))
-      );
-    }
-    if (this.plugin.blockStore() && this.plugin.settings.members.length) {
-      const targets: { id: string | null; name: string }[] = [
-        { id: null, name: "自分" },
-        ...this.plugin.settings.members.map((m) => ({ id: m.id, name: m.name || "?" })),
-      ].filter((o) => (o.id ?? null) !== (task.owner ?? null));
-      for (const o of targets) {
+      menu.addSeparator();
+
+      // ---- 予定を動かす ----
+      if (isScheduled(task)) {
         menu.addItem((i) =>
           i
-            .setTitle(`${o.name}の予定にする`)
-            .setIcon("user")
-            .onClick(() => void this.commitChangeOwner(date, task, { ...this.draftOf(task), owner: o.id }))
+            .setTitle("時刻を外す")
+            .setIcon("timer-off")
+            .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), start: null, end: null }))
         );
       }
-    }
-    if (this.plugin.inbox && !task.owner) {
+      if (!task.done && !task.forwarded) {
+        menu.addItem((i) =>
+          i
+            .setTitle("翌日へ持ち越す")
+            .setIcon("corner-down-right")
+            .onClick(() => void this.commitCarryOver(date, task))
+        );
+      }
+      if (this.plugin.inbox && !task.owner) {
+        menu.addItem((i) =>
+          i.setTitle("Inbox へ戻す").setIcon("inbox").onClick(() => void this.commitDayToInbox(date, task))
+        );
+      }
+      if (s.members.length) {
+        // 渡す先: 自分（他の人の予定のときだけ）と、いまの持ち主以外のメンバー
+        const targets: { id: string | null; name: string }[] = [
+          { id: null, name: "自分に戻す" },
+          ...s.members.map((m) => ({ id: m.id, name: m.name || "?" })),
+        ].filter((o) => (o.id ?? null) !== (task.owner ?? null));
+        addSubmenu(menu, "渡す", "users", (sub) => {
+          for (const o of targets) {
+            sub.addItem((i) =>
+              i
+                .setTitle(o.name)
+                .setIcon("user")
+                .onClick(() => void this.commitChangeOwner(date, task, { ...this.draftOf(task), owner: o.id }))
+            );
+          }
+        });
+      }
+      menu.addSeparator();
+
+      // ---- 開く ----
+      menu.addItem((i) =>
+        i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openTaskInNote(date, task))
+      );
+      if (task.project) this.addDocumentsSubmenu(menu, task.project, docList, true);
+      {
+        const url = this.ticketUrlOf(task);
+        if (url && task.ticket) {
+          menu.addItem((i) =>
+            i
+              .setTitle(`チケット #${task.ticket?.id} を開く`)
+              .setIcon("external-link")
+              .onClick(() => window.open(url))
+          );
+        }
+      }
+      menu.addSeparator();
+
+      // ---- 定期タスク ----
       menu.addItem((i) =>
         i
-          .setTitle("Inbox へ戻す（日付を外す）")
-          .setIcon("inbox")
-          .onClick(() => void this.commitDayToInbox(date, task))
+          .setTitle("定期タスクとして登録…")
+          .setIcon("repeat")
+          .onClick(() => {
+            new RecurringModal(this.app, {
+              preset: {
+                title: task.title,
+                start: task.start,
+                end: task.end,
+                weekday: date.getDay(),
+                project: task.project,
+                // タスクのステップを「共通のステップ」の初期値に（毎回未チェックで入る）
+                steps: task.steps.map((st) => st.text.trim()).filter(Boolean),
+              },
+              tagChoices: s.tagColors,
+              projects: this.plugin.projects?.list(),
+              onSubmit: async (rule) => {
+                s.recurring.push(rule);
+                await this.plugin.saveSettings();
+                new Notice(`定期タスク「${rule.title}」を登録しました`);
+              },
+            }).open();
+          })
       );
+      menu.addSeparator();
+
+      // ---- 削除 ----
+      menu.addItem((i) =>
+        i.setTitle("削除").setIcon("trash").onClick(() => void this.commitDelete(date, task))
+      );
+      menu.showAtPosition({ x: e.clientX, y: e.clientY });
+    });
+  }
+
+  /**
+   * タスクのプロジェクトのドキュメント（プロジェクトノートの「ドキュメント」の行に書かれたリンク）。
+   * パネルの集計に載っていればそこから、無ければノートを読む
+   */
+  async projectDocsFor(this: DayTimelineView, linktext: string): Promise<ProjectDoc[]> {
+    const sum = this.projectData.find((p) => p.ref.linktext === linktext);
+    if (sum?.fields) return sum.fields.docs;
+    try {
+      const state = await this.plugin.projects?.selfState(linktext);
+      return state?.fields.docs ?? [];
+    } catch (e) {
+      console.error(e);
+      return [];
     }
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i
-        .setTitle("定期タスクとして登録…")
-        .setIcon("repeat")
-        .onClick(() => {
-          new RecurringModal(this.app, {
-            preset: {
-              title: task.title,
-              start: task.start,
-              end: task.end,
-              weekday: date.getDay(),
-              project: task.project,
-              // タスクのステップを「共通のステップ」の初期値に（毎回未チェックで入る）
-              steps: task.steps.map((st) => st.text.trim()).filter(Boolean),
-            },
-            tagChoices: this.plugin.settings.tagColors,
-            projects: this.plugin.projects?.list(),
-            onSubmit: async (rule) => {
-              this.plugin.settings.recurring.push(rule);
-              await this.plugin.saveSettings();
-              new Notice(`定期タスク「${rule.title}」を登録しました`);
-            },
-          }).open();
-        })
-    );
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle("削除").setIcon("trash").onClick(() => void this.commitDelete(date, task))
-    );
-    menu.showAtMouseEvent(e);
+  }
+
+  /**
+   * 「ドキュメント」のサブメニュー: プロジェクトノート（withProjectNote のとき）と、
+   * そのノートの「ドキュメント」の行に書かれたリンク。クリックで開く
+   */
+  addDocumentsSubmenu(
+    this: DayTimelineView,
+    menu: Menu,
+    projectLink: string,
+    docs: ProjectDoc[],
+    withProjectNote: boolean
+  ): void {
+    addSubmenu(menu, "ドキュメント", "book-open", (sub) => {
+      if (withProjectNote) {
+        sub.addItem((i) =>
+          i
+            .setTitle(`プロジェクトノート「${projectDisplayName(projectLink)}」`)
+            .setIcon("arrow-up-right")
+            .onClick(() => void this.plugin.openProject(projectLink))
+        );
+        if (docs.length) sub.addSeparator();
+      }
+      for (const doc of docs) {
+        sub.addItem((i) =>
+          i
+            .setTitle(doc.label)
+            .setIcon(doc.external ? "external-link" : "file-text")
+            .onClick(() => this.openDoc(projectLink, doc))
+        );
+      }
+      if (!docs.length && !withProjectNote) {
+        sub.addItem((i) => i.setTitle("ドキュメントの行はありません").setDisabled(true));
+      }
+    });
+  }
+
+  /** プロジェクトの「ドキュメント」の行のリンクを開く（外部 URL はブラウザで） */
+  openDoc(this: DayTimelineView, projectLink: string, doc: ProjectDoc): void {
+    if (doc.external) {
+      window.open(doc.target);
+      return;
+    }
+    void this.app.workspace.openLinkText(doc.target, projectLink + ".md", false).catch((e) => {
+      console.error(e);
+      new Notice("ドキュメントを開けませんでした: " + String(e));
+    });
   }
 
   // ---------- モーダル ----------

@@ -966,14 +966,7 @@ export class SidebarMixin {
 
   /** プロジェクトのドキュメントを開く（Wikilink はノート・外部 URL はブラウザ） */
   openProjectDoc(this: DayTimelineView, sum: ProjectSummary, doc: ProjectDoc): void {
-    if (doc.external) {
-      window.open(doc.target);
-      return;
-    }
-    void this.app.workspace.openLinkText(doc.target, sum.ref.linktext + ".md", false).catch((e) => {
-      console.error(e);
-      new Notice("ドキュメントを開けませんでした: " + String(e));
-    });
+    this.openDoc(sum.ref.linktext, doc);
   }
 
   /** プロジェクト行の右クリックメニュー（ノートを開く・タスクを追加・チケット・ドキュメント・グループの付け替え・完了にする） */
@@ -1005,13 +998,9 @@ export class SidebarMixin {
         hasExtras = true;
       }
     }
-    for (const doc of fields?.docs ?? []) {
-      menu.addItem((i) =>
-        i
-          .setTitle(`ドキュメント「${doc.label}」を開く`)
-          .setIcon(doc.external ? "external-link" : "file-text")
-          .onClick(() => this.openProjectDoc(sum, doc))
-      );
+    if (fields?.docs.length) {
+      // タスクのメニューと同じ「ドキュメント」のサブメニュー（ノート自身は上の項目で開くので入れない）
+      this.addDocumentsSubmenu(menu, key, fields.docs, false);
       hasExtras = true;
     }
     if (hasExtras) menu.addSeparator();
