@@ -31,6 +31,31 @@ const DELETION_LOG_HEADER = `# 操作ログ
 Day Timeline Planner がタスクを削除したときの記録です。「消えたタスク」が意図した削除だったかを後から確かめられます（設定「削除したタスクの記録を残す」でオフにできます）。
 `;
 
+/** ブロックをノート間で移した結果（transferTo / moveToDate） */
+export type TransferResult =
+  /** 移動先に書き、元から消した */
+  | "moved"
+  /** 元のノートにタスクが無かった（何も書いていない） */
+  | "missing"
+  /** 読み取ってから消すまでの間に元のノートが変わっていて消せなかった。移動先に入れた分は取り消した（元はそのまま） */
+  | "conflict";
+
+/** 移動先に書いた後、元から消すのに失敗した（同じブロックが両方のノートに残っている） */
+export class DuplicateAfterTransferError extends Error {
+  constructor(
+    readonly fromPath: string,
+    readonly toPath: string,
+    cause: unknown
+  ) {
+    super(
+      `移動先（${toPath}）には書き込みましたが、元のノート（${fromPath}）から消せませんでした。` +
+        `同じタスクが両方に残っています。元のノートの方を手で消してください` +
+        (cause ? `（${cause instanceof Error ? cause.message : String(cause)}）` : "")
+    );
+    this.name = "DuplicateAfterTransferError";
+  }
+}
+
 /** 日付 → ノートの対応と、ノートの作成 */
 abstract class NoteStore {
   /** このストアが扱う人（null = 自分）。読み込んだタスクに刻印する */
@@ -76,7 +101,6 @@ abstract class NoteStore {
   abstract create(date: Date, draft: TaskDraft): Promise<boolean>;
   abstract update(date: Date, task: Task, draft: TaskDraft): Promise<boolean>;
   abstract remove(date: Date, task: Task): Promise<boolean>;
-  abstract moveToDate(from: Date, task: Task, to: Date): Promise<boolean | null>;
   abstract linkTo(date: Date, task: Task): Promise<string | null>;
 
   /** ノートが無ければ（テンプレート付きで）作成して返す */
@@ -310,37 +334,65 @@ export class BlockTaskStore extends NoteStore {
     }
   }
 
-  /** ブロックごと別の日のノートへ移す */
-  async moveToDate(from: Date, task: Task, to: Date): Promise<boolean | null> {
-    const opts = this.options();
-    let block: string[] | null = null;
-    const removed = await this.process(from, (c) => {
-      const r = removeTask(c, this.refOf(task), opts);
-      if (!r) return null;
-      block = r.block;
-      return r.content;
-    });
-    if (!removed || !block) return false;
-    return this.process(to, (c) => insertBlockLines(c, block as string[], task.start, opts));
+  /** ブロックごと別の日のノートへ移す（transferTo の同じストア版。途中で失敗しても元のノートに残る） */
+  async moveToDate(from: Date, task: Task, to: Date): Promise<TransferResult> {
+    return this.transferTo(from, task, this, to, task.start);
   }
 
   /**
-   * ブロックをノートから取り出す（別のノート/ストアへ移すために使う）。
-   * 見つからなければ null。
+   * ブロックを from の日のノートから、別のストア（別の人・Inbox でもよい）の toDate の日へ移す。
+   * 「先に移動先へ書き、それから元を消す」順なので、途中で失敗してもブロックは消えない。
+   * - 移動先への書き込みに失敗: 例外。元のノートはまだ触っていない
+   * - 元から消せなかった（読み取り後に元のノートが変わった）: 移動先に入れた分を取り消して "conflict"
+   * - 移動先に書いた後、元から消すのにも取り消しにも失敗: DuplicateAfterTransferError（両方に残っている）
+   * start は移動先での差し込み位置（時刻順の設定のとき）に使う。ブロックの中身は書き換えない
    */
-  async takeBlock(date: Date, task: Task): Promise<string[] | null> {
-    let block: string[] | null = null;
-    const ok = await this.process(date, (c) => {
-      const r = removeTask(c, this.refOf(task), this.options());
-      if (!r) return null;
-      block = r.block;
-      return r.content;
-    });
-    return ok ? block : null;
+  async transferTo(
+    from: Date,
+    task: Task,
+    to: BlockTaskStore,
+    toDate: Date,
+    start: number | null
+  ): Promise<TransferResult> {
+    const block = await this.readBlock(from, task);
+    if (!block) return "missing";
+    await to.putBlock(toDate, block, start);
+    let removed: boolean;
+    try {
+      removed = await this.dropBlock(from, task);
+    } catch (e) {
+      throw new DuplicateAfterTransferError(this.pathFor(from), to.pathFor(toDate), e);
+    }
+    if (removed) return "moved";
+    // 読んでから消すまでの間に元のノートが変わった（同期や手編集）。移動先に入れた分を戻し、元はそのままにする
+    let undone = false;
+    try {
+      undone = await to.dropBlock(toDate, task);
+    } catch (e) {
+      console.error(e);
+    }
+    if (!undone) throw new DuplicateAfterTransferError(this.pathFor(from), to.pathFor(toDate), null);
+    return "conflict";
   }
 
-  /** 取り出したブロックをそのまま差し込む */
-  async putBlock(date: Date, block: string[], start: number | null): Promise<boolean> {
+  /** ブロックの行を読むだけ（消さない）。ノートが無い・見つからなければ null */
+  private async readBlock(date: Date, task: Task): Promise<string[] | null> {
+    const file = this.getFile(date);
+    if (!file) return null;
+    // 直前の書き込みが反映される前のキャッシュを掴まないよう、cachedRead ではなく read で読む
+    const content = await this.app.vault.read(file);
+    const r = removeTask(content, this.refOf(task), this.options());
+    return r ? r.block : null;
+  }
+
+  /** ブロックを消すだけ（削除ログは書かない。移動の後始末用）。ノートが無い・見つからなければ false */
+  private async dropBlock(date: Date, task: Task): Promise<boolean> {
+    if (!this.getFile(date)) return false;
+    return this.process(date, (c) => removeTask(c, this.refOf(task), this.options())?.content ?? null);
+  }
+
+  /** 読み取ったブロックの行をそのまま差し込む（ノートが無ければ作る） */
+  private async putBlock(date: Date, block: string[], start: number | null): Promise<boolean> {
     return this.process(date, (c) => insertBlockLines(c, block, start, this.options()));
   }
 

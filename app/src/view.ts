@@ -59,6 +59,7 @@ import {
   clamp,
   contrastTextColor,
   dateKey,
+  errorText,
   formatDuration,
   isSameDay,
   isToday,
@@ -4549,11 +4550,11 @@ export class DayTimelineView extends ItemView {
    */
   private async commitMove(from: Date, task: Task, to: Date, draft?: TaskDraft): Promise<void> {
     try {
-      const ok = await this.storeOf(task).moveToDate(from, task, to);
-      if (ok === false) {
+      const r = await this.storeOf(task).moveToDate(from, task, to);
+      if (r === "missing") {
         new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
-      } else if (ok === null) {
-        new Notice("この形式では日をまたぐ移動に対応していません");
+      } else if (r === "conflict") {
+        new Notice(TRANSFER_CONFLICT_MESSAGE);
       } else {
         if (draft) {
           const updated = await this.storeOf(task).update(to, task, draft);
@@ -4563,7 +4564,7 @@ export class DayTimelineView extends ItemView {
       }
     } catch (e) {
       console.error(e);
-      new Notice("タスクを移動できませんでした: " + String(e));
+      new Notice("タスクを移動できませんでした: " + errorText(e));
     }
     await this.reload();
   }
@@ -4645,11 +4646,13 @@ export class DayTimelineView extends ItemView {
     const to = this.plugin.blockStoreFor(data.owner);
     if (!from || !to || from === to) return;
     try {
-      const block = await from.takeBlock(date, task);
-      if (!block) {
+      // 先に移動先へ書いてから元を消す（途中で失敗してもブロックは消えない）
+      const r = await from.transferTo(date, task, to, date, data.start ?? task.start);
+      if (r === "missing") {
         new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      } else if (r === "conflict") {
+        new Notice(TRANSFER_CONFLICT_MESSAGE);
       } else {
-        await to.putBlock(date, block, data.start ?? task.start);
         const ok = await to.update(date, task, { ...data, owner: undefined });
         if (!ok) new Notice("移しましたが、内容を更新できませんでした");
         const name = this.plugin.memberOf(data.owner)?.name ?? "自分";
@@ -4657,7 +4660,7 @@ export class DayTimelineView extends ItemView {
       }
     } catch (e) {
       console.error(e);
-      new Notice("タスクを移せませんでした: " + String(e));
+      new Notice("タスクを移せませんでした: " + errorText(e));
     }
     await this.reload();
   }
@@ -4777,11 +4780,12 @@ export class DayTimelineView extends ItemView {
     const day = this.plugin.blockStore();
     if (!inbox || !day) return;
     try {
-      const block = await inbox.takeBlock(INBOX_DATE, task);
-      if (!block) {
+      const r = await inbox.transferTo(INBOX_DATE, task, day, to, draft?.start ?? null);
+      if (r === "missing") {
         new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
+      } else if (r === "conflict") {
+        new Notice(TRANSFER_CONFLICT_MESSAGE);
       } else {
-        await day.putBlock(to, block, draft?.start ?? null);
         if (draft) {
           const ok = await day.update(to, task, draft);
           if (!ok) new Notice("移動しましたが、時刻を更新できませんでした");
@@ -4790,7 +4794,7 @@ export class DayTimelineView extends ItemView {
       }
     } catch (e) {
       console.error(e);
-      new Notice("タスクを移動できませんでした: " + String(e));
+      new Notice("タスクを移動できませんでした: " + errorText(e));
     }
     await this.reload();
   }
@@ -4801,11 +4805,12 @@ export class DayTimelineView extends ItemView {
     const day = this.plugin.blockStore();
     if (!inbox || !day) return;
     try {
-      const block = await day.takeBlock(from, task);
-      if (!block) {
+      const r = await day.transferTo(from, task, inbox, INBOX_DATE, null);
+      if (r === "missing") {
         new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
+      } else if (r === "conflict") {
+        new Notice(TRANSFER_CONFLICT_MESSAGE);
       } else {
-        await inbox.putBlock(INBOX_DATE, block, null);
         // 時刻を外し、Inbox に入れた日を「登録日」として刻む（滞留日数を後から判定できるように）
         await inbox.update(INBOX_DATE, task, {
           ...(draft ?? this.draftOf(task)),
@@ -4817,7 +4822,7 @@ export class DayTimelineView extends ItemView {
       }
     } catch (e) {
       console.error(e);
-      new Notice("タスクを移動できませんでした: " + String(e));
+      new Notice("タスクを移動できませんでした: " + errorText(e));
     }
     await this.reload();
   }
@@ -4931,6 +4936,10 @@ function summaryMessage(st: DayStats): string {
   if (r >= 0.5) return "折り返し";
   return "いい調子";
 }
+
+/** 移動の途中で元のノートが変わっていたとき（transferTo が "conflict" を返したとき）の通知 */
+const TRANSFER_CONFLICT_MESSAGE =
+  "移動中にノートが変更されたため、移動を取り消しました。もう一度お試しください。";
 
 /**
  * 非同期処理を1つずつ順番に実行するキュー。
