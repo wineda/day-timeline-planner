@@ -1,8 +1,13 @@
 /**
  * 定期タスク: 曜日と時刻を決めたルールに従って、その日のノートにタスクを入れる。
  *
- * 発生日（日 × ルール）ごとに RecurringInstance を記録し、
- * 「未反映 / 反映済み / 取り消し / 個別調整」を区別できるようにしている。
+ * 発生日（日 × ルール）ごとの帳簿は recurringInstances の 1 つだけ:
+ *   記録なし                     … 未反映（その日を表示すると入る）
+ *   { blockId: null, override }  … 未反映・個別調整の予約あり
+ *   { blockId: "…" }             … 反映済み（ノートのブロックを blockId で追う。detached なら個別調整済み）
+ *   { blockId: null, skipped }   … この日は入れない（取り消し）
+ * ノートのタスクとの照合は blockId だけで行い、タイトルの一致では照合しない
+ * （手書きの同名タスクを定期タスクと取り違えて書き換えたり消したりしないため）。
  * 一覧・状態の確認・個別詳細の編集は recurring-view.ts の管理画面で行う。
  */
 import { App, Modal, Notice, Setting } from "obsidian";
@@ -22,10 +27,10 @@ import {
   setupTimeInput,
   splitKnownTags,
 } from "./modal";
-import { dateKey, formatDuration, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
+import { dateKey, errorText, formatDuration, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
 import { newBlockId } from "./markdown/id";
 import { projectDisplayName, type ProjectRef } from "./project";
-import type { Task } from "./model";
+import type { Task, TaskDraft } from "./model";
 import type { TaskStep } from "./markdown/blocks";
 
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
@@ -111,87 +116,138 @@ export function clearInstance(s: DayTimelineSettings, key: string, ruleId: strin
   if (!Object.keys(map).length) delete s.recurringInstances[key];
 }
 
-/** 反映済みリストからルールを外す */
-function clearApplied(s: DayTimelineSettings, key: string, ruleId: string): void {
-  const ids = (s.recurringApplied[key] ?? []).filter((i) => i !== ruleId);
-  if (ids.length) s.recurringApplied[key] = ids;
-  else delete s.recurringApplied[key];
+/** 記録を書き込む前の状態に戻す（ノートに書けなかった回の後始末。前の記録が無ければ消す） */
+function restoreInstance(
+  s: DayTimelineSettings,
+  key: string,
+  ruleId: string,
+  prev: RecurringInstance | undefined
+): void {
+  if (prev) setInstance(s, key, ruleId, prev);
+  else clearInstance(s, key, ruleId);
 }
+
+/**
+ * 時刻欄の 2 つの入力を読む（ルールのフォームと管理画面の個別調整で共用）。
+ * 両方空なら「時刻なし」。終了が開始より前なら翌日 0:00 までの範囲として補正する（endOfDayFix）
+ */
+export function parseTimeRange(
+  startText: string,
+  endText: string
+): { start: number | null; end: number | null } | { error: string } {
+  if (startText.trim() === "" && endText.trim() === "") return { start: null, end: null };
+  const start = parseTimeInput(startText);
+  let end = parseTimeInput(endText);
+  if (start === null || end === null) return { error: "時刻は 09:00 のように入力してください" };
+  end = endOfDayFix(start, end);
+  if (end <= start) return { error: "終了時刻は開始時刻より後にしてください" };
+  return { start, end };
+}
+
+/** applyRecurring の直列化用。複数のビューが同時に呼んでも 1 つずつ処理し、同じ回を二重に入れない */
+let applyTail: Promise<unknown> = Promise.resolve();
 
 /**
  * 表示中の日のうち今日以降について、まだ入れていない定期タスクをノートに書き込む。
  * force = true なら設定「定期タスクを自動で入れる」がオフでも書き込む（管理画面の明示操作用）。
- * 書き込んだ件数を返す。
+ * 書き込んだ件数を返す。呼び出しは直列に処理される
  */
-export async function applyRecurring(
-  plugin: DayTimelinePlugin,
-  days: Date[],
-  force = false
-): Promise<number> {
+export function applyRecurring(plugin: DayTimelinePlugin, days: Date[], force = false): Promise<number> {
+  const run = applyTail.then(() => applyRecurringNow(plugin, days, force));
+  applyTail = run.catch(() => undefined);
+  return run;
+}
+
+/** 書き込む回（帳簿に記録してからノートに書く） */
+interface PlannedOccurrence {
+  day: Date;
+  key: string;
+  rule: RecurringRule;
+  draft: TaskDraft;
+  blockId: string;
+  /** 記録する前の状態（書けなかったときに戻す） */
+  prev: RecurringInstance | undefined;
+}
+
+async function applyRecurringNow(plugin: DayTimelinePlugin, days: Date[], force: boolean): Promise<number> {
   const s = plugin.settings;
   if (!s.autoApplyRecurring && !force) return 0;
   const rules = s.recurring.filter((r) => r.enabled && r.title.trim() && r.weekdays.length);
   if (!rules.length) return 0;
-
   const today = startOfDay(new Date());
-  let count = 0;
-  let touched = false;
+  const store = plugin.blockStore();
 
+  // 1. 入れる回を決め、帳簿に先に記録して保存する。ノートに書く前に記録するので、
+  //    途中で落ちても同じ回を二重に入れることはない（記録だけ残って書けなかった回は
+  //    管理画面に「削除されています」と出て、「入れ直す」で回復できる）
+  const planned: PlannedOccurrence[] = [];
   for (const day of days) {
     if (day < today) continue;
     const key = dateKey(day);
-    const applied = new Set(s.recurringApplied[key] ?? []);
     for (const rule of rules) {
       if (!rule.weekdays.includes(day.getDay())) continue;
-      if (applied.has(rule.id)) continue;
       const inst = instanceOf(s, key, rule.id);
       if (inst?.skipped || inst?.blockId) continue; // 取り消し済み / すでに書き込み済み
       // 個別の上書き（管理画面の「個別詳細」）があればそちらを使う
       const ov = inst?.override;
       const start = ov && ov.start !== undefined ? ov.start : rule.start;
       const end = ov && ov.end !== undefined ? ov.end : rule.end;
-      // 旧リスト形式は時刻必須
       const details = ov?.details !== undefined ? ov.details : rule.details ?? "";
       const steps = buildRuleSteps(rule);
-      const draft = {
-        title: rule.title,
-        start,
-        end,
-        done: false,
-        project: rule.project ?? undefined,
-        details: details.trim() ? details : undefined,
-        steps: steps.length ? steps : undefined,
-      };
-      const blockStore = plugin.blockStore();
-      try {
-        if (blockStore) {
-          // ブロックID を控えておき、ルールを編集したときに追いかけて更新できるようにする
-          const bid = newBlockId();
-          await blockStore.createWithId(day, draft, bid);
-          setInstance(s, key, rule.id, {
-            blockId: bid,
-            // 時刻を個別に変えていた回は、以後ルール編集で上書きしない
-            ...(ov && (ov.start !== undefined || ov.end !== undefined) ? { detached: true } : {}),
-          });
-        } else {
-          await plugin.store.create(day, draft);
-        }
-        count++;
-      } catch (e) {
-        console.error(e);
-        new Notice(`定期タスク「${rule.title}」を入れられませんでした: ${String(e)}`);
-        continue;
-      }
-      applied.add(rule.id);
-      touched = true;
+      const blockId = newBlockId();
+      planned.push({
+        day,
+        key,
+        rule,
+        blockId,
+        prev: inst,
+        draft: {
+          title: rule.title,
+          start,
+          end,
+          done: false,
+          project: rule.project ?? undefined,
+          details: details.trim() ? details : undefined,
+          steps: steps.length ? steps : undefined,
+        },
+      });
+      setInstance(s, key, rule.id, {
+        blockId,
+        // 時刻を個別に変えていた回は、以後ルール編集で上書きしない
+        ...(ov && (ov.start !== undefined || ov.end !== undefined) ? { detached: true } : {}),
+      });
     }
-    if (applied.size) s.recurringApplied[key] = [...applied];
+  }
+  if (!planned.length) return 0;
+  pruneOld(s.recurringInstances, today);
+  try {
+    await plugin.persistSettings();
+  } catch (e) {
+    // 帳簿を保存できなければ何も書かない（メモリ上の記録も戻す）
+    for (const p of planned) restoreInstance(s, p.key, p.rule.id, p.prev);
+    throw e;
   }
 
-  if (touched) {
-    pruneOld(s.recurringApplied, today);
-    pruneOld(s.recurringInstances, today);
-    await plugin.persistSettings();
+  // 2. ノートに書く。書けなかった回は記録を戻して、次に表示したときにもう一度入れる
+  let count = 0;
+  let rolledBack = false;
+  for (const p of planned) {
+    try {
+      await store.createWithId(p.day, p.draft, p.blockId);
+      count++;
+    } catch (e) {
+      console.error(e);
+      new Notice(`定期タスク「${p.rule.title}」を入れられませんでした: ${errorText(e)}`);
+      restoreInstance(s, p.key, p.rule.id, p.prev);
+      rolledBack = true;
+    }
+  }
+  if (rolledBack) {
+    try {
+      await plugin.persistSettings();
+    } catch (e) {
+      console.error(e);
+    }
   }
   return count;
 }
@@ -207,22 +263,18 @@ export async function skipOccurrence(
 ): Promise<boolean> {
   const s = plugin.settings;
   const key = dateKey(date);
-  const store = plugin.blockStore();
   const inst = instanceOf(s, key, rule.id);
   let removed = false;
-  if (store && inst?.blockId) {
+  if (inst?.blockId) {
     try {
-      const tasks = (await store.load(date)).tasks;
-      const t = tasks.find((x) => x.blockId === inst.blockId);
+      const store = plugin.blockStore();
+      const t = (await store.load(date)).tasks.find((x) => x.blockId === inst.blockId);
       if (t) removed = await store.remove(date, t);
     } catch (e) {
       console.error(e);
     }
   }
   setInstance(s, key, rule.id, { blockId: null, skipped: true });
-  const applied = new Set(s.recurringApplied[key] ?? []);
-  applied.add(rule.id);
-  s.recurringApplied[key] = [...applied];
   await plugin.persistSettings();
   return removed;
 }
@@ -237,9 +289,7 @@ export async function reapplyOccurrence(
   date: Date
 ): Promise<boolean> {
   const s = plugin.settings;
-  const key = dateKey(date);
-  clearApplied(s, key, rule.id);
-  clearInstance(s, key, rule.id);
+  clearInstance(s, dateKey(date), rule.id);
   await plugin.persistSettings();
   const n = await applyRecurring(plugin, [startOfDay(date)], true);
   return n > 0;
@@ -293,34 +343,28 @@ export async function occurrenceInfo(
   date: Date,
   preloaded?: Task[]
 ): Promise<OccurrenceInfo> {
-  const s = plugin.settings;
-  const key = dateKey(date);
-  const inst = instanceOf(s, key, rule.id);
+  const inst = instanceOf(plugin.settings, dateKey(date), rule.id);
   if (inst?.skipped) return { kind: "skipped", task: null, override: null };
-  const appliedRec = (s.recurringApplied[key] ?? []).includes(rule.id) || !!inst?.blockId;
-  if (!appliedRec) {
+  if (!inst?.blockId) {
     return {
       kind: inst?.override ? "pending-custom" : "pending",
       task: null,
       override: inst?.override ?? null,
     };
   }
-  const store = plugin.blockStore();
-  if (!store) return { kind: "applied", task: null, override: null }; // 旧リスト形式では実体を追跡しない
   let tasks = preloaded;
   if (!tasks) {
     try {
-      tasks = (await store.load(date)).tasks;
+      tasks = (await plugin.blockStore().load(date)).tasks;
     } catch (e) {
       console.error(e);
       tasks = [];
     }
   }
-  const task = inst?.blockId
-    ? tasks.find((t) => t.blockId === inst.blockId) ?? null
-    : tasks.find((t) => t.title === rule.title) ?? null;
+  // 照合は blockId だけ（同名の手書きタスクを定期タスクとは見なさない）
+  const task = tasks.find((t) => t.blockId === inst.blockId) ?? null;
   if (!task) return { kind: "missing", task: null, override: null };
-  return { kind: inst?.detached ? "applied-custom" : "applied", task, override: null };
+  return { kind: inst.detached ? "applied-custom" : "applied", task, override: null };
 }
 
 /** 状態の短い表示名 */
@@ -341,7 +385,7 @@ export function describeOccurrence(kind: OccurrenceKind): string {
   }
 }
 
-/** 古い反映記録を捨てる（90日より前） */
+/** 古い記録を捨てる（90日より前） */
 function pruneOld(rec: Record<string, unknown>, today: Date): void {
   const limit = dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 90));
   for (const k of Object.keys(rec)) {
@@ -370,50 +414,37 @@ export interface PropagateResult {
  * - 共通の詳細は、その日の本文を手で変えていないときだけ書き換える
  * - 個別調整（detached）の日は触らない
  * - 曜日から外れた日は、ルール由来のまま手つかずならタスクごと消す（編集済みなら残す）
- * - ブロックID の記録が無い日（旧版で入れた分）は変更前のタイトルで照合する
- * 旧リスト形式では反映できないので null を返す。
+ * 対象は帳簿に blockId のある回だけ。ノートにそのブロックが無い日（削除・移動）は触らない
  */
 export async function propagateRecurringUpdate(
   plugin: DayTimelinePlugin,
   rule: RecurringRule,
   prev?: RecurringRule
-): Promise<PropagateResult | null> {
+): Promise<PropagateResult> {
   const s = plugin.settings;
   const store = plugin.blockStore();
-  if (!store) return null;
   const todayKey = dateKey(startOfDay(new Date()));
   const result: PropagateResult = { updated: 0, removed: 0, keptCustom: 0, keptEdited: 0 };
   let touched = false;
-  const keys = new Set([...Object.keys(s.recurringApplied), ...Object.keys(s.recurringInstances)]);
-  for (const key of [...keys].sort()) {
+  for (const key of Object.keys(s.recurringInstances).sort()) {
     if (key < todayKey) continue;
     const inst = instanceOf(s, key, rule.id);
-    const appliedRec = (s.recurringApplied[key] ?? []).includes(rule.id) || !!inst?.blockId;
-    if (!appliedRec || inst?.skipped) continue;
+    if (!inst?.blockId || inst.skipped) continue; // 未反映・取り消しの日は対象外
     const date = dateFromKey(key);
     if (!date) continue;
-    let tasks: Task[];
+    let task: Task | null;
     try {
-      tasks = (await store.load(date)).tasks;
+      task = (await store.load(date)).tasks.find((t) => t.blockId === inst.blockId) ?? null;
     } catch (e) {
       console.error(e);
       continue;
     }
-    const task = inst?.blockId
-      ? tasks.find((t) => t.blockId === inst.blockId) ?? null
-      : tasks.find((t) => t.title === (prev?.title ?? rule.title)) ?? null;
-    if (!task) continue; // 消されている日は触らない
-    if (task.blockId && !inst?.blockId) {
-      // 追跡できていなかった分をここで覚える（次からブロックID で追える）
-      setInstance(s, key, rule.id, { ...(inst ?? {}), blockId: task.blockId });
-      touched = true;
-    }
+    if (!task) continue; // 消されている日は触らない（管理画面には「削除されています」と出る）
     if (!rule.weekdays.includes(date.getDay())) {
       if (prev && isUntouched(task, prev)) {
         try {
           if (await store.remove(date, task)) {
             result.removed++;
-            clearApplied(s, key, rule.id);
             clearInstance(s, key, rule.id);
             touched = true;
           }
@@ -425,7 +456,7 @@ export async function propagateRecurringUpdate(
       }
       continue;
     }
-    if (inst?.detached) {
+    if (inst.detached) {
       result.keptCustom++;
       continue;
     }
@@ -458,18 +489,7 @@ export async function propagateRecurringUpdate(
       patch.steps = buildRuleSteps(rule);
     }
     try {
-      const ok = task.blockId
-        ? await store.updateByBlockId(date, task.blockId, patch)
-        : await store.update(date, task, {
-            title: patch.title,
-            start: patch.start,
-            end: patch.end,
-            done: task.done,
-            ...(patch.project !== undefined ? { project: patch.project } : {}),
-            ...(patch.details !== undefined ? { details: patch.details } : {}),
-            ...(patch.steps !== undefined ? { steps: patch.steps } : {}),
-          });
-      if (ok) result.updated++;
+      if (await store.updateByBlockId(date, inst.blockId, patch)) result.updated++;
     } catch (e) {
       console.error(e);
     }
@@ -499,12 +519,8 @@ export async function propagateAndNotify(
   plugin: DayTimelinePlugin,
   rule: RecurringRule,
   prev?: RecurringRule
-): Promise<PropagateResult | null> {
+): Promise<PropagateResult> {
   const r = await propagateRecurringUpdate(plugin, rule, prev);
-  if (!r) {
-    new Notice("ルールを保存しました（リスト形式では書き込み済みのタスクへは反映されません）");
-    return null;
-  }
   const parts: string[] = [];
   if (r.updated) parts.push(`${r.updated} 件を書き換え`);
   if (r.removed) parts.push(`曜日から外れた ${r.removed} 件を削除`);
@@ -742,13 +758,7 @@ export class RuleForm {
   }
 
   private parse(): { start: number | null; end: number | null } | { error: string } {
-    if (this.startText.trim() === "" && this.endText.trim() === "") return { start: null, end: null };
-    const start = parseTimeInput(this.startText);
-    let end = parseTimeInput(this.endText);
-    if (start === null || end === null) return { error: "時刻は 09:00 のように入力してください" };
-    end = endOfDayFix(start, end);
-    if (end <= start) return { error: "終了時刻は開始時刻より後にしてください" };
-    return { start, end };
+    return parseTimeRange(this.startText, this.endText);
   }
 
   private updateHint(): void {

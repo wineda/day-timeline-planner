@@ -119,6 +119,11 @@ export function contrastTextColor(hex: string): string {
 }
 
 /** 表示用に #タグ を取り除いたタイトル（タグしか無ければそのまま返す） */
+/** 通知に出すエラーの文言（Error なら message だけ。"Error: " の接頭辞を出さない） */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function stripTags(text: string): string {
   const stripped = text
     .replace(/(^|[\s(（「\[])#[\p{L}\p{N}_\-\/]+/gu, "$1")

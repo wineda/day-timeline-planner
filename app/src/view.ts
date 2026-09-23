@@ -11,49 +11,16 @@ import {
   getIcon,
   moment,
   setIcon,
-  type HoverParent,
-  type HoverPopover,
 } from "obsidian";
 import type DayTimelinePlugin from "./main";
-import {
-  ScheduledTask,
-  Task,
-  TaskDraft,
-  isScheduled,
-  stepProgress,
-  taskProgress,
-} from "./model";
-import { ConfirmModal, PromptModal, TaskModal, formatActualRanges, type OtherActual } from "./modal";
-import { subtractActualRanges, type ActualRange, type TaskStep, type TicketRef } from "./markdown/blocks";
-import {
-  groupProjects,
-  isChildSettled,
-  knownGroupNames,
-  projectDisplayName,
-  renderGroupIcon,
-  type ProjectChild,
-  type ProjectDoc,
-  type ProjectFields,
-  type ProjectGroup,
-  type ProjectSummary,
-} from "./project";
-import { newBlockId } from "./markdown/id";
+import { ScheduledTask, Task, isScheduled } from "./model";
+import { projectDisplayName, type ProjectSummary } from "./project";
 import { iconName } from "./icons";
 import { DropdownMenu, type MenuLike } from "./dropdown";
 import { layoutEvents, type LayoutInfo } from "./layout";
-import {
-  DEFAULT_SETTINGS,
-  colorForTags,
-  ticketUrl,
-  MAX_HOUR_HEIGHT,
-  MIN_HOUR_HEIGHT,
-  type Member,
-  type ProjectsFilter,
-  type SidebarTab,
-  type ViewMode,
-} from "./settings";
-import { applyRecurring, instanceOf, noteRecurringDeletion, RecurringModal } from "./recurring";
-import { BlockTaskStore, INBOX_DATE } from "./store";
+import { DEFAULT_SETTINGS, colorForTags, ticketUrl, type Member, type ViewMode } from "./settings";
+import { applyRecurring } from "./recurring";
+import { INBOX_DATE } from "./store";
 import {
   addDays,
   clamp,
@@ -68,125 +35,39 @@ import {
   startOfWeek,
   stripTags,
 } from "./util";
+import { SidebarMixin } from "./view-sidebar";
+import { PointerMixin } from "./view-pointer";
+import { ActionsMixin } from "./view-actions";
+import {
+  NARROW_VIEW_WIDTH,
+  PROJECT_HOVER_SOURCE,
+  ProjectHoverParent,
+  RESCHEDULE_LOOKBACK_DAYS,
+  VIEW_MODES,
+  WEEKDAY_JA,
+  applyMixins,
+  hmm,
+  hoursDecimal,
+  type DayColumn,
+  type DayData,
+  type NarrowPane,
+  type TimelineRow,
+} from "./view-shared";
+
+// main.ts がホバープレビューの登録に使う
+export { PROJECT_HOVER_SOURCE } from "./view-shared";
 
 export const VIEW_TYPE_DAY_TIMELINE = "day-timeline-planner-view";
 
-/** プロジェクト名のノートプレビューの hover-link ソース ID。
- * ホバーではなく Ctrl/Cmd + クリックで出す（showProjectPreview）。表示自体はコアプラグイン
- * 「ページプレビュー」に任せるため、hover-link のソースとして登録しておく */
-export const PROJECT_HOVER_SOURCE = "day-timeline-planner-project";
-
-/** プロジェクトノートのプレビューのポップアップに付けるクラス（styles.css で通常のプレビューより大きく表示する） */
-const PROJECT_PREVIEW_CLASS = "dt-project-preview";
-
-/**
- * プロジェクト名のプレビュー用の hover-link の親（HoverParent）。
- * ページプレビューはポップアップ（HoverPopover）を作るとき親の hoverPopover に代入してくるので、
- * そのタイミングでポップアップの要素にクラスを付け、CSS で通常のプレビューより大きく表示する。
- * タスクブロックのプレビュー（親はビュー自身）とは分けているので、そちらの大きさは変わらない。
- */
-class ProjectHoverParent implements HoverParent {
-  private popover: HoverPopover | null = null;
-
-  get hoverPopover(): HoverPopover | null {
-    return this.popover;
-  }
-
-  set hoverPopover(popover: HoverPopover | null) {
-    this.popover = popover;
-    if (!popover) return;
-    // hoverEl はポップアップのコンストラクタ内で作られる。代入のほうが先に来ても拾えるよう、無ければ直後にもう一度試す
-    const tag = () => popover.hoverEl?.addClass(PROJECT_PREVIEW_CLASS);
-    if (popover.hoverEl) tag();
-    else queueMicrotask(tag);
-  }
-}
-
-interface DragHandlers {
-  onMove?: (dy: number, ev: PointerEvent) => void;
-  onEnd: (moved: boolean, ev: PointerEvent) => void;
-  onCancel?: () => void;
-}
-
-/** 1日分の列 */
-interface DayColumn {
-  date: Date;
-  key: string;
-  headerEl: HTMLElement;
-  canvasEl: HTMLElement;
-  eventsEl: HTMLElement;
-  nowEl: HTMLElement | null;
-  /** この列が属する段 */
-  row: TimelineRow;
-}
-
-/** タイムラインの1段（曜日ヘッダー + 時間軸 + 日の列）。いまは常に1段 */
-interface TimelineRow {
-  /** 段の入れ物。sticky なヘッダーはこの中で止まり、次の段に押し出される */
-  el: HTMLElement;
-  headersEl: HTMLElement;
-  labelsEl: HTMLElement;
-  daysEl: HTMLElement;
-  columns: DayColumn[];
-  /** 現在時刻: 全列をまたぐ細い線と、時刻の目盛りに出す「17:58」（今日がこの段にあるときだけ） */
-  nowLineEl: HTMLElement | null;
-  nowLabelEl: HTMLElement | null;
-}
-
-/** 1日分の読み込み結果 */
-interface DayData {
-  tasks: Task[];
-  exists: boolean;
-  legacyCount: number;
-}
-
-const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
-
-/** 再スケジュール欄のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
-const RESCHEDULE_LOOKBACK_DAYS = 30;
-
-/** ビューの幅（px）がこれ未満なら「狭い画面」（スマホなど）。
- * サイドバーとタイムラインを並べると共倒れになるので、片方だけを全面に出して切り替える */
-const NARROW_VIEW_WIDTH = 500;
-
-/** サイドバー（Inbox・プロジェクト）の幅の下限（px） */
-const SIDEBAR_MIN_WIDTH = 160;
-/** サイドバーの幅の上限（px）。実際の上限はビューの幅からも決まる（maxSidebarWidth） */
-const SIDEBAR_MAX_WIDTH = 800;
-
-/** 本日のサマリーのバーをタスクごとに区切る上限。これより多いと区切り線だけになるので1本の棒にする */
-const MAX_SUMMARY_SEGMENTS = 40;
-
-/** タッチでこれ以上（px）動いたら「タップ・長押し」ではなくスクロール等とみなす */
-const TOUCH_SLOP = 10;
-/** タッチの長押し（ここからドラッグ）と判定するまでの時間（ms）。
- * Android が contextmenu を発火する長押し（約 500ms）より先に確定させる */
-const LONG_PRESS_MS = 350;
-/** 横スワイプで前後の日へ移動するのに必要な移動量（px） */
-const SWIPE_MIN_X = 48;
-
-/** Ctrl+ホイールのズーム感度。1ノッチ（deltaY=100）で約 1.16 倍になる */
-const WHEEL_ZOOM_INTENSITY = 0.0015;
-
-/** 狭い画面で全面に出す面 */
-type NarrowPane = "timeline" | "panel";
-
-/** 表示モードの並び順と、セグメント用の短いラベル・メニュー用のラベル */
-const VIEW_MODES: [ViewMode, string, string][] = [
-  ["day", "日", "日表示"],
-  ["3day", "3日", "3日表示"],
-  ["week", "週", "週表示"],
-];
-
 export class DayTimelineView extends ItemView {
-  private plugin: DayTimelinePlugin;
+  plugin: DayTimelinePlugin;
   /** 基準日。日表示ではこの日、週表示ではこの日を含む週を表示する */
-  private date: Date = startOfDay(new Date());
+  date: Date = startOfDay(new Date());
   /** 日付が変わったのを見つけるための「今日」。30 秒ごとの更新で見比べる */
   private todayKey: string = dateKey(startOfDay(new Date()));
-  private mode: ViewMode;
-  private columns: DayColumn[] = [];
-  private data = new Map<string, DayData>();
+  mode: ViewMode;
+  columns: DayColumn[] = [];
+  data = new Map<string, DayData>();
 
   private dateLabelEl!: HTMLElement;
   private dateInputEl!: HTMLInputElement;
@@ -201,31 +82,31 @@ export class DayTimelineView extends ItemView {
   /** 表示範囲（3日・週）の予実合計 */
   private rangeTotalEl!: HTMLElement;
   /** 実際に使う 1時間あたりの高さ（px） */
-  private hourHeightPx = 60;
+  hourHeightPx = 60;
   private bannerEl!: HTMLElement;
-  private inboxEl!: HTMLElement;
-  private inboxTasks: Task[] = [];
+  inboxEl!: HTMLElement;
+  inboxTasks: Task[] = [];
   /** 表示範囲の外（今日から過去 RESCHEDULE_LOOKBACK_DAYS 日以内）のノートのタスク（日付キー → その日）。
-   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき）に使う */
-  private pastDays = new Map<string, { date: Date; tasks: Task[] }>();
-  /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用。pastDays から作る） */
-  private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
+   * 「Inbox・時刻なし」の一覧の取り残しと、本日のサマリー（今日が表示範囲外のとき）に使う */
+  pastDays = new Map<string, { date: Date; tasks: Task[] }>();
+  /** 表示範囲の外（過去）に取り残された時刻なしタスク（「Inbox・時刻なし」の一覧用。pastDays から作る） */
+  pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
   /** サイドバーの下の「本日のサマリー」の器。出していないときは null */
-  private summaryEl: HTMLElement | null = null;
+  summaryEl: HTMLElement | null = null;
   /** プロジェクトの集計（パネル用のキャッシュ） */
-  private projectData: ProjectSummary[] = [];
+  projectData: ProjectSummary[] = [];
   /** パネルで展開中のプロジェクト */
-  private expandedProjects = new Set<string>();
+  expandedProjects = new Set<string>();
   /** パネルで畳んでいるプロジェクトグループ（"" = 未分類） */
-  private collapsedGroups = new Set<string>();
-  private scrollEl!: HTMLElement;
+  collapsedGroups = new Set<string>();
+  scrollEl!: HTMLElement;
   /** タイムラインの段（いまは常に1段）。columns はその段の列の一覧 */
   private rows: TimelineRow[] = [];
   /** 幅が狭い（スマホなど）とき true。タイムラインとパネルを切り替えて片方だけ表示する */
-  private isNarrow = false;
+  isNarrow = false;
   /** 狭い画面で表示中の面 */
-  private narrowPane: NarrowPane = "timeline";
-  private paneEl!: HTMLElement;
+  narrowPane: NarrowPane = "timeline";
+  paneEl!: HTMLElement;
   /** タイムライン ⇄ パネルの切替セグメント（狭い画面だけ）。両方のアイコンを並べ、表示中の面を強調する */
   private paneTimelineBtnEl!: HTMLElement;
   private panePanelBtnEl!: HTMLElement;
@@ -237,32 +118,32 @@ export class DayTimelineView extends ItemView {
    * タイムラインの対応するブロックとパネルの行を強調する。エディタ連動（activeTaskKey）とは別に持ち、
    * カーソル移動で消えないようにする。別のタスクを選ぶか Esc で解除
    */
-  private selectedTaskKey: string | null = null;
+  selectedTaskKey: string | null = null;
   /** 選んだブロックをまだ画面内へスクロールしていない（表示範囲が変わって読み込みを待っているときなど） */
   private pendingReveal = false;
   /** プロジェクト名のプレビューの hover-link の親（ポップアップを大きく表示するためのクラス付け用） */
   private readonly projectHoverParent = new ProjectHoverParent();
 
   /** ドラッグ操作中は再描画しない */
-  private interacting = false;
+  interacting = false;
   /** タッチの長押しから始まったドラッグ中（contextmenu を抑止する） */
-  private touchDragging = false;
+  touchDragging = false;
   /** タッチで空き時間をタップしたときに出す「＋ 追加」チップ */
-  private touchChipEl: HTMLElement | null = null;
+  touchChipEl: HTMLElement | null = null;
   /** 直前の pointerdown がタッチの空き時間タップだったか（canvas の click で消費する） */
-  private canvasTapArmed = false;
-  private pendingReload = false;
+  canvasTapArmed = false;
+  pendingReload = false;
   private shouldScroll = true;
   private reloadDebounced: () => void;
   private syncCursorDebounced: () => void;
   /** ズーム（Ctrl+ホイール・タッチのピンチ）: フレームごとにまとめて反映するための適用待ちの倍率と位置 */
-  private pendingZoomFactor = 1;
-  private pendingZoomClientY = 0;
-  private pendingZoomRaf: number | null = null;
+  pendingZoomFactor = 1;
+  pendingZoomClientY = 0;
+  pendingZoomRaf: number | null = null;
   /** タッチの2本指ピンチでズーム中（タップ・長押し・スワイプを抑止する） */
-  private pinchZooming = false;
+  pinchZooming = false;
   /** ホイールの1ノッチごとに設定ファイルへ書かないよう、保存はまとめて行う */
-  private persistZoomDebounced: () => void;
+  persistZoomDebounced: () => void;
 
   constructor(leaf: WorkspaceLeaf, plugin: DayTimelinePlugin) {
     super(leaf);
@@ -340,7 +221,7 @@ export class DayTimelineView extends ItemView {
     this.registerDomEvent(document, "selectionchange", () => this.syncCursorDebounced());
 
     // Obsidian の起動時（レイアウト復元中）に開かれたときは、保管庫の索引や
-    // リンク索引（resolvedLinks）がまだできておらず、そのまま読むと再スケジュール欄や
+    // リンク索引（resolvedLinks）がまだできておらず、そのまま読むと「Inbox・時刻なし」の一覧や
     // プロジェクト配下のタスクが空のまま描画されてしまう。初回の読み込みは復元後に行い、
     // リンク索引の初回構築が終わったタイミングでももう一度読み直す
     if (!this.app.workspace.layoutReady) {
@@ -387,7 +268,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /** is-narrow と表示中の面のクラス、切替ボタンの状態を反映する */
-  private applyNarrowClasses(): void {
+  applyNarrowClasses(): void {
     this.contentEl.toggleClass("is-narrow", this.isNarrow);
     this.contentEl.toggleClass("is-pane-timeline", this.isNarrow && this.narrowPane === "timeline");
     this.contentEl.toggleClass("is-pane-panel", this.isNarrow && this.narrowPane === "panel");
@@ -398,14 +279,14 @@ export class DayTimelineView extends ItemView {
   }
 
   /** タイムラインとツリー（パネル）のアイコンを親に並べる。アクティブ表示は呼び出し側で付ける */
-  private buildPaneSegmentButtons(parent: HTMLElement): { timeline: HTMLElement; panel: HTMLElement } {
+  buildPaneSegmentButtons(parent: HTMLElement): { timeline: HTMLElement; panel: HTMLElement } {
     const timeline = this.iconButton(parent, "calendar-clock", "タイムラインを表示", () =>
       this.setNarrowPane("timeline")
     );
     const panel = this.iconButton(
       parent,
       "list-tree",
-      "パネル（Inbox・プロジェクト・再スケジュール）を表示",
+      "パネル（Inbox・時刻なし・プロジェクト）を表示",
       () => this.setNarrowPane("panel")
     );
     return { timeline, panel };
@@ -545,7 +426,7 @@ export class DayTimelineView extends ItemView {
   // ---------- 表示している日 ----------
 
   /** 表示中の日付（日: 1日 / 3日: 基準日から3日 / 週: 7日） */
-  private visibleDays(): Date[] {
+  visibleDays(): Date[] {
     const ws = this.plugin.settings.weekStart;
     switch (this.mode) {
       case "day":
@@ -566,18 +447,18 @@ export class DayTimelineView extends ItemView {
   }
 
   /** タスクの色: メンバーの予定はメンバー色、自分の予定はタグ色 */
-  private taskColor(task: Task): string | null {
+  taskColor(task: Task): string | null {
     if (task.owner) return this.plugin.memberOf(task.owner)?.color ?? null;
     return colorForTags(task.tags, this.plugin.settings.tagColors);
   }
 
   /** タスクの持ち主の名前（自分なら null） */
-  private ownerName(task: Task): string | null {
+  ownerName(task: Task): string | null {
     return task.owner ? (this.plugin.memberOf(task.owner)?.name ?? "?") : null;
   }
 
   /** タスクの持ち主に応じたストア */
-  private storeOf(task: Task) {
+  storeOf(task: Task) {
     return this.plugin.storeFor(task.owner);
   }
 
@@ -586,7 +467,7 @@ export class DayTimelineView extends ItemView {
     return this.columns.find((c) => c.key === k) ?? null;
   }
 
-  private dataFor(date: Date): DayData {
+  dataFor(date: Date): DayData {
     return this.data.get(dateKey(date)) ?? { tasks: [], exists: false, legacyCount: 0 };
   }
 
@@ -717,222 +598,6 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * タッチの横スワイプで前後の日（3日・週・月）へ移動する（Google カレンダー方式）。
-   * 縦のスクロールはブラウザに任せ（CSS の touch-action: pan-y）、横方向だけをここで拾う。
-   * 以前は横スワイプが「空き時間のドラッグ」と解釈されてタスク作成ダイアログが開いてしまっていた
-   */
-  private attachSwipeNavigation(): void {
-    this.scrollEl.addEventListener(
-      "pointerdown",
-      (e: PointerEvent) => {
-        if (!this.isTouch(e) || !e.isPrimary) return;
-        const sx = e.clientX;
-        const sy = e.clientY;
-        const id = e.pointerId;
-        const cleanup = () => {
-          document.removeEventListener("pointermove", onMove, true);
-          document.removeEventListener("pointerup", onEnd, true);
-          document.removeEventListener("pointercancel", onEnd, true);
-        };
-        const onMove = (ev: PointerEvent) => {
-          if (ev.pointerId !== id) return;
-          // 長押しから始まったドラッグ（タスク移動・範囲作成）中と2本指ピンチ中はスワイプしない
-          if (this.interacting || this.pinchZooming) {
-            cleanup();
-            return;
-          }
-          const dx = ev.clientX - sx;
-          const dy = ev.clientY - sy;
-          // 縦方向が優勢ならスクロールに譲る
-          if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > TOUCH_SLOP) {
-            cleanup();
-            return;
-          }
-          if (Math.abs(dx) >= SWIPE_MIN_X && Math.abs(dx) > Math.abs(dy) * 1.5) {
-            cleanup();
-            this.dismissTouchChip();
-            if (dx < 0) this.goToNext();
-            else this.goToPrev();
-          }
-        };
-        const onEnd = (ev: PointerEvent) => {
-          if (ev.pointerId !== id) return;
-          cleanup();
-        };
-        document.addEventListener("pointermove", onMove, true);
-        document.addEventListener("pointerup", onEnd, true);
-        document.addEventListener("pointercancel", onEnd, true);
-      },
-      { capture: true }
-    );
-
-    // タイムライン内の横ジェスチャが Obsidian 本体（モバイルのサイドバー開閉）に
-    // 取られてしまわないよう、横方向優勢の touchmove はここで止める
-    let tsx = 0;
-    let tsy = 0;
-    this.scrollEl.addEventListener(
-      "touchstart",
-      (ev: TouchEvent) => {
-        const t = ev.touches[0];
-        if (!t) return;
-        tsx = t.clientX;
-        tsy = t.clientY;
-      },
-      { passive: true }
-    );
-    this.scrollEl.addEventListener(
-      "touchmove",
-      (ev: TouchEvent) => {
-        const t = ev.touches[0];
-        if (!t) return;
-        if (Math.abs(t.clientX - tsx) > Math.abs(t.clientY - tsy)) ev.stopPropagation();
-      },
-      { passive: true }
-    );
-  }
-
-  /**
-   * Ctrl（macOS では Cmd でも可）＋ホイールで時間軸を拡大・縮小する。
-   * トラックパッドのピンチも Chromium では ctrlKey 付きの wheel として届くので同じ経路になる。
-   * Obsidian 本体の Ctrl+ホイール（UI 全体のズーム）に取られないよう、既定の動作と伝播を止める
-   */
-  private attachWheelZoom(): void {
-    this.scrollEl.addEventListener(
-      "wheel",
-      (ev: WheelEvent) => {
-        if (!ev.ctrlKey && !ev.metaKey) return;
-        ev.preventDefault();
-        ev.stopPropagation();
-        if (this.interacting) return; // ドラッグ中に縮尺が変わると座標計算が狂う
-        // deltaMode は 0=px / 1=行 / 2=ページ（Chromium は px だが念のため換算する）
-        const dy = ev.deltaY * (ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 300 : 1);
-        this.pendingZoomFactor *= Math.exp(-dy * WHEEL_ZOOM_INTENSITY);
-        this.pendingZoomClientY = ev.clientY;
-        this.schedulePendingZoom();
-      },
-      { passive: false }
-    );
-  }
-
-  /**
-   * タッチの2本指ピンチで時間軸を拡大・縮小する（モバイル向け。Google カレンダー方式）。
-   * 指の間隔の変化を倍率にし、2本指の中間点の時刻を保ったまま縮尺を変える
-   * （中間点が動けばその分だけ追従するので、ピンチしながらのスクロールも自然につながる）。
-   *
-   * 注意: ズームのたびにグリッドは作り直されるため、touchstart した要素はピンチの途中で
-   * DOM から外れる。touch イベントは外れた後もその要素にだけ届き続け、scrollEl へは
-   * バブルしなくなるので、move / end は開始時点の各タッチの target に直接付ける
-   */
-  private attachPinchZoom(): void {
-    /** ピンチ中に move / end リスナを付けた要素（終了時に外す）。SVG（アイコン）上の
-     * タッチもあり得るので HTMLElement に限らない */
-    let attachedEls: GlobalEventHandlers[] = [];
-    /** 直前のフレームでの2本指の間隔（px） */
-    let lastDist = 0;
-
-    const distOf = (ev: TouchEvent): number => {
-      const a = ev.touches[0];
-      const b = ev.touches[1];
-      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    };
-
-    const detach = () => {
-      for (const el of attachedEls) {
-        el.removeEventListener("touchmove", onMove);
-        el.removeEventListener("touchend", onEnd);
-        el.removeEventListener("touchcancel", onEnd);
-      }
-      attachedEls = [];
-    };
-
-    const onMove = (ev: TouchEvent) => {
-      if (!this.pinchZooming) return;
-      if (ev.touches.length < 2) return;
-      // ブラウザにスクロールを始めさせない（すでにスクロール中だと cancelable でないことがある）
-      if (ev.cancelable) ev.preventDefault();
-      ev.stopPropagation();
-      const d = distOf(ev);
-      if (lastDist > 0 && d > 0) {
-        this.pendingZoomFactor *= d / lastDist;
-        this.pendingZoomClientY = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
-        this.schedulePendingZoom();
-      }
-      lastDist = d;
-    };
-
-    const onEnd = (ev: TouchEvent) => {
-      if (!this.pinchZooming) return;
-      if (ev.touches.length >= 2) {
-        // 3本目以降の指が離れただけ。間隔を測り直して続ける（外れた指の分で跳ねないように）
-        lastDist = distOf(ev);
-        return;
-      }
-      this.pinchZooming = false;
-      detach();
-      // ピンチ後に残った指へブラウザが合成する click が、指の位置のタスクや空き時間に
-      // 当たって編集・チップ表示が誤発動しないように握りつぶす
-      this.swallowNextClick();
-    };
-
-    this.scrollEl.addEventListener(
-      "touchstart",
-      (ev: TouchEvent) => {
-        if (ev.touches.length !== 2) return; // 2本目が置かれた瞬間だけ開始
-        if (this.interacting || this.pinchZooming) return;
-        // ev.touches は画面全体のタッチ。1本目がパネルなどタイムラインの外にあるなら
-        // ピンチにしない（パネルのスクロールを止めてしまわないように）
-        for (let i = 0; i < ev.touches.length; i++) {
-          const t = ev.touches[i].target;
-          if (!(t instanceof Node) || !this.scrollEl.contains(t)) return;
-        }
-        this.pinchZooming = true;
-        this.dismissTouchChip();
-        this.canvasTapArmed = false;
-        lastDist = distOf(ev);
-        // 2本目の指でのネイティブ動作（スクロール開始・合成 click）を止める。
-        // 1本目の touchstart は通常どおり通しているので、1本指のスクロールは妨げない
-        if (ev.cancelable) ev.preventDefault();
-        ev.stopPropagation();
-        for (let i = 0; i < ev.touches.length; i++) {
-          const t = ev.touches[i].target;
-          const el: GlobalEventHandlers =
-            t instanceof HTMLElement || t instanceof SVGElement ? t : this.scrollEl;
-          if (attachedEls.includes(el)) continue;
-          attachedEls.push(el);
-          el.addEventListener("touchmove", onMove, { passive: false });
-          el.addEventListener("touchend", onEnd);
-          el.addEventListener("touchcancel", onEnd);
-        }
-      },
-      { passive: false, capture: true }
-    );
-  }
-
-  /** ためておいたズームぶんの反映を次のフレームに予約する（グリッドの作り直しは重いのでまとめる） */
-  private schedulePendingZoom(): void {
-    if (this.pendingZoomRaf != null) return;
-    this.pendingZoomRaf = requestAnimationFrame(() => {
-      this.pendingZoomRaf = null;
-      this.applyPendingZoom();
-    });
-  }
-
-  /** ためておいたホイール・ピンチぶんの拡大縮小を、ポインタ位置の時刻を保ったまま反映する */
-  private applyPendingZoom(): void {
-    const factor = this.pendingZoomFactor;
-    this.pendingZoomFactor = 1;
-    if (!this.scrollEl?.isConnected) return;
-    const s = this.plugin.settings;
-    const next = clamp(this.hourHeightPx * factor, MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT);
-    if (Math.abs(next - this.hourHeightPx) < 0.01) return; // 既に上限・下限
-    // 「1時間の高さ」として記憶する。
-    // 0.1px 単位に丸めるのは、トラックパッドの細かい delta でも値が進む（整数に丸めると止まる）ようにするため
-    s.hourHeight = Math.round(next * 10) / 10;
-    this.persistZoomDebounced();
-    this.rebuildTimeline(this.pendingZoomClientY);
-  }
-
-  /**
    * ⋮ メニューの「表示」まわり: 縮尺・メンバーの表示切替。
    * 項目を1つでも足したら true（呼び出し側で区切り線を入れるかの判断に使う）
    */
@@ -997,7 +662,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /** アイコンボタン（クリック / Enter / Space で動作） */
-  private iconButton(
+  iconButton(
     parent: HTMLElement,
     icon: string,
     label: string,
@@ -1024,7 +689,7 @@ export class DayTimelineView extends ItemView {
    * クリックはその場所に、キーボード（Enter / Space）ではボタンの真下にメニューを出す
    * （スマホではどちらもボタンの真下のドロップダウン。openHeaderMenu を参照）
    */
-  private menuButton(
+  menuButton(
     parent: HTMLElement,
     label: string,
     build: (menu: MenuLike) => void
@@ -1208,7 +873,7 @@ export class DayTimelineView extends ItemView {
         }
       }
     }
-    // 表示範囲の外でも、再スケジュール欄・本日のサマリーが見ている過去のノートなら読み直す
+    // 表示範囲の外でも、「Inbox・時刻なし」の一覧・本日のサマリーが見ている過去のノートなら読み直す
     const blockStore = this.plugin.blockStore();
     if (blockStore && this.needsPastDays()) {
       const d = blockStore.dateFromPath(path);
@@ -1219,7 +884,7 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  private async reload(): Promise<void> {
+  async reload(): Promise<void> {
     if (this.interacting) {
       this.pendingReload = true;
       return;
@@ -1281,7 +946,7 @@ export class DayTimelineView extends ItemView {
     this.pendingReveal = false; // 時刻の無いタスクなどブロックが描かれないときは、ここで諦める
   }
 
-  private setDate(d: Date): void {
+  setDate(d: Date): void {
     const next = startOfDay(d);
     let sameRange: boolean;
     switch (this.mode) {
@@ -1405,1362 +1070,7 @@ export class DayTimelineView extends ItemView {
     };
   }
 
-  /** Inbox パネルに出すタスク: 未完了のもののうち、プロジェクト付きでないもの
-   *（プロジェクト付きはプロジェクトパネル側に出る。完了してもノートには残る）。
-   * ただし、そのプロジェクトがパネルに出ていない（完了済み・ノートが見つからない・
-   * パネル非表示）タスクは、どこにも表示されず行方不明になるので Inbox 側に出す */
-  private inboxVisible(tasks: Task[]): Task[] {
-    return tasks.filter((t) => !t.done && (!t.project || !this.projectPanelShows(t.project)));
-  }
-
-  /** そのプロジェクトリンクが、プロジェクトパネルに進行中の行として出ているか */
-  private projectPanelShows(linktext: string): boolean {
-    if (!this.plugin.projects || !this.plugin.settings.showProjects) return false;
-    const src = this.plugin.inbox?.pathFor(INBOX_DATE) ?? "";
-    // プロジェクトの集計（projectSummaries）と同じ方法でリンク先を解決して照合する
-    const dest = this.app.metadataCache.getFirstLinkpathDest(linktext, src);
-    const key = dest?.path ?? linktext + ".md";
-    return this.projectData.some((s) => !s.done && s.ref.linktext + ".md" === key);
-  }
-
-  /** Inbox だけ読み直す（コマンドから追加したときなど） */
-  async reloadInbox(): Promise<void> {
-    const inbox = this.plugin.inbox;
-    if (!inbox || !this.inboxEl) return;
-    this.inboxTasks = this.plugin.settings.showInbox
-      ? this.inboxVisible((await inbox.load(INBOX_DATE)).tasks)
-      : [];
-    this.renderInbox();
-  }
-
-  /** 左サイドバー（Inbox・プロジェクト・再スケジュール）のパネル。タブで1つずつ表示する */
-  private renderInbox(): void {
-    const s = this.plugin.settings;
-    const inbox = this.plugin.inbox;
-    this.inboxEl.empty();
-    const showInbox = !!inbox && s.showInbox;
-    const showProjects = !!this.plugin.projects && s.showProjects;
-    const reschedule = this.rescheduleGroups();
-    const showReschedule = reschedule.length > 0;
-    // 本日のサマリーはタブの下に常に出す（タブが1つも無くても、これだけでパネルを出す）
-    const showSummary = s.showTodaySummary && !!this.plugin.blockStore();
-    const visible = showInbox || showProjects || showReschedule || showSummary;
-    this.summaryEl = null;
-    this.inboxEl.toggleClass("is-visible", visible);
-    // 狭い画面の切替ボタンは、パネルに出すものがあるときだけ出す
-    this.paneEl.toggleClass("is-available", visible);
-    if (!visible && this.narrowPane === "panel") {
-      // パネルに出すものが無くなったら、真っ白にならないようタイムラインへ戻す
-      this.narrowPane = "timeline";
-      this.applyNarrowClasses();
-    }
-    if (!visible) return;
-
-    // 縦に全部並べると長くなるので、タブで1つだけ表示する。
-    // 再スケジュールのタブは、今までの欄と同じくタスクがあるときだけ出る
-    const activeProjects = this.projectData.filter((x) => !x.done);
-    const tabs: { id: SidebarTab; label: string; count: number }[] = [];
-    if (showInbox) tabs.push({ id: "inbox", label: "Inbox", count: this.inboxTasks.length });
-    if (showProjects)
-      tabs.push({ id: "projects", label: "プロジェクト", count: activeProjects.length });
-    if (showReschedule)
-      tabs.push({
-        id: "reschedule",
-        label: "再スケジュール",
-        count: reschedule.reduce((n, g) => n + g.tasks.length, 0),
-      });
-    // 選んでいたタブが出ていないとき（再スケジュールが空になった等）は先頭のタブへ。
-    // 設定は書き換えないので、また出てきたら選んでいたタブに戻る。
-    // タブが1つも無い（Inbox・プロジェクトを切っていて取り残しも無い）ときは null で、サマリーだけを出す
-    const active = tabs.find((t) => t.id === s.sidebarTab) ?? tabs[0] ?? null;
-
-    // 狭い画面でパネルを全面表示しているときは、畳まず幅も固定しない
-    const narrowPanel = this.isNarrow && this.narrowPane === "panel";
-    const collapsed = s.inboxCollapsed && !narrowPanel;
-    this.inboxEl.toggleClass("is-collapsed", collapsed);
-    this.applySidebarWidth(collapsed || narrowPanel ? null : s.sidebarWidth);
-    if (!collapsed && !narrowPanel) this.attachSidebarResize();
-
-    const doToggle = () => {
-      s.inboxCollapsed = !s.inboxCollapsed;
-      void this.plugin.persistSettings();
-      this.renderInbox();
-    };
-    const head = this.inboxEl.createDiv("dt-inbox-head");
-    if (narrowPanel) {
-      // パネルを全面表示中はツールバー（タイムライン⇄パネルの切替ごと）が隠れているので、
-      // 同じ切替セグメントをツールバーと同じ左端に出す（パネル側がアクティブ）。
-      // 位置・大きさをそろえておくと、面を行き来しても指を動かさずに押せる
-      const seg = head.createDiv("dt-pane");
-      seg.addClass("is-available", "dt-inbox-toggle");
-      const btns = this.buildPaneSegmentButtons(seg);
-      btns.panel.addClass("is-active");
-      btns.timeline.setAttr("aria-pressed", "false");
-      btns.panel.setAttr("aria-pressed", "true");
-    } else {
-      const toggle = this.iconButton(
-        head,
-        collapsed ? "panel-left-open" : "panel-left-close",
-        collapsed ? "パネルを開く" : "パネルを畳む",
-        doToggle
-      );
-      toggle.addClass("dt-inbox-toggle");
-    }
-    const label = head.createSpan({ cls: "dt-inbox-label", text: active?.label ?? "本日のサマリー" });
-    if (!narrowPanel) label.onclick = doToggle;
-    if (active) head.createSpan({ cls: "dt-inbox-count", text: String(active.count) });
-    // 狭い画面ではツールバーと同じ「左に切替と見出し、右に操作」の並びにそろえる
-    if (narrowPanel) head.createDiv("dt-inbox-spacer");
-    // 表示中のタブの操作ボタンだけをヘッダーに出す
-    if (!active) {
-      // サマリーだけのとき: 今日のノートを開くボタン
-      const openBtn = this.iconButton(head, "file-text", "今日のノートを開く", () =>
-        void this.openNote(startOfDay(new Date()))
-      );
-      openBtn.addClass("dt-inbox-open");
-    } else if (active.id === "inbox") {
-      const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
-        this.plugin.openInboxAddModal()
-      );
-      addBtn.addClass("dt-inbox-add");
-      const openBtn = this.iconButton(head, "file-text", "Inbox のノートを開く", () =>
-        void inbox
-          ?.ensureFile(INBOX_DATE)
-          .then((f) => this.app.workspace.getLeaf("tab").openFile(f))
-      );
-      openBtn.addClass("dt-inbox-open");
-    } else if (active.id === "projects") {
-      const kebab = this.menuButton(head, "プロジェクトのメニュー", (menu) =>
-        this.buildProjectsMenu(menu, activeProjects)
-      );
-      kebab.addClass("dt-inbox-add");
-    } else {
-      const addBtn = this.iconButton(head, "plus", "時刻を決めていないタスクを追加", () =>
-        this.openCreateModal(this.date, null, null)
-      );
-      addBtn.addClass("dt-reschedule-add", "dt-inbox-open");
-    }
-    if (collapsed) return;
-
-    // タブの切り替え（2つ以上あるときだけ。1つならヘッダーのラベルで足りる）
-    if (tabs.length > 1) {
-      const bar = this.inboxEl.createDiv("dt-panel-tabs");
-      const today = startOfDay(new Date());
-      for (const tab of tabs) {
-        const el = bar.createDiv({ cls: "dt-panel-tab", text: tab.label });
-        el.toggleClass("is-active", tab.id === active?.id);
-        const tips = [`${tab.label}: ${tab.count} 件`];
-        // 過去の取り残しは、別のタブを見ていても気付けるよう赤い点を出す
-        if (tab.id === "reschedule" && reschedule.some((g) => g.date < today)) {
-          el.addClass("has-overdue");
-          tips.push("過去に取り残された時刻なしタスクがあります");
-        }
-        el.setAttr("aria-label", tips.join("\n"));
-        el.addEventListener("click", () => {
-          if (s.sidebarTab === tab.id) return;
-          s.sidebarTab = tab.id;
-          void this.plugin.persistSettings();
-          this.renderInbox();
-        });
-      }
-    }
-
-    if (!active) {
-      /* サマリーだけ */
-    } else if (active.id === "inbox") this.renderInboxList();
-    else if (active.id === "projects") this.renderProjects(activeProjects);
-    else this.renderReschedule(reschedule);
-
-    // タブの中身の下に「本日のサマリー」。どのタブを見ていても今日の進み具合が見えるよう、タブの外に置く
-    if (showSummary) {
-      this.summaryEl = this.inboxEl.createDiv("dt-summary");
-      this.renderSummary();
-    }
-  }
-
-  /** Inbox タブの中身（日付を決めていないタスクの一覧） */
-  private renderInboxList(): void {
-    const s = this.plugin.settings;
-    const list = this.inboxEl.createDiv("dt-inbox-list");
-    if (this.inboxTasks.length === 0) {
-      list.createSpan({
-        cls: "dt-tray-empty",
-        text: "日付を決めずに登録したタスクがここに並びます。タイムラインへドラッグで予定に。",
-      });
-    }
-    for (const t of this.inboxTasks) {
-      const chip = list.createDiv("dt-tray-chip dt-inbox-chip");
-      chip.toggleClass("is-done", t.done);
-      const color = colorForTags(t.tags, s.tagColors);
-      if (color) {
-        const dot = chip.createSpan("dt-tray-color");
-        dot.style.background = color;
-      }
-      const box = chip.createDiv("dt-tray-check");
-      setIcon(box, iconName(t.done ? "check-square" : "square"));
-      box.addEventListener("click", (e) => {
-        e.stopPropagation();
-        void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
-      });
-      chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-      if (t.project) {
-        // プロジェクトがパネルに出ていない（完了済み・見つからない）ため Inbox に出ているタスク
-        const link = t.project;
-        const badge = chip.createSpan({ cls: "dt-inbox-project", text: projectDisplayName(link) });
-        // クリックでノートを開く。Ctrl/Cmd + クリックならポップアップでプレビュー
-        badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-        badge.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          if (ev.ctrlKey || ev.metaKey) this.showProjectPreview(badge, link, ev);
-          else void this.plugin.openProject(link);
-        });
-      }
-      chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
-      this.attachInboxInteractions(chip, t);
-    }
-  }
-
-  /**
-   * サイドバーの幅の上限。タイムラインが潰れないようビュー幅の6割までとしつつ、
-   * デスクトップなど広い画面では最大 800px まで広げられる（狭い画面でも従来の 480px は保証）
-   */
-  private maxSidebarWidth(): number {
-    const w = this.contentEl.clientWidth;
-    if (!w) return SIDEBAR_MAX_WIDTH;
-    return clamp(Math.round(w * 0.6), 480, SIDEBAR_MAX_WIDTH);
-  }
-
-  /** サイドバーの幅を反映する（null なら CSS の既定 = 畳んだ状態に任せる） */
-  private applySidebarWidth(width: number | null): void {
-    if (width === null) {
-      this.inboxEl.style.width = "";
-      this.inboxEl.style.flexBasis = "";
-      return;
-    }
-    const w = clamp(width, SIDEBAR_MIN_WIDTH, this.maxSidebarWidth());
-    this.inboxEl.style.width = w + "px";
-    this.inboxEl.style.flexBasis = w + "px";
-  }
-
-  /** サイドバーの右端をドラッグして幅を変えるハンドル */
-  private attachSidebarResize(): void {
-    const grip = this.inboxEl.createDiv({
-      cls: "dt-sidebar-resize",
-      attr: { "aria-label": "ドラッグで幅を変更" },
-    });
-    grip.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const startW = this.inboxEl.getBoundingClientRect().width;
-      const startX = e.clientX;
-      const maxW = this.maxSidebarWidth();
-      let w = startW;
-      this.startDrag(grip, e, {
-        onMove: (_dy, ev) => {
-          w = clamp(startW + (ev.clientX - startX), SIDEBAR_MIN_WIDTH, maxW);
-          this.applySidebarWidth(w);
-        },
-        onEnd: (moved) => {
-          if (!moved) return;
-          this.plugin.settings.sidebarWidth = Math.round(w);
-          void this.plugin.persistSettings();
-        },
-        onCancel: () => this.applySidebarWidth(this.plugin.settings.sidebarWidth),
-      });
-    });
-  }
-
-  /** 進行中のプロジェクトがすべて展開されているか */
-  private areAllProjectsExpanded(): boolean {
-    const active = this.projectData.filter((s) => !s.done);
-    return active.length > 0 && active.every((s) => this.expandedProjects.has(s.ref.linktext));
-  }
-
-  /** プロジェクトのツリーをまとめて展開 / 閉じる（パネルのボタン・コマンドから） */
-  setAllProjectsExpanded(expand: boolean): void {
-    if (expand) {
-      for (const s of this.projectData) {
-        if (!s.done) this.expandedProjects.add(s.ref.linktext);
-      }
-      // 畳んだグループの中のプロジェクトも見えるように、グループも開く
-      this.collapsedGroups.clear();
-    } else {
-      this.expandedProjects.clear();
-    }
-    this.renderInbox();
-  }
-
-  /** すべて展開 ⇄ すべて閉じるを切り替える（コマンド用） */
-  toggleAllProjects(): void {
-    this.setAllProjectsExpanded(!this.areAllProjectsExpanded());
-  }
-
-  private setProjectsFilter(f: ProjectsFilter): void {
-    if (this.plugin.settings.projectsFilter === f) return;
-    this.plugin.settings.projectsFilter = f;
-    void this.plugin.persistSettings();
-    this.renderInbox();
-  }
-
-  /** そのプロジェクトに今日のタスク（自分・メンバー問わず）があるか。
-   * 持ち越し済み [>] は別の日へ送った記録なので、今日のタスクには数えない */
-  private projectHasToday(sum: ProjectSummary): boolean {
-    const today = startOfDay(new Date());
-    return sum.children.some(
-      (c) => c.date !== null && isSameDay(c.date, today) && !c.task.forwarded
-    );
-  }
-
-  /** プロジェクトのパネルのヘッダー（⋮）から開くメニュー。active は進行中のプロジェクト */
-  private buildProjectsMenu(menu: MenuLike, active: ProjectSummary[]): void {
-    menu.addItem((i) =>
-      i
-        .setTitle("新しいプロジェクトを作成…")
-        .setIcon("plus")
-        .onClick(() => this.plugin.openNewProjectModal())
-    );
-    if (active.length) {
-      menu.addSeparator();
-      const allExpanded = this.areAllProjectsExpanded();
-      menu.addItem((i) =>
-        i
-          .setTitle(allExpanded ? "すべてのプロジェクトを閉じる" : "すべてのプロジェクトを展開")
-          .setIcon(allExpanded ? "chevrons-down-up" : "chevrons-up-down")
-          .onClick(() => this.setAllProjectsExpanded(!allExpanded))
-      );
-      const hideDone = this.plugin.settings.projectsHideDone;
-      menu.addItem((i) =>
-        i
-          .setTitle(
-            hideDone ? "完了済みの子タスクを表示する" : "完了済みの子タスクを隠す（持ち越し済みも）"
-          )
-          .setIcon(hideDone ? "eye-off" : "eye")
-          .onClick(() => {
-            this.plugin.settings.projectsHideDone = !hideDone;
-            void this.plugin.persistSettings();
-            this.renderInbox();
-          })
-      );
-    }
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i
-        .setTitle("全プロジェクトノートのタスク一覧を更新")
-        .setIcon("file-text")
-        .onClick(() => void this.plugin.updateAllProjectNotes())
-    );
-  }
-
-  /** プロジェクトのタブの中身（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない。
-   * ⋮（ケバブ）メニューはパネルのヘッダー側に出る */
-  private renderProjects(all: ProjectSummary[]): void {
-    const hiddenDone = this.projectData.length - all.length;
-    const wrap = this.inboxEl.createDiv("dt-projects");
-    // 絞り込みの切替（すべて / 本日タスクあり）。よく使うので ⋮ メニューではなく一覧の上に出す
-    const filter = this.plugin.settings.projectsFilter;
-    const todayOnes = all.filter((s) => this.projectHasToday(s));
-    if (all.length) {
-      const seg = wrap.createDiv("dt-projects-filter");
-      seg.setAttr("role", "tablist");
-      const chip = (id: ProjectsFilter, label: string, count: number, tip: string) => {
-        const b = seg.createEl("button", { cls: "dt-projects-filter-chip", text: label });
-        b.createSpan({ cls: "dt-projects-filter-count", text: String(count) });
-        b.toggleClass("is-active", filter === id);
-        b.setAttr("aria-pressed", String(filter === id));
-        b.setAttr("aria-label", tip);
-        b.addEventListener("click", () => this.setProjectsFilter(id));
-      };
-      chip("all", "すべて", all.length, "進行中のプロジェクトをすべて表示");
-      chip("today", "本日", todayOnes.length, "今日のタスクがあるプロジェクトだけを表示（持ち越し済みは除く）");
-    }
-    const active = filter === "today" ? todayOnes : all;
-    const list = wrap.createDiv("dt-projects-list");
-    if (!active.length) {
-      list.createSpan({
-        cls: "dt-tray-empty",
-        text: all.length
-          ? "今日のタスクがあるプロジェクトはありません（「すべて」で全部を表示）。"
-          : hiddenDone
-            ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
-            : "上の ⋮ メニューの「新しいプロジェクトを作成」、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
-      });
-      return;
-    }
-    const groups = groupProjects(
-      active,
-      this.plugin.settings.projectGroups.map((x) => x.name)
-    );
-    // どのプロジェクトにもグループが無ければ見出しなしの一覧
-    const showGroupHeads = groups.some((g) => g.name !== null);
-    if (!showGroupHeads) {
-      for (const g of groups) {
-        for (const sum of g.items) this.renderProjectRow(list, sum);
-      }
-      return;
-    }
-    const groupIcons = this.groupIconMap();
-    for (const g of groups) {
-      if (this.renderProjectGroupHead(list, g, groupIcons)) continue;
-      const itemsEl = list.createDiv("dt-project-group-items");
-      for (const sum of g.items) this.renderProjectRow(itemsEl, sum);
-    }
-  }
-
-  /** グループの見出し行。開閉のクリックを設定し、畳まれているかを返す */
-  private renderProjectGroupHead(
-    parent: HTMLElement,
-    g: ProjectGroup,
-    groupIcons: Map<string, string>
-  ): boolean {
-    const groupKey = g.name ?? "";
-    const collapsed = this.collapsedGroups.has(groupKey);
-    const groupHead = parent.createDiv("dt-project-group");
-    const groupChev = groupHead.createDiv("dt-project-chevron");
-    setIcon(groupChev, collapsed ? "chevron-right" : "chevron-down");
-    // グループごとの指定があればそれ、無ければ既定のアイコン（未分類は常に既定）
-    const custom = g.name !== null ? groupIcons.get(g.name) : undefined;
-    const icon = custom ?? this.plugin.settings.defaultGroupIcon.trim();
-    if (icon) {
-      const iconEl = groupHead.createSpan("dt-project-group-icon");
-      renderGroupIcon(iconEl, icon);
-    }
-    groupHead.createSpan({ cls: "dt-project-group-name", text: g.name ?? "未分類" });
-    groupHead.createSpan({ cls: "dt-project-group-count", text: String(g.items.length) });
-    groupHead.setAttr(
-      "aria-label",
-      `${g.name ?? "未分類"}: プロジェクト ${g.items.length} 件\nクリックでグループを開閉`
-    );
-    groupHead.addEventListener("click", () => {
-      if (collapsed) this.collapsedGroups.delete(groupKey);
-      else this.collapsedGroups.add(groupKey);
-      this.renderInbox();
-    });
-    return collapsed;
-  }
-
-
-
-
-  /** プロジェクト1件分（行 + 展開時の子タスク一覧）をツリー表示のパネルへ描画する */
-  private renderProjectRow(container: HTMLElement, sum: ProjectSummary): void {
-    const expanded = this.expandedProjects.has(sum.ref.linktext);
-
-    const row = container.createDiv("dt-project-row");
-    row.dataset.dtProject = sum.ref.linktext;
-    const chev = row.createDiv("dt-project-chevron");
-    setIcon(chev, expanded ? "chevron-down" : "chevron-right");
-    const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
-    // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
-    this.attachProjectNamePreview(nameEl, sum.ref.linktext);
-    const total = sum.children.length;
-    // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
-    const fields = sum.fields;
-    if (fields?.due) {
-      const dueEl = row.createSpan({
-        cls: "dt-project-due",
-        text: `期日 ${this.projectDueLabel(fields)}`,
-      });
-      if (this.projectDueIsOverdue(fields)) dueEl.addClass("is-overdue");
-    }
-    if (fields?.ticket) this.renderProjectTicketBadge(row, fields.ticket);
-    const stats = row.createSpan({ cls: "dt-project-stats" });
-    // 予実の合計は行が見づらくなるため出さない（テーブル表示・プロジェクトノートのタスク一覧・予実レポートで見られる）
-    stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
-    if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
-    // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
-    // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
-    this.attachProjectRowBehavior(row, chev, sum);
-
-    if (!expanded) return;
-    const childrenEl = container.createDiv("dt-project-children");
-    // プロジェクトのドキュメント（ノートの「- ドキュメント: [[...]]」行）を子タスクの上に並べる
-    if (fields?.docs.length) this.renderProjectDocs(childrenEl, sum, fields.docs);
-    const shown = this.visibleProjectChildren(sum);
-    if (!sum.children.length) {
-      childrenEl.createSpan({ cls: "dt-tray-empty", text: "結びついたタスクはまだありません" });
-    } else if (!shown.length) {
-      childrenEl.createSpan({
-        cls: "dt-tray-empty",
-        text: `完了済み ${sum.children.length} 件を非表示`,
-      });
-    }
-    for (const child of shown) {
-      const t = child.task;
-      const item = childrenEl.createDiv("dt-project-child");
-      // 持ち越し先で完了した [>] も完了として見せる（引き継いだ先で終わった仕事）
-      item.toggleClass("is-done", isChildSettled(child));
-      this.renderChildCheckbox(item, child);
-      this.renderChildDateBadge(item, child);
-      item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-      this.renderChildTagBadge(item, t);
-      // 予定・実績の時間は行には出さない（ツリーが見づらくなるため）。ツールチップとテーブル表示で見られる
-      this.attachProjectChildBehavior(item, child);
-    }
-  }
-
-  /**
-   * 子タスクのタグのバッジ（設定「タグの色」に登録されたタグだけ。サブタグがあればそちら）。
-   * タイムラインの色と同じ色の枠と左の帯で、どの種類の作業かがパネルでも分かる
-   */
-  private renderChildTagBadge(parent: HTMLElement, t: Task): void {
-    const rules = this.plugin.settings.tagColors;
-    const known = t.tags.filter((tag) => colorForTags([tag], rules));
-    if (!known.length) return;
-    // 最も深いタグ（#管理/質問 が付いていれば #管理 より優先）
-    const tag = known.reduce((a, b) => (b.split("/").length > a.split("/").length ? b : a));
-    const color = colorForTags([tag], rules) ?? "";
-    const badge = parent.createSpan({ cls: "dt-project-child-tag", text: "#" + tag, attr: { title: "#" + tag } });
-    badge.style.setProperty("--dt-chip-color", color);
-  }
-
-
-  /** プロジェクトの期日の表示文字列（日付として読めれば M/D、年が違えば YYYY/M/D、読めなければ書かれたまま） */
-  private projectDueLabel(fields: ProjectFields): string {
-    return fields.dueDate
-      ? moment(fields.dueDate).format(
-          moment(fields.dueDate).year() === moment().year() ? "M/D" : "YYYY/M/D"
-        )
-      : fields.due;
-  }
-
-  /** プロジェクトの期日が過ぎているか */
-  private projectDueIsOverdue(fields: ProjectFields): boolean {
-    return !!fields.dueDate && fields.dueDate.getTime() < startOfDay(new Date()).getTime();
-  }
-
-  /** プロジェクトのチケットバッジ（クリックでブラウザで開く） */
-  private renderProjectTicketBadge(parent: HTMLElement, t: TicketRef): void {
-    const badge = parent.createSpan({ cls: "dt-project-ticket", text: `#${t.id}` });
-    const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
-    badge.setAttr("aria-label", `${t.tracker || "チケット"} #${t.id}` + (url ? `\n${url}` : ""));
-    if (url) {
-      badge.addClass("is-linked");
-      badge.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-      badge.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        window.open(url);
-      });
-    }
-  }
-
-  /** プロジェクトを完了にする（右クリックメニューから。未完了のタスクが残っていれば確認する）。パネルから消える */
-  private completeProject(sum: ProjectSummary): void {
-    const projects = this.plugin.projects;
-    if (!projects) return;
-    const key = sum.ref.linktext;
-    const run = async () => {
-      const ok = await projects.setDone(key, true);
-      if (!ok) {
-        new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
-        return;
-      }
-      sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
-      new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
-      this.renderInbox();
-    };
-    const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
-    if (open) {
-      new ConfirmModal(
-        this.app,
-        `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
-        "完了にする",
-        run
-      ).open();
-    } else {
-      void run();
-    }
-  }
-
-  /** プロジェクト行のふるまい（クリックで展開・ドラッグで子タスク作成・右クリックメニュー）。ツリー・テーブル共通 */
-  private attachProjectRowBehavior(row: HTMLElement, chev: HTMLElement, sum: ProjectSummary): void {
-    const key = sum.ref.linktext;
-    const toggleExpand = () => {
-      if (this.expandedProjects.has(key)) this.expandedProjects.delete(key);
-      else this.expandedProjects.add(key);
-      this.renderInbox();
-    };
-    chev.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleExpand();
-    });
-    this.attachProjectDrag(row, sum, toggleExpand);
-    row.addEventListener("contextmenu", (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.touchDragging) return;
-      this.showProjectMenu(sum, e);
-    });
-  }
-
-  /** プロジェクトのドキュメントのチップを並べる。ツリー・テーブル共通 */
-  private renderProjectDocs(parent: HTMLElement, sum: ProjectSummary, docs: ProjectDoc[]): void {
-    const docsEl = parent.createDiv("dt-project-docs");
-    for (const doc of docs) {
-      const chip = docsEl.createDiv("dt-project-doc");
-      const iconEl = chip.createSpan("dt-project-doc-icon");
-      setIcon(iconEl, doc.external ? "external-link" : "file-text");
-      chip.createSpan({ cls: "dt-project-doc-label", text: doc.label });
-      chip.setAttr("aria-label", `ドキュメント: ${doc.target}\nクリックで開く`);
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.openProjectDoc(sum, doc);
-      });
-    }
-  }
-
-  /** 展開時に見せる子タスク。「完了済みを隠す」がオンなら、完了・持ち越し済み [>]（＝片付いた記録）を出さない */
-  private visibleProjectChildren(sum: ProjectSummary): ProjectChild[] {
-    const s = this.plugin.settings;
-    return sum.children.filter(
-      (c) =>
-        (!s.projectsHideDone || (!c.task.done && !c.task.forwarded)) &&
-        // 「本日」の絞り込み中は持ち越し済み [>]（別の日へ送った記録）を出さない
-        (s.projectsFilter !== "today" || !c.task.forwarded)
-    );
-  }
-
-  /** 子タスクの完了チェックボックス。ツリー・テーブル共通 */
-  private renderChildCheckbox(parent: HTMLElement, child: ProjectChild): void {
-    const t = child.task;
-    const box = parent.createDiv("dt-tray-check");
-    if (child.settledByCarry) {
-      // 持ち越し先で完了した [>]: チェック済みに見せるが、このブロック自体は「引き継いだ記録」なので
-      // ここからは切り替えない（外すなら持ち越し先のほうを未完了に戻す）
-      setIcon(box, iconName("check-square"));
-      box.addClass("is-settled-by-carry");
-      box.setAttr("aria-label", "持ち越し先で完了しています（このブロックは引き継ぎ前の記録）");
-      box.addEventListener("click", (e) => {
-        e.stopPropagation();
-        new Notice("持ち越し先のタスクで完了しています。戻すときは持ち越し先のほうを未完了にしてください");
-      });
-      return;
-    }
-    setIcon(box, iconName(t.done ? "check-square" : "square"));
-    box.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (child.date === null) void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
-      else void this.commitUpdate(child.date, t, { ...this.draftOf(t), done: !t.done });
-    });
-  }
-
-  /**
-   * 子タスクの日付バッジ。今日のタスクは「本日」、日付未定は「未定」のバッジにする。
-   * 日時が決まっていないものは枠付きのバッジで見分ける（日付ごと未定はアクセント色・時刻未定はオレンジ）
-   */
-  private renderChildDateBadge(parent: HTMLElement, child: ProjectChild): void {
-    const t = child.task;
-    const today = !!child.date && isToday(child.date);
-    const dateEl = parent.createSpan({
-      cls: "dt-project-child-date",
-      text: child.date
-        ? today
-          ? "本日"
-          : `${child.date.getMonth() + 1}/${child.date.getDate()}`
-        : "未定",
-    });
-    const scheduled = t.start !== null && t.end !== null;
-    if (child.date === null) dateEl.addClass("is-undated");
-    // 時刻未定（＝遅れ）は今日でもオレンジのまま。持ち越し済み [>] は閉じた記録なので「遅れ」扱いにしない
-    else if (!scheduled && !t.forwarded) dateEl.addClass("is-unscheduled");
-    else if (today) dateEl.addClass("is-today");
-  }
-
-
-  /** 子タスク行のふるまい（ツールチップ・ドラッグ・クリック・右クリックメニュー）。ツリー・テーブル共通 */
-  private attachProjectChildBehavior(item: HTMLElement, child: ProjectChild): void {
-    const t = child.task;
-    const scheduled = t.start !== null && t.end !== null;
-    const plan = scheduled ? t.end! - t.start! : 0;
-    const act = t.actual.reduce((n, r) => n + (r.end - r.start), 0);
-    const sp = stepProgress(t);
-    item.setAttr(
-      "aria-label",
-      `${t.title || "(無題)"}\n` +
-        (child.date
-          ? moment(child.date).format("M月D日 (ddd)") +
-            (scheduled ? ` ${minutesToHHMM(t.start!)} - ${minutesToHHMM(t.end!)}` : "（時刻は未定）")
-          : "日付は未定") +
-        (plan || act ? `\n実績 ${act ? hmm(act) : "–"} / 予定 ${plan ? hmm(plan) : "–"}` : "") +
-        (sp ? `\nステップ ${sp.done}/${sp.total}（${Math.round(sp.ratio * 100)}%）` : "") +
-        (child.settledByCarry
-          ? "\n持ち越し先で完了（このブロックは引き継ぎ前の記録）"
-          : t.forwarded
-            ? "\n持ち越し済み（続きは持ち越し先のブロック）"
-            : "") +
-        (child.date
-          ? "\nクリックでその日へ移動、タイムラインへドラッグで時刻を割り当て、右クリックでメニュー"
-          : "\nクリックで編集、タイムラインへドラッグで日時を割り当て、右クリックでメニュー")
-    );
-    if (child.date === null) {
-      // 日付未定: タイムラインへドラッグで日時を割り当て、クリックで編集できるようにする
-      this.attachChipDrag(
-        item,
-        ".dt-tray-check",
-        () => this.displayTitle(t),
-        (date, start, end) =>
-          void this.commitInboxToDay(t, date, { ...this.draftOf(t), start, end }),
-        () => this.openInboxEditModal(t)
-      );
-      item.addEventListener("contextmenu", (e: MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (this.touchDragging) return;
-        this.showInboxTaskMenu(t, e);
-      });
-    } else {
-      const childDate = child.date;
-      // 選択中のタスクの行には印を付ける（パネルを描き直しても残る）
-      item.toggleClass("is-selected", this.taskElKey(childDate, t) === this.selectedTaskKey);
-      this.attachChipDrag(
-        item,
-        ".dt-tray-check",
-        () => this.displayTitle(t),
-        (date, start, end) => {
-          const draft = { ...this.draftOf(t), start, end };
-          if (isSameDay(date, childDate)) void this.commitUpdate(childDate, t, draft);
-          else void this.commitMove(childDate, t, date, draft);
-        },
-        () => {
-          // その日へ移動し、タイムラインの対応するブロックを強調して画面内へスクロールする。
-          // 表示範囲の外の日なら読み込みを待って reload の最後で反映する
-          this.selectTask(childDate, t, item);
-          this.setDate(childDate);
-          // 狭い画面では移動した先が見えるよう、タイムラインへ切り替える
-          if (this.isNarrow) this.setNarrowPane("timeline");
-          this.revealSelectedTask();
-        }
-      );
-      item.addEventListener("contextmenu", (e: MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (this.touchDragging) return;
-        this.showTaskMenu(childDate, t, e);
-      });
-    }
-  }
-
-  /** 設定にあるグループのアイコン（グループ名 → アイコン。未設定・空は含めない） */
-  private groupIconMap(): Map<string, string> {
-    const out = new Map<string, string>();
-    for (const g of this.plugin.settings.projectGroups) {
-      const name = g.name.trim();
-      const icon = g.icon.trim();
-      if (name && icon && !out.has(name)) out.set(name, icon);
-    }
-    return out;
-  }
-
-  /** プロジェクトのドキュメントを開く（Wikilink はノート・外部 URL はブラウザ） */
-  private openProjectDoc(sum: ProjectSummary, doc: ProjectDoc): void {
-    if (doc.external) {
-      window.open(doc.target);
-      return;
-    }
-    void this.app.workspace.openLinkText(doc.target, sum.ref.linktext + ".md", false).catch((e) => {
-      console.error(e);
-      new Notice("ドキュメントを開けませんでした: " + String(e));
-    });
-  }
-
-  /** プロジェクト行の右クリックメニュー（ノートを開く・タスクを追加・チケット・ドキュメント・グループの付け替え・完了にする） */
-  private showProjectMenu(sum: ProjectSummary, e: MouseEvent): void {
-    if (!this.plugin.projects) return;
-    const key = sum.ref.linktext;
-    const menu = new Menu();
-    // 行に操作アイコンは出さず、ここにまとめる（Ctrl/Cmd + クリックのプレビューは名前側）
-    menu.addItem((i) =>
-      i.setTitle("プロジェクトノートを開く").setIcon("arrow-up-right").onClick(() => void this.plugin.openProject(key))
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle("このプロジェクトのタスクを追加")
-        .setIcon("plus")
-        .onClick(() => this.openProjectCreateModal(key))
-    );
-    menu.addSeparator();
-    // プロジェクト自身のチケット・ドキュメント
-    const fields = sum.fields;
-    let hasExtras = false;
-    if (fields?.ticket) {
-      const t = fields.ticket;
-      const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
-      if (url) {
-        menu.addItem((i) =>
-          i.setTitle(`チケット #${t.id} を開く`).setIcon("ticket").onClick(() => window.open(url))
-        );
-        hasExtras = true;
-      }
-    }
-    for (const doc of fields?.docs ?? []) {
-      menu.addItem((i) =>
-        i
-          .setTitle(`ドキュメント「${doc.label}」を開く`)
-          .setIcon(doc.external ? "external-link" : "file-text")
-          .onClick(() => this.openProjectDoc(sum, doc))
-      );
-      hasExtras = true;
-    }
-    if (hasExtras) menu.addSeparator();
-    const current = sum.ref.group ?? null;
-    // 完了済みプロジェクトだけが使っているグループへも移せるよう、候補は全プロジェクトから集める
-    const names = knownGroupNames(
-      this.projectData.map((s) => s.ref),
-      this.plugin.settings.projectGroups.map((x) => x.name)
-    );
-    const groupIcons = this.groupIconMap();
-    for (const groupName of names) {
-      menu.addItem((i) => {
-        // アイコンが Lucide 名ならメニューのアイコン欄に、絵文字などはタイトルの頭に出す
-        // （現在のグループは ✓ を優先）
-        const icon = groupIcons.get(groupName);
-        const asText = icon && !getIcon(icon) ? icon + " " : "";
-        i.setTitle(`グループ: ${asText}${groupName}`).onClick(() => void this.setProjectGroup(sum, groupName));
-        if (groupName === current) i.setIcon("check");
-        else if (icon && !asText) i.setIcon(icon);
-      });
-    }
-    if (names.length) menu.addSeparator();
-    menu.addItem((i) =>
-      i
-        .setTitle("新しいグループへ…")
-        .setIcon("folder-plus")
-        .onClick(() =>
-          new PromptModal(this.app, {
-            title: `「${sum.ref.name}」のグループ`,
-            placeholder: "グループ名（例: 仕事）",
-            cta: "移動",
-            onSubmit: (groupName) => void this.setProjectGroup(sum, groupName),
-          }).open()
-        )
-    );
-    if (current) {
-      menu.addItem((i) =>
-        i.setTitle("グループを外す").setIcon("x").onClick(() => void this.setProjectGroup(sum, null))
-      );
-    }
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle("プロジェクトを完了にする").setIcon("check-circle-2").onClick(() => this.completeProject(sum))
-    );
-    menu.showAtMouseEvent(e);
-  }
-
-  /** プロジェクトのグループを付け替えて、パネルへ即反映する */
-  private async setProjectGroup(sum: ProjectSummary, group: string | null): Promise<void> {
-    const projects = this.plugin.projects;
-    if (!projects) return;
-    const g = group?.trim() || null;
-    if (g === (sum.ref.group ?? null)) return;
-    const ok = await projects.setGroup(sum.ref.linktext, g);
-    if (!ok) {
-      new Notice("グループを変更できませんでした（ノートが開けるか確認してください）");
-      return;
-    }
-    sum.ref.group = g; // メタデータキャッシュの反映を待たずに表示へ
-    this.renderInbox();
-  }
-
-  /**
-   * サイドバーのチップをタイムラインへドラッグする共通処理。
-   * ドラッグ中はゴーストを出し、グリッドに落とすと onDrop(日, 開始, 終了)、
-   * 動かさずに離すと onClick を呼ぶ
-   */
-  private attachChipDrag(
-    chip: HTMLElement,
-    ignoreSelector: string,
-    ghostLabel: () => string,
-    onDrop: (date: Date, start: number, end: number) => void,
-    onClick: () => void
-  ): void {
-    // タッチではタップ（＝ネイティブの click）で開き、長押ししてからドラッグ
-    // （パネルのスクロールを妨げない）
-    let touchTapArmed = false;
-    chip.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      touchTapArmed = false;
-      if ((e.target as HTMLElement).closest(ignoreSelector)) return;
-      if (this.isTouch(e)) {
-        touchTapArmed = true;
-        this.touchGate(chip, e, {
-          onLongPress: () => {
-            touchTapArmed = false;
-            chip.addClass("is-lifted");
-            begin(e);
-          },
-        });
-        return;
-      }
-      e.preventDefault();
-      begin(e);
-    });
-    chip.addEventListener("click", (ce: MouseEvent) => {
-      if (!touchTapArmed) return; // マウスのクリックは begin の onEnd(!moved) が扱う
-      touchTapArmed = false;
-      ce.stopPropagation();
-      if (this.touchDragging) return;
-      if ((ce.target as HTMLElement).closest(ignoreSelector)) return;
-      onClick();
-    });
-    const begin = (e: PointerEvent) => {
-      const s = this.plugin.settings;
-      const dayStart = s.startHour * 60;
-      const dayEnd = s.endHour * 60;
-      let ghost: HTMLElement | null = null;
-      let dropStart: number | null = null;
-      let dropCol: DayColumn | null = null;
-      const duration = s.defaultDurationMinutes;
-
-      this.startDrag(chip, e, {
-        onMove: (_dy, ev) => {
-          chip.addClass("is-dragging");
-          const over = this.overGrid(ev) ? this.columnAt(ev.clientX, ev.clientY) : null;
-          if (!over) {
-            dropStart = null;
-            dropCol = null;
-            ghost?.remove();
-            ghost = null;
-            return;
-          }
-          if (over !== dropCol) {
-            ghost?.remove();
-            ghost = null;
-            dropCol = over;
-          }
-          dropStart = clamp(
-            this.snapFloor(this.clientYToMinutes(ev.clientY, over.row)),
-            dayStart,
-            Math.max(dayStart, dayEnd - duration)
-          );
-          if (!ghost) ghost = over.eventsEl.createDiv("dt-ghost");
-          ghost.style.top = this.minutesToPx(dropStart) + "px";
-          ghost.style.height =
-            Math.max(this.minutesToPx(dropStart + duration) - this.minutesToPx(dropStart) - 2, 4) + "px";
-          ghost.setText(
-            `${minutesToHHMM(dropStart)} - ${minutesToHHMM(dropStart + duration)}  ${ghostLabel()}`
-          );
-        },
-        onEnd: (moved) => {
-          chip.removeClass("is-dragging");
-          chip.removeClass("is-lifted");
-          ghost?.remove();
-          if (!moved) {
-            if (this.isTouch(e)) this.swallowNextClick(); // 合成 click がダイアログに当たらないように
-            onClick();
-            return;
-          }
-          if (dropStart !== null && dropCol) {
-            onDrop(dropCol.date, dropStart, Math.min(dropStart + duration, dayEnd));
-          }
-        },
-        onCancel: () => {
-          chip.removeClass("is-dragging");
-          chip.removeClass("is-lifted");
-          ghost?.remove();
-        },
-      });
-    };
-  }
-
-  /** プロジェクト行: クリックで展開、タイムラインへドラッグで子タスクを作成 */
-  private attachProjectDrag(row: HTMLElement, sum: ProjectSummary, onClick: () => void): void {
-    this.attachChipDrag(
-      row,
-      ".dt-icon-btn, .dt-project-chevron",
-      () => `${sum.ref.name} の新しいタスク`,
-      (date, start, end) =>
-        this.openCreateModal(date, start, end, undefined, { project: sum.ref.linktext }),
-      onClick
-    );
-  }
-
-  /** 未スケジュールのタスクのトレイ */
-  /** 再スケジュール欄に出すタスク: 表示中の日の時刻を決めていないタスクに加えて、
-   * 表示範囲の外（過去 RESCHEDULE_LOOKBACK_DAYS 日以内）に取り残された時刻なしタスク。
-   * 週をまたいでも取り残しが消えないようにする。いずれも日付順。
-   * 月表示では時刻なしのタスクもマスの中に出すので欄は使わない */
-  private rescheduleGroups(): { date: Date; tasks: Task[] }[] {
-    const s = this.plugin.settings;
-    if (!s.showUnscheduledTray) return [];
-    const visible = this.columns
-      .map((c) => ({ date: c.date, tasks: this.dataFor(c.date).tasks.filter((t) => !isScheduled(t)) }))
-      .filter((g) => g.tasks.length > 0);
-    // 過去の取り残しを先頭に（古い日付から）。表示中の日は visible 側にだけ出る
-    return [...this.pastUnscheduled, ...visible];
-  }
-
-  /** 表示範囲の外の過去のノートを読む必要があるか（再スケジュール欄の取り残し・本日のサマリー） */
-  private needsPastDays(): boolean {
-    const s = this.plugin.settings;
-    if (!this.plugin.blockStore()) return false;
-    return s.showUnscheduledTray || s.showTodaySummary;
-  }
-
-  /**
-   * 表示範囲の外のノートを読む（再スケジュール欄の取り残し・本日のサマリー用）。
-   * 今日から過去 RESCHEDULE_LOOKBACK_DAYS 日のノートを見る。表示中の日は通常の
-   * 読み込みが拾うので除外。古い日付から順に入る
-   */
-  private async loadPastDays(): Promise<Map<string, { date: Date; tasks: Task[] }>> {
-    const out = new Map<string, { date: Date; tasks: Task[] }>();
-    const store = this.plugin.blockStore();
-    if (!store || !this.needsPastDays()) return out;
-    const visible = new Set(this.visibleDays().map(dateKey));
-    const today = startOfDay(new Date());
-    for (let i = RESCHEDULE_LOOKBACK_DAYS; i >= 0; i--) {
-      const date = addDays(today, -i);
-      const key = dateKey(date);
-      if (visible.has(key)) continue;
-      if (!store.getFile(date)) continue; // ノートの無い日は読まない
-      try {
-        out.set(key, { date, tasks: (await store.load(date)).tasks });
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return out;
-  }
-
-  /** 表示範囲の外に取り残された時刻なしタスク（再スケジュール欄用）。
-   * 完了・持ち越し済み [>] は「片付いた」ものなので出さない */
-  private pastUnscheduledFrom(
-    past: Map<string, { date: Date; tasks: Task[] }>
-  ): { date: Date; tasks: Task[] }[] {
-    const s = this.plugin.settings;
-    if (!s.showUnscheduledTray) return [];
-    const out: { date: Date; tasks: Task[] }[] = [];
-    for (const { date, tasks: all } of past.values()) {
-      const tasks = all.filter((t) => !isScheduled(t) && !t.done && !t.forwarded);
-      if (tasks.length) out.push({ date, tasks });
-    }
-    return out;
-  }
-
-  // ---------- 本日のサマリー（サイドバーの下） ----------
-
-  /** その日のタスク。表示範囲内なら読み込み済みのデータ、範囲外なら過去のノートのキャッシュから。
-   * どちらにも無い（ノートが無い・過去 30 日より前で読んでいない）なら null */
-  private tasksOn(date: Date): Task[] | null {
-    const key = dateKey(date);
-    const d = this.data.get(key);
-    if (d) return d.tasks;
-    return this.pastDays.get(key)?.tasks ?? null;
-  }
-
-
-  /**
-   * サイドバーの下の「本日のサマリー」。renderInbox で器（summaryEl）を作り、
-   * 30 秒ごとの更新と計測の開始・終了（renderTracking）でも描き直す。
-   * 見出しのクリックで1行に畳める（記憶される）
-   */
-  private renderSummary(): void {
-    const el = this.summaryEl;
-    if (!el) return;
-    el.empty();
-    const s = this.plugin.settings;
-    const today = startOfDay(new Date());
-    const all = this.tasksOn(today) ?? [];
-    const st = dayStats(all);
-    // ステップの消化（今日の自分のタスクに書かれた「- [ ] …」の合計）。タスク数だけだと
-    // 「1タスクの中でどこまで進んだか」が見えないので、タスクと並べて出す
-    const steps = stepStats(all);
-    const collapsed = s.summaryCollapsed;
-    const complete = st.total > 0 && st.done === st.total;
-    el.toggleClass("is-collapsed", collapsed);
-    el.toggleClass("is-complete", complete);
-
-    // 見出し: 「本日 9/2 (水)」。右端は達成の一言（畳んだときは数字だけ）
-    const head = el.createDiv("dt-summary-head");
-    head.setAttr("aria-label", collapsed ? "クリックで開く" : "クリックで畳む");
-    head.createSpan({ cls: "dt-summary-title", text: "本日" });
-    head.createSpan({
-      cls: "dt-summary-date",
-      text: `${today.getMonth() + 1}/${today.getDate()} (${WEEKDAY_JA[today.getDay()]})`,
-    });
-    const pct = st.ratio === null ? 0 : Math.round(st.ratio * 100);
-    head.createSpan({
-      cls: "dt-summary-brief",
-      text: collapsed
-        ? st.total
-          ? `タスク ${st.done}/${st.total}` +
-            (steps.total ? ` · ステップ ${steps.done}/${steps.total}` : "") +
-            `・${pct}%`
-          : "タスクなし"
-        : summaryMessage(st),
-    });
-    const chevron = head.createSpan("dt-summary-chevron");
-    setIcon(chevron, collapsed ? "chevron-up" : "chevron-down");
-    head.addEventListener("click", () => {
-      s.summaryCollapsed = !s.summaryCollapsed;
-      void this.plugin.persistSettings();
-      this.renderSummary();
-    });
-    if (collapsed) return;
-
-    const body = el.createDiv("dt-summary-body");
-    if (!st.total) {
-      body.createDiv({
-        cls: "dt-summary-empty",
-        text: "今日のタスクはまだありません。タイムラインの空き時間をクリックすると追加できます",
-      });
-    } else {
-      // 件数と時間の2本のメーター。件数だけだと短いタスクを片付けたくなるので、
-      // 予定時間ベース（完了したタスクの予定時間 / 今日の予定時間）も並べる。
-      // バーはタスクごとに区切る（件数は等分、時間は予定の長さに比例）ので、1つのタスクの大きさが見える
-      const mine = all.filter((t) => !t.owner).sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity));
-      const own = mine.filter((t) => !t.forwarded);
-      const segTip = (t: Task) =>
-        [
-          this.displayTitle(t),
-          (isScheduled(t) ? `${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}（${hmm(t.end - t.start)}）` : "時刻未定") +
-            (t.done ? " · 完了" : ""),
-        ].join("\n");
-      this.summaryMeter(
-        body,
-        "タスク",
-        own.map((t) => ({ weight: 1, done: t.done, tip: segTip(t) })),
-        `${st.done}/${st.total}`,
-        `完了 ${st.done} タスク / 全 ${st.total} タスク（持ち越し済み [>] のタスクは数えません）`
-      );
-      if (steps.total > 0) {
-        // ステップ: タスクをまたいで1ステップ = 1区切り。区切りにマウスを乗せると「タスク名 / ステップ」
-        //（持ち越し済み [>] のタスクはチェック済みのステップだけ。stepStats と同じ数え方）
-        this.summaryMeter(
-          body,
-          "ステップ",
-          mine.flatMap((t) =>
-            countedSteps(t).map((sp) => ({
-              weight: 1,
-              done: sp.done,
-              tip: `${this.displayTitle(t)}\n${sp.text}${sp.done ? " · 完了" : ""}`,
-            }))
-          ),
-          `${steps.done}/${steps.total}`,
-          `チェック済み ${steps.done} ステップ / 全 ${steps.total} ステップ（今日のタスクに書いた「- [ ] …」の合計。持ち越し済み [>] はチェック済みだけ）`
-        );
-      }
-      if (st.plan > 0) {
-        this.summaryMeter(
-          body,
-          "時間",
-          own.filter(isScheduled).map((t) => ({ weight: t.end - t.start, done: t.done, tip: segTip(t) })),
-          `${hmm(st.donePlan)}/${hmm(st.plan)}`,
-          `完了したタスクの予定時間 ${hmm(st.donePlan)} / 今日の予定時間の合計 ${hmm(st.plan)}`
-        );
-      }
-      // 残量（件数・予定時間）と実績の合計。「%」より「あと 3 件・2:55」のほうが見通しが立つ
-      const remain = st.total - st.done;
-      const remainPlan = st.plan - st.donePlan;
-      const parts: string[] = [];
-      const remainSteps = steps.total - steps.done;
-      if (remain > 0) parts.push(`あと ${remain} タスク` + (remainPlan > 0 ? `・${hmm(remainPlan)}` : ""));
-      if (remainSteps > 0) parts.push(`ステップ あと ${remainSteps}`);
-      if (st.actual > 0) parts.push(`実績 ${hmm(st.actual)}`);
-      if (parts.length) {
-        const line = body.createDiv({ cls: "dt-summary-line", text: parts.join("　") });
-        line.setAttr(
-          "aria-label",
-          [
-            remain > 0 ? `残り ${remain} タスク（予定時間 ${hmm(remainPlan)}）` : "",
-            remainSteps > 0 ? `未チェックのステップ ${remainSteps} 件` : "",
-            st.actual > 0 ? `今日の実績の合計 ${hmm(st.actual)}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        );
-      }
-    }
-    this.renderSummaryNext(body, today, all);
-  }
-
-  /**
-   * サマリーのメーター1本（ラベル・バー・値・%）。
-   * バーはタスクごとの区切り（縦線）入りで、幅は weight に比例（件数なら 1、時間なら予定の分）。
-   * 完了したタスクを左に寄せて塗るので、塗りの境目が完了 / 未完了の境目と一致し、
-   * 残りの区切りで「大きいタスクがいくつ残っているか」も見える。区切りにマウスを乗せるとそのタスク名
-   */
-  private summaryMeter(
-    parent: HTMLElement,
-    label: string,
-    segments: { weight: number; done: boolean; tip: string }[],
-    value: string,
-    tip: string
-  ): void {
-    const total = segments.reduce((n, sg) => n + sg.weight, 0);
-    const done = segments.reduce((n, sg) => n + (sg.done ? sg.weight : 0), 0);
-    const pct = total > 0 ? Math.round(clamp(done / total, 0, 1) * 100) : 0;
-    const row = parent.createDiv("dt-summary-meter");
-    row.setAttr("aria-label", tip);
-    row.toggleClass("is-complete", total > 0 && pct >= 100);
-    row.createSpan({ cls: "dt-summary-meter-label", text: label });
-    const bar = row.createDiv("dt-summary-bar");
-    const ordered = [...segments.filter((sg) => sg.done), ...segments.filter((sg) => !sg.done)];
-    if (ordered.length <= MAX_SUMMARY_SEGMENTS) {
-      for (const sg of ordered) {
-        const seg = bar.createDiv("dt-summary-seg");
-        seg.style.flexGrow = String(sg.weight);
-        seg.toggleClass("is-done", sg.done);
-        seg.setAttr("aria-label", sg.tip);
-      }
-    } else {
-      // 区切りが多すぎると線だけになるので、1本の棒として塗る
-      const fill = bar.createDiv("dt-summary-seg is-done is-plain");
-      fill.style.flex = `0 0 ${pct}%`;
-    }
-    row.createSpan({ cls: "dt-summary-meter-value", text: value });
-    row.createSpan({ cls: "dt-summary-meter-pct", text: `${pct}%` });
-  }
-
-  /**
-   * 今日の未完了タスクから「いま取り組む1件」を選ぶ: 現在時刻にかかっているもの → これから始まるもの →
-   * 時刻を過ぎて残っているもの → 時刻未定、の順
-   */
-  private pickFocusTask(undone: Task[]): { task: Task; label: string; kind: string } | null {
-    if (!undone.length) return null;
-    const now = nowMinutes();
-    const scheduled = undone.filter(isScheduled).sort((a, b) => a.start - b.start || a.end - b.end);
-    const current = scheduled.find((t) => t.start <= now && now < t.end);
-    const upcoming = scheduled.find((t) => t.start > now);
-    if (current) return { task: current, label: "いま", kind: "now" };
-    if (upcoming) return { task: upcoming, label: "次", kind: "next" };
-    if (scheduled.length) return { task: scheduled[0], label: "未了", kind: "overdue" };
-    return { task: undone[0], label: "未定", kind: "unscheduled" };
-  }
-
-  /**
-   * 「いま / 次にやる1件」の行。現在時刻にかかっている未完了タスク → これから始まるタスク →
-   * 予定の時刻を過ぎて残っているタスク → 時刻未定のタスク、の順で1件だけ出す。
-   * チェックで完了、▶ で実績の計測を開始、クリックで編集、右クリックでメニュー
-   */
-  private renderSummaryNext(parent: HTMLElement, today: Date, all: Task[]): void {
-    const undone = all.filter((t) => !t.owner && !t.done && !t.forwarded);
-    const pick = this.pickFocusTask(undone);
-    if (!pick) return;
-    const { task, label, kind } = pick;
-    const t = task;
-    const row = parent.createDiv("dt-summary-next");
-    row.addClass(`is-${kind}`);
-    const box = row.createDiv("dt-tray-check");
-    setIcon(box, iconName("square"));
-    box.setAttr("aria-label", "完了にする");
-    box.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void this.commitUpdate(today, t, { ...this.draftOf(t), done: true });
-    });
-    row.createSpan({ cls: "dt-summary-next-label", text: label });
-    if (isScheduled(t)) row.createSpan({ cls: "dt-summary-next-time", text: minutesToHHMM(t.start) });
-    row.createSpan({ cls: "dt-summary-next-title", text: this.displayTitle(t) });
-    if (isScheduled(t)) row.createSpan({ cls: "dt-summary-next-dur", text: hmm(t.end - t.start) });
-    // ステップ: 「2/4」の小さなバーと、次にやる（最初の未チェックの）ステップ。タスク名だけだと
-    // いま何をすればいいかが分からないので、タスクとステップの両方を出す
-    const stepsOf = t.steps.filter((sp) => sp.text.trim());
-    if (stepsOf.length) {
-      const doneSteps = stepsOf.filter((sp) => sp.done).length;
-      const nextStep = stepsOf.find((sp) => !sp.done);
-      const line = row.createDiv("dt-summary-next-steps");
-      const bar = line.createDiv("dt-summary-bar");
-      const fill = bar.createDiv("dt-summary-seg is-done is-plain");
-      fill.style.flex = `0 0 ${Math.round((doneSteps / stepsOf.length) * 100)}%`;
-      line.createSpan({ cls: "dt-summary-next-steps-count", text: `ステップ ${doneSteps}/${stepsOf.length}` });
-      if (nextStep) {
-        line.createSpan({ cls: "dt-summary-next-steps-sep", text: "·" });
-        line.createSpan({ cls: "dt-summary-next-steps-next", text: `次: ${nextStep.text}`, attr: { title: nextStep.text } });
-      }
-    }
-    // 実績の計測（ストップウォッチ）の開始 / 終了。右クリックメニューと同じ操作
-    if (this.plugin.blockStoreFor(t.owner)) {
-      const tr = this.plugin.settings.tracking;
-      const isTracking =
-        !!tr && !!t.blockId && tr.blockId === t.blockId && (tr.owner ?? null) === (t.owner ?? null);
-      const btn = this.iconButton(
-        row,
-        isTracking ? "stop-circle" : "play",
-        isTracking ? "計測を終了して実績に記録" : "実績の計測を開始",
-        () => {
-          if (isTracking) void this.plugin.stopTaskTracking(true);
-          else void this.plugin.startTaskTracking(today, t);
-        }
-      );
-      btn.addClass("dt-summary-next-play");
-      btn.toggleClass("is-tracking", isTracking);
-      btn.addEventListener("click", (e) => e.stopPropagation());
-    }
-    const kindTip = {
-      now: "いま取りかかる時間のタスク",
-      next: "次に始まるタスク",
-      overdue: "予定の時刻を過ぎて残っているタスク",
-      unscheduled: "時刻を決めていないタスク",
-    }[kind];
-    row.setAttr(
-      "aria-label",
-      [
-        t.title || "(無題)",
-        isScheduled(t) ? `${minutesToHHMM(t.start)} - ${minutesToHHMM(t.end)}` : "",
-        kindTip,
-        stepsOf.length ? `ステップ ${stepsOf.filter((sp) => sp.done).length}/${stepsOf.length}` : "",
-        t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
-        "クリックで編集、右クリックでメニュー",
-      ]
-        .filter(Boolean)
-        .join("\n")
-    );
-    row.addEventListener("click", () => this.openEditModal(today, t));
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.showTaskMenu(today, t, e);
-    });
-  }
-
-
-  /** 再スケジュールのタブの中身: 時刻を決めていないタスクを日付順に縦に一覧。
-   * 旧・タイムライン上部の「未スケジュール」トレイの置き換え。＋ボタンはパネルのヘッダー側に出る */
-  private renderReschedule(groups: { date: Date; tasks: Task[] }[]): void {
-    const wrap = this.inboxEl.createDiv("dt-reschedule");
-    const list = wrap.createDiv("dt-reschedule-list");
-    const today = startOfDay(new Date());
-    for (const g of groups) {
-      for (const t of g.tasks) {
-        const item = list.createDiv("dt-tray-chip dt-reschedule-item");
-        item.toggleClass("is-done", t.done);
-        const color = this.taskColor(t);
-        if (color) {
-          const dot = item.createSpan("dt-tray-color");
-          dot.style.background = color;
-        }
-        const box = item.createDiv("dt-tray-check");
-        setIcon(box, iconName(t.done ? "check-square" : "square"));
-        box.addEventListener("click", (e) => {
-          e.stopPropagation();
-          void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
-        });
-        const dateEl = item.createSpan({
-          cls: "dt-project-child-date is-unscheduled",
-          text: `${g.date.getMonth() + 1}/${g.date.getDate()}`,
-        });
-        // 過去の取り残しは赤系で目立たせる
-        if (g.date < today) dateEl.addClass("is-overdue");
-        const owner = this.ownerName(t);
-        if (owner) item.createSpan({ cls: "dt-owner-label", text: owner });
-        item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-        item.setAttr(
-          "aria-label",
-          [
-            t.title || "(無題)",
-            `${moment(g.date).format("M月D日 (ddd)")}（時刻は未定）`,
-            t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
-            t.preview,
-            "タイムラインへドラッグで時刻を割り当て。クリックで編集、右クリックでメニュー",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        );
-        this.attachTrayInteractions(item, g.date, t);
-      }
-    }
-  }
-
-  private renderEvents(): void {
+  renderEvents(): void {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
@@ -3299,7 +1609,7 @@ export class DayTimelineView extends ItemView {
   // ---------- パネルからの選択（プロジェクト一覧のタスク → タイムラインのブロック） ----------
 
   /** taskEls / activeTaskKey / selectedTaskKey の鍵（"日付キー|タスクの key"） */
-  private taskElKey(date: Date, task: Task): string {
+  taskElKey(date: Date, task: Task): string {
     return `${dateKey(date)}|${task.key}`;
   }
 
@@ -3315,7 +1625,7 @@ export class DayTimelineView extends ItemView {
    * パネルの行に is-selected を付け、ブロックへのスクロールを予約する（revealSelectedTask で実行）。
    * rowEl はクリックしたパネルの行（描き直さずにその場で印を付け替える）
    */
-  private selectTask(date: Date, task: Task, rowEl?: HTMLElement): void {
+  selectTask(date: Date, task: Task, rowEl?: HTMLElement): void {
     const key = this.taskElKey(date, task);
     this.selectedTaskKey = key;
     this.pendingReveal = true;
@@ -3351,7 +1661,7 @@ export class DayTimelineView extends ItemView {
    * 選択中のタスクのブロックが描画されていれば、タイムラインをスクロールして画面内に入れ、
    * 輪をまたたかせて目を引く。まだ描かれていなければ何もしない（reload の最後で改めて呼ばれる）
    */
-  private revealSelectedTask(): void {
+  revealSelectedTask(): void {
     if (!this.pendingReveal || !this.selectedTaskKey) return;
     const el = this.taskEls.get(this.selectedTaskKey);
     if (!el) return;
@@ -3391,7 +1701,7 @@ export class DayTimelineView extends ItemView {
    * 表示はコアプラグイン「ページプレビュー」が担う（クリックの MouseEvent に Ctrl/Cmd が付いているので、
    * 修飾キー付きで登録したソースの判定も通る）
    */
-  private showProjectPreview(targetEl: HTMLElement, linktext: string, e: MouseEvent): void {
+  showProjectPreview(targetEl: HTMLElement, linktext: string, e: MouseEvent): void {
     this.app.workspace.trigger("hover-link", {
       event: e,
       source: PROJECT_HOVER_SOURCE,
@@ -3406,7 +1716,7 @@ export class DayTimelineView extends ItemView {
    * 素のクリックは行に任せる（展開 / 閉じる）。修飾キー付きのときは行側のポインタ処理
    * （ドラッグ開始・離したときの展開）を始めないよう、pointerdown をここで止める
    */
-  private attachProjectNamePreview(el: HTMLElement, linktext: string): void {
+  attachProjectNamePreview(el: HTMLElement, linktext: string): void {
     const isMod = (ev: MouseEvent) => ev.ctrlKey || ev.metaKey;
     el.addEventListener("pointerdown", (ev: PointerEvent) => {
       if (isMod(ev)) ev.stopPropagation();
@@ -3434,7 +1744,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /** ノートの該当ブロックを開く（ID が無ければ付けてから開く） */
-  private async openTaskInNote(date: Date, task: Task): Promise<void> {
+  async openTaskInNote(date: Date, task: Task): Promise<void> {
     try {
       const link = await this.storeOf(task).linkTo(date, task);
       if (link) {
@@ -3453,12 +1763,12 @@ export class DayTimelineView extends ItemView {
 
   // ---------- 座標変換 ----------
 
-  private minutesToPx(min: number): number {
+  minutesToPx(min: number): number {
     const s = this.plugin.settings;
     return ((min - s.startHour * 60) / 60) * this.hourHeightPx;
   }
 
-  private pxToMinutes(px: number): number {
+  pxToMinutes(px: number): number {
     return (px / this.hourHeightPx) * 60;
   }
 
@@ -3466,7 +1776,7 @@ export class DayTimelineView extends ItemView {
    * 縮尺が変わったときに、いま見えている時刻を保ったままグリッドを作り直す。
    * anchorClientY を渡すと、その画面位置（ポインタ位置）の時刻を動かさないように合わせる
    */
-  private rebuildTimeline(anchorClientY?: number): void {
+  rebuildTimeline(anchorClientY?: number): void {
     if (!this.scrollEl) return;
     const s = this.plugin.settings;
     // ポインタのある段（2週間表示）を覚えておき、作り直した後も同じ段で合わせる
@@ -3498,7 +1808,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /** 画面の Y 座標を、その段の時間軸での時刻（分）にする */
-  private clientYToMinutes(clientY: number, row: TimelineRow): number {
+  clientYToMinutes(clientY: number, row: TimelineRow): number {
     const s = this.plugin.settings;
     const rect = row.daysEl.getBoundingClientRect();
     const min = s.startHour * 60 + this.pxToMinutes(clientY - rect.top);
@@ -3527,7 +1837,7 @@ export class DayTimelineView extends ItemView {
    * ポインタの位置から、どの日の列の上にいるかを返す（列の外なら一番近い列）。
    * 2週間表示では先に Y 座標で段を選び、その段の中で X 座標から列を選ぶ
    */
-  private columnAt(clientX: number, clientY: number): DayColumn | null {
+  columnAt(clientX: number, clientY: number): DayColumn | null {
     const row = this.rowAt(clientY);
     if (!row) return null;
     let best: DayColumn | null = null;
@@ -3545,1284 +1855,37 @@ export class DayTimelineView extends ItemView {
   }
 
   /** ポインタがどれかの段の日の列の上にあるか */
-  private overGrid(ev: PointerEvent): boolean {
+  overGrid(ev: PointerEvent): boolean {
     return this.rows.some((row) => {
       const r = row.daysEl.getBoundingClientRect();
       return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
     });
   }
 
-  private snapFloor(min: number): number {
+  snapFloor(min: number): number {
     const snap = this.plugin.settings.snapMinutes;
     return Math.floor(min / snap) * snap;
   }
 
-  private snapRound(min: number): number {
+  snapRound(min: number): number {
     const snap = this.plugin.settings.snapMinutes;
     return Math.round(min / snap) * snap;
   }
 
   // ---------- 操作 ----------
 
-  private isTouch(e: PointerEvent): boolean {
-    return e.pointerType === "touch";
-  }
-
-  /**
-   * タッチの pointerdown から「長押し」だけを判定する。
-   * - 指が動かないまま LONG_PRESS_MS 経過 → onLongPress（ここからドラッグを始める）
-   * - 先に TOUCH_SLOP を超えて動いた / 離した / キャンセル → 何もしない
-   *   （スクロール・横スワイプはブラウザと swipe ナビに、タップは各要素の click に任せる。
-   *    タップを pointerup から自前で再構成すると、実機の WebView や Obsidian 本体の
-   *    ジェスチャ処理に食われて拾えないことがあるため、click に寄せている）
-   */
-  private touchGate(target: HTMLElement, e: PointerEvent, h: { onLongPress: () => void }): void {
-    const pointerId = e.pointerId;
-    const sx = e.clientX;
-    const sy = e.clientY;
-    const cleanup = () => {
-      window.clearTimeout(timer);
-      target.removeEventListener("pointermove", onMove);
-      target.removeEventListener("pointerup", onUpOrCancel);
-      target.removeEventListener("pointercancel", onUpOrCancel);
-    };
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      if (Math.abs(ev.clientX - sx) > TOUCH_SLOP || Math.abs(ev.clientY - sy) > TOUCH_SLOP) cleanup();
-    };
-    const onUpOrCancel = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      cleanup();
-    };
-    const timer = window.setTimeout(() => {
-      cleanup();
-      // 2本指ピンチが始まっていたら長押しにしない（指をあまり動かさないピンチで
-      // ドラッグが誤って始まらないように）
-      if (this.pinchZooming) return;
-      navigator.vibrate?.(15);
-      h.onLongPress();
-    }, LONG_PRESS_MS);
-    target.addEventListener("pointermove", onMove);
-    target.addEventListener("pointerup", onUpOrCancel);
-    target.addEventListener("pointercancel", onUpOrCancel);
-  }
-
-  /**
-   * タッチ操作の直後にブラウザが合成する click を、次の1回だけ握りつぶす。
-   * 長押しから指を離した位置にメニューやダイアログが出ると、その合成 click が
-   * 出てきたばかりの UI に当たって即閉じてしまうのを防ぐ
-   */
-  private swallowNextClick(): void {
-    const swallow = (ev: MouseEvent) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      cleanup();
-    };
-    const cleanup = () => {
-      document.removeEventListener("click", swallow, true);
-      window.clearTimeout(timer);
-    };
-    const timer = window.setTimeout(cleanup, 400);
-    document.addEventListener("click", swallow, { capture: true });
-  }
-
-  /** マウス／タッチのドラッグをまとめて扱う */
-  private startDrag(target: HTMLElement, e: PointerEvent, h: DragHandlers): void {
-    const startY = e.clientY;
-    const pointerId = e.pointerId;
-    const touch = this.isTouch(e);
-    let moved = false;
-    this.interacting = true;
-    if (touch) this.touchDragging = true;
-
-    // タッチのドラッグ中はブラウザにスクロールを始めさせない（始まると pointercancel で
-    // ドラッグが打ち切られる）。touch イベントは touchstart した要素に届き続けるので
-    // target で受けられる
-    const onTouchMove = (ev: TouchEvent) => ev.preventDefault();
-    if (touch) target.addEventListener("touchmove", onTouchMove, { passive: false });
-
-    const detach = () => {
-      target.removeEventListener("pointermove", onMove);
-      target.removeEventListener("pointerup", onUp);
-      target.removeEventListener("pointercancel", onCancel);
-      if (touch) target.removeEventListener("touchmove", onTouchMove);
-      try {
-        target.releasePointerCapture(pointerId);
-      } catch (_e) {
-        /* すでに解放済み */
-      }
-    };
-    const done = () => {
-      this.interacting = false;
-      // contextmenu（Android は長押しの約 500ms 後、指を離した後に来ることもある）を
-      // 拾ってメニューが二重に開かないよう、少し遅らせて解除する
-      if (touch) window.setTimeout(() => (this.touchDragging = false), 350);
-      if (this.pendingReload) {
-        this.pendingReload = false;
-        void this.reload();
-      }
-    };
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      const dy = ev.clientY - startY;
-      if (!moved && Math.abs(dy) < 3 && Math.abs(ev.clientX - e.clientX) < 3) return;
-      moved = true;
-      h.onMove?.(dy, ev);
-    };
-    const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      detach();
-      h.onEnd(moved, ev);
-      done();
-    };
-    const onCancel = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      detach();
-      h.onCancel?.();
-      done();
-    };
-
-    try {
-      target.setPointerCapture(pointerId);
-    } catch (_e) {
-      /* 非対応環境 */
-    }
-    target.addEventListener("pointermove", onMove);
-    target.addEventListener("pointerup", onUp);
-    target.addEventListener("pointercancel", onCancel);
-  }
-
-  /** 空き時間のクリック／ドラッグ → タスクを作成 */
-  private onCanvasPointerDown(e: PointerEvent, col: DayColumn): void {
-    if (e.button !== 0) return;
-    const targetEl = e.target as HTMLElement;
-    this.canvasTapArmed = false;
-    if (targetEl.closest(".dt-event")) return;
-
-    if (this.isTouch(e)) {
-      // チップ自身のタップはチップの click（作成ダイアログを開く）に任せる
-      if (targetEl.closest(".dt-touch-chip")) return;
-      // タッチでは誤操作を避ける: タップ（＝ネイティブの click、onCanvasClick）→
-      // 「＋ 追加」チップを出して 2 タップ目で作成、長押し → その場からドラッグで
-      // 範囲を決めて作成（Google カレンダー方式）。スクロール・横スワイプでは何もしない
-      this.canvasTapArmed = true;
-      this.touchGate(col.canvasEl, e, {
-        onLongPress: () => {
-          this.canvasTapArmed = false;
-          this.beginCanvasCreateDrag(e, col);
-        },
-      });
-      return;
-    }
-    this.dismissTouchChip();
-    this.beginCanvasCreateDrag(e, col);
-  }
-
-  /** タッチのタップ（ブラウザが確定した click）で「＋ 追加」チップを出す */
-  private onCanvasClick(e: MouseEvent, col: DayColumn): void {
-    if (!this.canvasTapArmed) return; // マウスのクリックは onCanvasPointerDown 側で扱う
-    this.canvasTapArmed = false;
-    if (this.touchDragging) return;
-    const targetEl = e.target as HTMLElement;
-    if (targetEl.closest(".dt-event, .dt-touch-chip")) return;
-    this.showTouchCreateChip(col, e.clientY);
-  }
-
-  /** タッチで空き時間をタップ → その枠に「＋ 時刻」チップを出す。チップをタップで作成 */
-  private showTouchCreateChip(col: DayColumn, clientY: number): void {
-    this.dismissTouchChip();
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-    const start = clamp(this.snapFloor(this.clientYToMinutes(clientY, col.row)), dayStart, dayEnd - s.snapMinutes);
-    const end = Math.min(start + s.defaultDurationMinutes, dayEnd);
-    const el = col.eventsEl.createDiv("dt-ghost dt-touch-chip");
-    el.style.top = this.minutesToPx(start) + "px";
-    el.style.height = Math.max(this.minutesToPx(end) - this.minutesToPx(start) - 2, 4) + "px";
-    el.setText(`＋ ${minutesToHHMM(start)} - ${minutesToHHMM(end)}`);
-    el.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      this.dismissTouchChip();
-      this.openCreateModal(col.date, start, end);
-    });
-    this.touchChipEl = el;
-  }
-
-  private dismissTouchChip(): void {
-    this.touchChipEl?.remove();
-    this.touchChipEl = null;
-  }
-
-  /** 空き時間からのドラッグ（マウス、またはタッチの長押し後）でタスクを作成する */
-  private beginCanvasCreateDrag(e: PointerEvent, col: DayColumn): void {
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-    const snap = s.snapMinutes;
-    const anchor = clamp(this.snapFloor(this.clientYToMinutes(e.clientY, col.row)), dayStart, dayEnd - snap);
-    const defaultRange = (): [number, number] => [
-      anchor,
-      Math.min(anchor + s.defaultDurationMinutes, dayEnd),
-    ];
-    let range = defaultRange();
-
-    const ghost = col.eventsEl.createDiv("dt-ghost");
-    const drawGhost = () => {
-      ghost.style.top = this.minutesToPx(range[0]) + "px";
-      ghost.style.height = Math.max(this.minutesToPx(range[1]) - this.minutesToPx(range[0]) - 2, 4) + "px";
-      ghost.setText(`${minutesToHHMM(range[0])} - ${minutesToHHMM(range[1])}`);
-    };
-    drawGhost();
-
-    this.startDrag(col.canvasEl, e, {
-      onMove: (_dy, ev) => {
-        const cur = clamp(this.snapFloor(this.clientYToMinutes(ev.clientY, col.row)), dayStart, dayEnd - snap);
-        if (cur === anchor) range = defaultRange();
-        else if (cur > anchor) range = [anchor, cur + snap];
-        else range = [cur, anchor + snap];
-        drawGhost();
-      },
-      onEnd: (moved) => {
-        if (!moved) {
-          range = defaultRange();
-          // 長押しだけで離した場合は合成 click が来うるので、ダイアログに当たらないように
-          if (this.isTouch(e)) this.swallowNextClick();
-        }
-        this.openCreateModal(col.date, range[0], range[1], () => ghost.remove());
-      },
-      onCancel: () => ghost.remove(),
-    });
-  }
-
-  private attachEventInteractions(
-    el: HTMLElement,
-    timeEl: HTMLElement,
-    handle: HTMLElement,
-    col: DayColumn,
-    task: ScheduledTask
-  ): void {
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-
-    // 本体: クリックで編集（Ctrl/Cmd+クリックでノートへ）、ドラッグで移動（週表示では別の日へも）。
-    // タッチではタップ（＝ネイティブの click）で編集、長押ししてからドラッグで移動
-    // （長押しして動かさなければメニュー）
-    let touchTapArmed = false;
-    el.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      e.stopPropagation();
-      touchTapArmed = false;
-      if (this.isTouch(e)) {
-        touchTapArmed = true;
-        this.touchGate(el, e, {
-          onLongPress: () => {
-            touchTapArmed = false;
-            el.addClass("is-lifted");
-            beginMove(e, true);
-          },
-        });
-        return;
-      }
-      beginMove(e, false);
-    });
-    // タップ = ブラウザが確定した click（スクロールや長押しになったタップでは発火しない）。
-    // マウスのクリックは beginMove の onEnd(!moved) が扱うのでここでは無視する
-    el.addEventListener("click", (ce: MouseEvent) => {
-      ce.stopPropagation();
-      if (!touchTapArmed) return;
-      touchTapArmed = false;
-      if (this.touchDragging) return;
-      this.openEditModal(col.date, task);
-    });
-    const beginMove = (e: PointerEvent, viaLongPress: boolean) => {
-      const dur = task.end - task.start;
-      // 掴んだ位置がブロックの上端から何分か（別の段へ運ぶとき、その段の時間軸で上端を出すのに使う）
-      const grabOffset = this.clientYToMinutes(e.clientY, col.row) - task.start;
-      let newStart = task.start;
-      let targetCol: DayColumn = col;
-      this.startDrag(el, e, {
-        onMove: (dy, ev) => {
-          const over = this.columns.length > 1 ? (this.columnAt(ev.clientX, ev.clientY) ?? col) : col;
-          // 同じ段ならポインタの移動量から。別の段（2週間表示の今週 ⇄ 来週）なら、
-          // その段の時間軸でのポインタ位置から時刻を出す（段の間の距離を足し込まない）
-          const raw =
-            over.row === col.row
-              ? task.start + this.pxToMinutes(dy)
-              : this.clientYToMinutes(ev.clientY, over.row) - grabOffset;
-          newStart = clamp(this.snapRound(raw), dayStart, Math.max(dayStart, dayEnd - dur));
-          el.addClass("is-dragging");
-          el.style.top = this.minutesToPx(newStart) + "px";
-          timeEl.setText(`${minutesToHHMM(newStart)} - ${minutesToHHMM(newStart + dur)}`);
-          if (over !== targetCol) {
-            targetCol = over;
-            // 要素は元の列に置いたまま、ずらして別の日の列（別の段）の上に見せる
-            // （DOM を移すとポインタキャプチャが外れる環境があるため）
-            const from = col.canvasEl.getBoundingClientRect();
-            const to = targetCol.canvasEl.getBoundingClientRect();
-            const dx = to.left - from.left;
-            const dyRow = to.top - from.top;
-            el.style.transform = dx || dyRow ? `translate(${dx}px, ${dyRow}px)` : "";
-            el.toggleClass("is-moving-day", targetCol !== col);
-          }
-        },
-        onEnd: (moved, ev) => {
-          el.removeClass("is-dragging");
-          el.removeClass("is-lifted");
-          if (!moved) {
-            // 長押しだけ（動かさず離した）→ 右クリック相当のメニュー。
-            // モバイルでは完了・削除・持ち越しなどへの入口になる
-            if (viaLongPress) {
-              this.swallowNextClick(); // 合成 click がメニューに当たって即閉じないように
-              this.showTaskMenu(col.date, task, ev);
-            } else this.openEditModal(col.date, task);
-            return;
-          }
-          const draft = { ...this.draftOf(task), start: newStart, end: newStart + dur };
-          if (targetCol !== col) {
-            void this.commitMove(col.date, task, targetCol.date, draft);
-          } else if (newStart !== task.start) {
-            void this.commitUpdate(col.date, task, draft);
-          } else {
-            this.renderEvents();
-          }
-        },
-        onCancel: () => this.renderEvents(),
-      });
-    };
-
-    // 下端のハンドル: ドラッグで終了時刻を変更（タッチでは長押ししてからドラッグ。
-    // タップは el へバブルする click が編集を開く）
-    handle.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      e.stopPropagation();
-      touchTapArmed = false;
-      if (this.isTouch(e)) {
-        touchTapArmed = true;
-        this.touchGate(handle, e, {
-          onLongPress: () => {
-            touchTapArmed = false;
-            el.addClass("is-lifted");
-            beginResize(e);
-          },
-        });
-        return;
-      }
-      beginResize(e);
-    });
-    const beginResize = (e: PointerEvent) => {
-      let newEnd = task.end;
-      this.startDrag(handle, e, {
-        onMove: (dy) => {
-          newEnd = clamp(this.snapRound(task.end + this.pxToMinutes(dy)), task.start + s.snapMinutes, dayEnd);
-          el.addClass("is-dragging");
-          el.style.height = Math.max(this.minutesToPx(newEnd) - this.minutesToPx(task.start) - 2, 4) + "px";
-          timeEl.setText(`${minutesToHHMM(task.start)} - ${minutesToHHMM(newEnd)}`);
-        },
-        onEnd: (moved) => {
-          el.removeClass("is-dragging");
-          el.removeClass("is-lifted");
-          if (moved && newEnd !== task.end) {
-            void this.commitUpdate(col.date, task, { ...this.draftOf(task), end: newEnd });
-          } else {
-            this.renderEvents();
-          }
-        },
-        onCancel: () => this.renderEvents(),
-      });
-    };
-
-    // 右クリックメニュー
-    el.addEventListener("contextmenu", (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.touchDragging) return; // 長押しドラッグ中の contextmenu（Android）は無視
-      this.showTaskMenu(col.date, task, e);
-    });
-  }
-
-  /** トレイのチップ: クリックで編集、タイムラインへドラッグで時刻を割り当て */
-  private attachTrayInteractions(chip: HTMLElement, date: Date, task: Task): void {
-    this.attachChipDrag(
-      chip,
-      ".dt-tray-check",
-      () => this.displayTitle(task),
-      (dropDate, start, end) => {
-        const draft = { ...this.draftOf(task), start, end };
-        if (isSameDay(dropDate, date)) void this.commitUpdate(date, task, draft);
-        else void this.commitMove(date, task, dropDate, draft);
-      },
-      () => this.openEditModal(date, task)
-    );
-
-    chip.addEventListener("contextmenu", (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.touchDragging) return;
-      this.showTaskMenu(date, task, e);
-    });
-  }
-
-  /** Inbox のチップ: クリックで編集、タイムラインへドラッグでその日に移して時刻を割り当て */
-  private attachInboxInteractions(chip: HTMLElement, task: Task): void {
-    this.attachChipDrag(
-      chip,
-      ".dt-tray-check",
-      () => this.displayTitle(task),
-      (date, start, end) =>
-        void this.commitInboxToDay(task, date, { ...this.draftOf(task), start, end }),
-      () => this.openInboxEditModal(task)
-    );
-
-    chip.addEventListener("contextmenu", (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.touchDragging) return;
-      this.showInboxTaskMenu(task, e);
-    });
-  }
-
-  /** 日付未定（Inbox のノートにある）タスクの右クリックメニュー（Inbox・プロジェクトパネル共通） */
-  private showInboxTaskMenu(task: Task, e: MouseEvent): void {
-    const menu = new Menu();
-    menu.addItem((i) => i.setTitle("編集").setIcon("pencil").onClick(() => this.openInboxEditModal(task)));
-    menu.addItem((i) =>
-      i
-        .setTitle(task.done ? "未完了に戻す" : "完了にする")
-        .setIcon("check")
-        .onClick(() => void this.commitInboxUpdate(task, { ...this.draftOf(task), done: !task.done }))
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle("今日へ送る（未スケジュール）")
-        .setIcon("calendar")
-        .onClick(() => void this.commitInboxToDay(task, startOfDay(new Date())))
-    );
-    if (this.mode === "day" && !isToday(this.date)) {
-      menu.addItem((i) =>
-        i
-          .setTitle(`${moment(this.date).format("M月D日")} へ送る（未スケジュール）`)
-          .setIcon("calendar")
-          .onClick(() => void this.commitInboxToDay(task, this.date))
-      );
-    }
-    menu.addItem((i) =>
-      i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openInboxTaskInNote(task))
-    );
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle("削除").setIcon("trash").onClick(() => void this.commitInboxDelete(task))
-    );
-    menu.showAtMouseEvent(e);
-  }
-
-  /** タスクの右クリックメニュー（タイムライン・トレイ共通） */
-  private showTaskMenu(date: Date, task: Task, e: MouseEvent): void {
-    const menu = new Menu();
-    menu.addItem((i) =>
-      i.setTitle("編集").setIcon("pencil").onClick(() => this.openEditModal(date, task))
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle(task.done ? "未完了に戻す" : "完了にする")
-        .setIcon("check")
-        .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), done: !task.done }))
-    );
-    if (this.plugin.blockStoreFor(task.owner)) {
-      const tr = this.plugin.settings.tracking;
-      const isTracking =
-        !!tr && !!task.blockId && tr.blockId === task.blockId && (tr.owner ?? null) === (task.owner ?? null);
-      menu.addItem((i) =>
-        isTracking
-          ? i
-              .setTitle("計測を終了して実績に記録")
-              .setIcon("square")
-              .onClick(() => void this.plugin.stopTaskTracking(true))
-          : i
-              .setTitle("実績の計測を開始")
-              .setIcon("play")
-              .onClick(() => void this.plugin.startTaskTracking(date, task))
-      );
-    }
-    menu.addItem((i) =>
-      i.setTitle("ノートで開く").setIcon("file-text").onClick(() => void this.openTaskInNote(date, task))
-    );
-    if (task.project && this.plugin.projects) {
-      const link = task.project;
-      menu.addItem((i) =>
-        i
-          .setTitle(`プロジェクト「${projectDisplayName(link)}」を開く`)
-          .setIcon("arrow-up-right")
-          .onClick(() => void this.plugin.openProject(link))
-      );
-    }
-    {
-      const url = this.ticketUrlOf(task);
-      if (url && task.ticket) {
-        menu.addItem((i) =>
-          i
-            .setTitle(`チケット #${task.ticket?.id} を開く`)
-            .setIcon("external-link")
-            .onClick(() => window.open(url))
-        );
-      }
-    }
-    if (isScheduled(task)) {
-      menu.addItem((i) =>
-        i
-          .setTitle("時刻を外す（未スケジュールへ）")
-          .setIcon("timer-off")
-          .onClick(() => void this.commitUpdate(date, task, { ...this.draftOf(task), start: null, end: null }))
-      );
-    }
-    if (this.plugin.blockStoreFor(task.owner) && !task.done && !task.forwarded) {
-      menu.addItem((i) =>
-        i
-          .setTitle("翌日へ持ち越す（記録を残す）")
-          .setIcon("corner-down-right")
-          .onClick(() => void this.commitCarryOver(date, task))
-      );
-    }
-    if (this.plugin.blockStore() && this.plugin.settings.members.length) {
-      const targets: { id: string | null; name: string }[] = [
-        { id: null, name: "自分" },
-        ...this.plugin.settings.members.map((m) => ({ id: m.id, name: m.name || "?" })),
-      ].filter((o) => (o.id ?? null) !== (task.owner ?? null));
-      for (const o of targets) {
-        menu.addItem((i) =>
-          i
-            .setTitle(`${o.name}の予定にする`)
-            .setIcon("user")
-            .onClick(() => void this.commitChangeOwner(date, task, { ...this.draftOf(task), owner: o.id }))
-        );
-      }
-    }
-    if (this.plugin.inbox && !task.owner) {
-      menu.addItem((i) =>
-        i
-          .setTitle("Inbox へ戻す（日付を外す）")
-          .setIcon("inbox")
-          .onClick(() => void this.commitDayToInbox(date, task))
-      );
-    }
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i
-        .setTitle("定期タスクとして登録…")
-        .setIcon("repeat")
-        .onClick(() => {
-          new RecurringModal(this.app, {
-            preset: {
-              title: task.title,
-              start: task.start,
-              end: task.end,
-              weekday: date.getDay(),
-              project: task.project,
-              // タスクのステップを「共通のステップ」の初期値に（毎回未チェックで入る）
-              steps: task.steps.map((st) => st.text.trim()).filter(Boolean),
-            },
-            tagChoices: this.plugin.settings.tagColors,
-            projects: this.plugin.projects?.list(),
-            onSubmit: async (rule) => {
-              this.plugin.settings.recurring.push(rule);
-              await this.plugin.saveSettings();
-              new Notice(`定期タスク「${rule.title}」を登録しました`);
-            },
-          }).open();
-        })
-    );
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle("削除").setIcon("trash").onClick(() => void this.commitDelete(date, task))
-    );
-    menu.showAtMouseEvent(e);
-  }
-
-  // ---------- モーダル ----------
-
-  private openCreateModal(
-    date: Date,
-    start?: number | null,
-    end?: number | null,
-    onClose?: () => void,
-    preset?: Partial<TaskDraft>
-  ): void {
-    const s = this.plugin.settings;
-    const dayStart = s.startHour * 60;
-    const dayEnd = s.endHour * 60;
-    if (start === undefined) {
-      const base = isToday(date) ? Math.ceil(nowMinutes() / s.snapMinutes) * s.snapMinutes : 9 * 60;
-      start = clamp(base, dayStart, Math.max(dayStart, dayEnd - s.snapMinutes));
-    }
-    if (start !== null) {
-      if (end === undefined || end === null) end = Math.min(start + s.defaultDurationMinutes, dayEnd);
-      if (end <= start) end = Math.min(start + s.snapMinutes, 1440);
-    } else {
-      end = null;
-    }
-
-    new TaskModal(this.app, {
-      mode: "create",
-      initial: { ...preset, title: preset?.title ?? "", start, end, done: false },
-      snapMinutes: s.snapMinutes,
-      allowUnscheduled: true,
-      dateField: { value: dateKey(date) },
-      tagChoices: s.tagColors,
-      reminderDefault: s.reminderDefaultMinutes,
-      trackers: s.trackers,
-      owners: this.ownerChoices(),
-      initialOwner: null,
-      otherActuals: this.otherActualsFor(date, null),
-      ...this.projectOptions(),
-      onSubmit: (data, dateSel) => this.commitCreate(dateSel ?? date, data),
-      onClose,
-    }).open();
-  }
-
-  /**
-   * プロジェクトパネルの「＋」からのタスク追加。日付はまだ決めない前提で、
-   * 時刻を空のまま保存すると日付未定（実体は Inbox のノート。パネルには「未定」と表示）、
-   * 時刻を入れると表示中の日へ登録する
-   */
-  private openProjectCreateModal(project: string): void {
-    const inbox = this.plugin.inbox;
-    if (!inbox) {
-      // Inbox の無い形式ではプロジェクトパネル自体が出ないはずだが、念のため従来どおり
-      this.openCreateModal(this.date, undefined, undefined, undefined, { project });
-      return;
-    }
-    const s = this.plugin.settings;
-    const dayLabel = moment(this.date).format("M月D日");
-    new TaskModal(this.app, {
-      mode: "create",
-      initial: { title: "", start: null, end: null, done: false, project },
-      snapMinutes: s.snapMinutes,
-      allowUnscheduled: true,
-      dateLabel: "日付未定",
-      dateField: {
-        value: null,
-        allowEmpty: true,
-        hint: "空のままなら日付を決めずに登録します",
-      },
-      unscheduledHint: `時刻なし — 日付を決めずに登録します（プロジェクトパネルに「未定」として並びます。時刻を入れると ${dayLabel} に登録）`,
-      tagChoices: s.tagColors,
-      trackers: s.trackers,
-      ...this.projectOptions(),
-      onSubmit: async (data, dateSel) => {
-        // 日付を選んだらその日へ。選ばずに時刻だけ入れたら、これまでどおり表示中の日へ
-        const to = dateSel ?? (data.start !== null && data.end !== null ? this.date : null);
-        if (to) {
-          await this.commitCreate(to, data);
-          return;
-        }
-        try {
-          await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
-          new Notice("日付未定で登録しました（プロジェクトパネルに表示されます）");
-        } catch (e) {
-          console.error(e);
-          new Notice("登録できませんでした: " + String(e));
-        }
-        await this.reload();
-      },
-    }).open();
-  }
-
-  private openEditModal(date: Date, task: Task): void {
-    // 自動保存のたびに参照を最新へ差し替える（タイトルや時刻が変わると照合できなくなるため）
-    let current = task;
-    const wasDone = task.done;
-    const serially = serialQueue();
-    // 日付を空にして「日付未定（Inbox）」へ戻せるのは、自分のタスクで Inbox があるときだけ
-    const allowClearDate = !!this.plugin.inbox && !task.owner;
-    new TaskModal(this.app, {
-      mode: "edit",
-      initial: this.draftOf(task),
-      snapMinutes: this.plugin.settings.snapMinutes,
-      allowUnscheduled: true,
-      dateField: {
-        value: dateKey(date),
-        allowEmpty: allowClearDate,
-        hint: allowClearDate ? "空にすると日付未定（Inbox）へ移します" : undefined,
-      },
-      tagChoices: this.plugin.settings.tagColors,
-      reminderDefault: this.plugin.settings.reminderDefaultMinutes,
-      showActual: true,
-      trackers: this.plugin.settings.trackers,
-      owners: this.ownerChoices(),
-      initialOwner: task.owner ?? null,
-      otherActuals: this.otherActualsFor(date, task.owner ?? null, task.key),
-      ...this.projectOptions(),
-      onAutoSave: async (data) => {
-        // 持ち主・日付の変更はノートをまたぐ移動になるので、閉じるとき（onSubmit）にまとめて反映する
-        const next = await serially(() => this.commitAutoSave(date, current, data));
-        if (next) current = next;
-        return next !== null;
-      },
-      onSubmit: (data, dateSel) =>
-        serially(() => this.commitEditSubmit(date, current, data, dateSel, wasDone)),
-      onDelete: () => serially(() => this.commitDelete(date, current)),
-      onOpenNote: () => serially(() => this.openTaskInNote(date, current)),
-    }).open();
-  }
-
-  /**
-   * 編集ダイアログを閉じたときの反映。日付欄が変わっていれば別の日のノートへ移す
-   * （空にしたときは Inbox の「日付未定」へ）
-   */
-  private async commitEditSubmit(
-    date: Date,
-    task: Task,
-    data: TaskDraft,
-    dateSel: Date | null | undefined,
-    wasDone: boolean
-  ): Promise<void> {
-    // 日付が変わっていない（または欄が無い）: これまでどおり
-    if (dateSel === undefined || (dateSel !== null && isSameDay(dateSel, date))) {
-      return this.commitUpdate(date, task, data, wasDone);
-    }
-    // 持ち主の変更と同時はノートをまたぐ移動が重なるため、持ち主の変更を優先する
-    if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
-      new Notice("持ち主と日付は同時に変えられないため、日付は変更していません");
-      return this.commitUpdate(date, task, data, wasDone);
-    }
-    if (dateSel === null) return this.commitDayToInbox(date, task, data);
-    return this.commitMove(date, task, dateSel, data);
-  }
-
-  /** 編集ダイアログの「誰の予定か」の選択肢（メンバーが居ないときは undefined = 欄を出さない） */
-  private ownerChoices(): { id: string | null; name: string; color: string }[] | undefined {
-    if (!this.plugin.blockStore() || !this.plugin.settings.members.length) return undefined;
-    return [
-      { id: null, name: "自分", color: "" },
-      ...this.plugin.settings.members.map((m) => ({ id: m.id, name: m.name || "?", color: m.color })),
-    ];
-  }
-
-  private draftOf(task: Task): TaskDraft {
-    return {
-      title: task.title,
-      start: task.start,
-      end: task.end,
-      done: task.done,
-      reminder: task.reminder,
-      doneCondition: task.doneCondition,
-      steps: task.steps,
-      retrospective: task.retrospective,
-      result: task.result,
-      remaining: task.remaining,
-      cause: task.cause,
-      judgment: task.judgment,
-      others: task.others,
-      answer: task.answer,
-      status: task.status,
-      ownerName: task.ownerName,
-      due: task.due,
-      nextAction: task.nextAction,
-      actual: task.actual,
-      project: task.project,
-      details: task.details,
-      ticket: task.ticket,
-    };
-  }
-
-  /**
-   * 編集ダイアログに渡す「同じ日の他のタスクの実績」（実績の重複を保存前に注意するため）。
-   * 同じ持ち主のタスクだけを見る（メンバーの予定と自分の予定は別のノートなので重なってよい）
-   */
-  private otherActualsFor(date: Date, owner: string | null, exceptKey?: string): OtherActual[] {
-    return (this.data.get(dateKey(date))?.tasks ?? [])
-      .filter((t) => t.key !== exceptKey && (t.owner ?? null) === (owner ?? null) && t.actual.length)
-      .map((t) => ({ title: stripTags(t.title) || "(無題)", ranges: t.actual }));
-  }
-
-  /** 編集・追加ダイアログに渡すプロジェクトまわりの共通オプション */
-  private projectOptions() {
-    const projects = this.plugin.projects;
-    if (!projects) return {};
-    return {
-      projects: projects.list(),
-      onCreateProject: (name: string) => projects.create(name),
-      onOpenProject: (link: string) => this.plugin.openProject(link),
-    };
-  }
-
   /** チケットの URL（設定に無ければ null） */
-  private ticketUrlOf(task: Task): string | null {
+  ticketUrlOf(task: Task): string | null {
     if (!task.ticket) return null;
     return ticketUrl(this.plugin.settings.trackers, task.ticket.tracker, task.ticket.id);
   }
 
   /** タイムライン上に出すタイトル（タグは色で分かるので文字としては出さない） */
-  private displayTitle(task: Task): string {
+  displayTitle(task: Task): string {
     return stripTags(task.title) || "(無題)";
   }
 
   // ---------- 保存 ----------
-
-  private async commitCreate(date: Date, data: TaskDraft): Promise<void> {
-    try {
-      await this.plugin.storeFor(data.owner).create(date, data);
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを保存できませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  /**
-   * @param before ボス戦の演出の基準（保存前の状態）。編集ダイアログは開いたときの写しを渡す。
-   *   省略時は task そのもの（チェック・メニューからの完了）
-   */
-  private async commitUpdate(
-    date: Date,
-    task: Task,
-    data: TaskDraft,
-    wasDone = task.done
-  ): Promise<void> {
-    // 持ち主が変わった場合は、別のノートへブロックごと移す
-    if (data.owner !== undefined && (data.owner ?? null) !== (task.owner ?? null)) {
-      await this.commitChangeOwner(date, task, data);
-      return;
-    }
-    await this.performUpdate(date, task, data, wasDone);
-  }
-
-
-  private async performUpdate(
-    date: Date,
-    task: Task,
-    data: TaskDraft,
-    wasDone = task.done
-  ): Promise<void> {
-    // 未完了 → 完了で実績が空なら、自動で実績を入れる
-    const auto = this.autoActual(date, task, data, wasDone);
-    if (auto) data = { ...data, actual: auto };
-    let updated = false;
-    try {
-      const ok = await this.storeOf(task).update(date, task, data);
-      if (!ok) new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
-      updated = !!ok;
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを保存できませんでした: " + String(e));
-    }
-    await this.reload();
-    if (updated) {
-      if (auto) new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
-      // 「未完了 → 完了」でプロジェクトの子が全部完了したら、プロジェクトの完了を提案
-      if (data.done && !wasDone) {
-        void this.maybeSuggestProjectDone(data.project !== undefined ? data.project : task.project);
-      }
-    }
-  }
-
-  /** プロジェクトの子タスクがすべて完了したら、プロジェクト自身の完了を提案する */
-  private async maybeSuggestProjectDone(link: string | null | undefined): Promise<void> {
-    const projects = this.plugin.projects;
-    if (!link || !projects) return;
-    try {
-      const children = await this.plugin.collectProjectChildren(link);
-      // 持ち越し済み [>] のブロックは「閉じた記録」なので、完了扱いで数える
-      if (!children.length || !children.every((c) => c.task.done || c.task.forwarded)) return;
-      // メタ行なし（null）は「未完了」とみなす（setDone がメタ行を書き足してくれる）
-      if ((await projects.isDone(link)) === true) return; // 既に完了
-      new ConfirmModal(
-        this.app,
-        `プロジェクト「${projectDisplayName(link)}」のタスクがすべて完了しました。プロジェクトも完了にしますか？`,
-        "完了にする",
-        async () => {
-          const ok = await projects.setDone(link, true);
-          if (ok) {
-            await this.plugin.updateProjectNote(link);
-            new Notice(`プロジェクト「${projectDisplayName(link)}」を完了にしました`);
-          } else {
-            new Notice("プロジェクトノートを更新できませんでした");
-          }
-        }
-      ).open();
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  /**
-   * 完了にしたときの実績の自動記録（設定でオフ可）。
-   * 今日のタスクを作業の前後で完了にしたときは「予定の開始 〜 今」、
-   * それ以外（後からまとめてチェックした・別の日のタスク）は「予定どおり」として記録する。
-   * 同じ日の他タスクの実績と重なる時間帯は除く（完了操作の遅れや中断が
-   * 二重の実績として記録され、予実の合計と記録チェックを狂わせるのを防ぐ）。
-   */
-  private autoActual(date: Date, task: Task, data: TaskDraft, wasDone: boolean): ActualRange[] | null {
-    const s = this.plugin.settings;
-    if (!s.autoRecordActual || !this.plugin.blockStore()) return null;
-    if (!data.done || wasDone) return null;
-    const existing = data.actual !== undefined ? data.actual : task.actual;
-    if (existing.length) return null;
-    const start = data.start ?? task.start;
-    const end = data.end ?? task.end;
-    if (start === null || end === null) return null;
-    let candidate: ActualRange[] = [{ start, end }];
-    if (isToday(date)) {
-      const now = nowMinutes();
-      if (now > start && now <= end + 60) candidate = [{ start, end: Math.min(now, 1440) }];
-    }
-    const others = (this.data.get(dateKey(date))?.tasks ?? [])
-      .filter((t) => t.key !== task.key && (t.owner ?? null) === (task.owner ?? null))
-      .flatMap((t) => t.actual);
-    const clipped = subtractActualRanges(candidate, others);
-    // すべて他タスクの実績と重なっていたら、記録しないよりは元の候補を残す（ポップアップで直せる）
-    return clipped.length ? clipped : candidate;
-  }
-
-  /**
-   * 編集ダイアログからの自動保存。持ち主の変更は反映しない（閉じるときに行う）。
-   * 成功したら保存後のタスク参照を返し、失敗（見つからない・書き込みエラー）なら null。
-   */
-  private async commitAutoSave(date: Date, task: Task, data: TaskDraft): Promise<Task | null> {
-    const store = this.storeOf(task);
-    try {
-      if (!(await store.update(date, task, data))) return null;
-    } catch (e) {
-      console.error(e);
-      return null;
-    }
-    await this.reload();
-    return (await this.relocateTask(store, date, task, data)) ?? task;
-  }
-
-  /** 保存で ID が付いたり内容が変わったりしたあと、同じタスクを探し直す */
-  private async relocateTask(
-    store: BlockTaskStore,
-    date: Date,
-    task: Task,
-    draft: TaskDraft
-  ): Promise<Task | null> {
-    try {
-      const day = await store.load(date);
-      if (task.blockId) return day.tasks.find((t) => t.blockId === task.blockId) ?? null;
-      // ID の無いタスク（旧形式・手書きのブロック）は保存した内容で照合する
-      return (
-        day.tasks.find(
-          (t) =>
-            t.title === draft.title && t.start === draft.start && t.end === draft.end && t.done === draft.done
-        ) ?? null
-      );
-    } catch (e) {
-      console.error(e);
-      return null;
-    }
-  }
-
-
-  private async commitDelete(date: Date, task: Task): Promise<void> {
-    const doDelete = async () => {
-      try {
-        const ok = await this.storeOf(task).remove(date, task);
-        if (!ok) new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
-        // 定期タスクの回だったら「その日は取り消した」として記録する（勝手に復活しない・管理画面で区別できる）
-        else await noteRecurringDeletion(this.plugin, date, task);
-      } catch (e) {
-        console.error(e);
-        new Notice("タスクを削除できませんでした: " + String(e));
-      }
-      await this.reload();
-    };
-
-    // 本文があるブロックはノートの中身ごと消えるので確認する
-    const s = this.plugin.settings;
-    const blockStore = this.plugin.blockStoreFor(task.owner);
-    if (s.confirmBodyDelete && blockStore && (await blockStore.hasBody(date, task))) {
-      new ConfirmModal(
-        this.app,
-        `「${task.title || "(無題)"}」には本文があります。ブロックごと削除しますか？`,
-        "削除",
-        doDelete
-      ).open();
-      return;
-    }
-    await doDelete();
-  }
-
-  /**
-   * 別の日へ移す。draft を渡すと移動後にその内容（時刻など）で更新する
-   * （週表示で別の日の列へドラッグしたときに使う）。
-   */
-  private async commitMove(from: Date, task: Task, to: Date, draft?: TaskDraft): Promise<void> {
-    try {
-      const ok = await this.storeOf(task).moveToDate(from, task, to);
-      if (ok === false) {
-        new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
-      } else if (ok === null) {
-        new Notice("この形式では日をまたぐ移動に対応していません");
-      } else {
-        if (draft) {
-          const updated = await this.storeOf(task).update(to, task, draft);
-          if (!updated) new Notice("移動しましたが、時刻を更新できませんでした");
-        }
-        new Notice(`${moment(to).format("M月D日")} へ移動しました`);
-      }
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを移動できませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  /**
-   * 残件の持ち越し: タスクは動かさず、今日のブロックを [>] で閉じて
-   * 続きのブロックを翌日に作る。実績・本文は今日の記録として残る
-   */
-  private async commitCarryOver(date: Date, task: Task): Promise<void> {
-    const store = this.plugin.blockStoreFor(task.owner);
-    if (!store) {
-      new Notice("持ち越しはタスクブロック形式のときだけ使えます");
-      return;
-    }
-    if (task.done) {
-      new Notice("完了したタスクは持ち越せません");
-      return;
-    }
-    try {
-      // 元ブロックに ID を付けて、リンクで鎖にできるようにする
-      const link = await store.linkTo(date, task);
-      const fromId = link?.split("#^")[1];
-      if (!fromId) {
-        new Notice("持ち越し元のタスクが見つかりませんでした。ノートが変更された可能性があります。");
-        await this.reload();
-        return;
-      }
-      const fromLink = `${store.pathFor(date).replace(/\.md$/, "")}#^${fromId}`;
-
-      // 続きのブロック: 残ステップ・完了条件・プロジェクト等を引き継ぎ、未スケジュールで作る
-      const remaining = task.steps
-        .filter((st) => !st.done)
-        .map((st) => ({ ...st, children: [...(st.children ?? [])] }));
-      const newId = newBlockId();
-      const toDate = addDays(date, 1);
-      const toLink = `${store.pathFor(toDate).replace(/\.md$/, "")}#^${newId}`;
-      await store.createWithId(toDate, {
-        title: task.title,
-        start: null,
-        end: null,
-        done: false,
-        reminder: task.reminder,
-        doneCondition: task.doneCondition || undefined,
-        steps: remaining,
-        ticket: task.ticket ?? undefined,
-        project: task.project ?? undefined,
-        // 未完了セット（Owner・期限・次アクション）も続きのブロックへ引き継ぐ（翌日に追えるように）
-        ownerName: task.ownerName || undefined,
-        due: task.due || undefined,
-        nextAction: task.nextAction || undefined,
-        carryFrom: fromLink,
-      }, newId);
-
-      // 元ブロックを閉じる: [>] + 持ち越し先リンク（実績・ステップ・本文はそのまま）
-      const ok = await store.update(date, { ...task, blockId: fromId, ref: { kind: "block", id: fromId, title: task.title, start: task.start, end: task.end } }, {
-        title: task.title,
-        start: task.start,
-        end: task.end,
-        done: false,
-        forward: true,
-        carryTo: toLink,
-      });
-      if (!ok) new Notice("持ち越し先は作りましたが、元のタスクを閉じられませんでした");
-      else {
-        const name = stripTags(task.title) || "(無題)";
-        const rem = remaining.length ? `（残ステップ ${remaining.length} 件）` : "";
-        new Notice(`「${name}」を翌日へ持ち越しました${rem}。明日の未スケジュールのトレイに入ります`);
-      }
-    } catch (e) {
-      console.error(e);
-      new Notice("持ち越せませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  /** タスクの持ち主を変える（別のフォルダのノートへブロックごと移す） */
-  private async commitChangeOwner(date: Date, task: Task, data: TaskDraft): Promise<void> {
-    const from = this.plugin.blockStoreFor(task.owner);
-    const to = this.plugin.blockStoreFor(data.owner);
-    if (!from || !to || from === to) return;
-    try {
-      const block = await from.takeBlock(date, task);
-      if (!block) {
-        new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
-      } else {
-        await to.putBlock(date, block, data.start ?? task.start);
-        const ok = await to.update(date, task, { ...data, owner: undefined });
-        if (!ok) new Notice("移しましたが、内容を更新できませんでした");
-        const name = this.plugin.memberOf(data.owner)?.name ?? "自分";
-        new Notice(`${name}の予定にしました`);
-      }
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを移せませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  // ---------- Inbox ----------
-
-  private openInboxEditModal(task: Task): void {
-    const inbox = this.plugin.inbox;
-    if (!inbox) return;
-    let current = task;
-    const serially = serialQueue();
-    new TaskModal(this.app, {
-      mode: "edit",
-      initial: this.draftOf(task),
-      snapMinutes: this.plugin.settings.snapMinutes,
-      allowUnscheduled: true,
-      dateLabel: "Inbox",
-      dateField: {
-        value: null,
-        allowEmpty: true,
-        hint: "日付未定。日付を入れると、その日のノートへ移します",
-      },
-      tagChoices: this.plugin.settings.tagColors,
-      showActual: true,
-      trackers: this.plugin.settings.trackers,
-      ...this.projectOptions(),
-      onAutoSave: async (data) => {
-        // 自動保存では Inbox に留める。「日付・時刻を入れたら移す」のは閉じるときに行う
-        const next = await serially(() => this.commitInboxAutoSave(current, data));
-        if (next) current = next;
-        return next !== null;
-      },
-      onSubmit: (data, dateSel) =>
-        serially(() => {
-          // 日付を選んだらその日へ（時刻なしなら未スケジュールのまま）
-          if (dateSel) return this.commitInboxToDay(current, dateSel, data);
-          // 日付を選ばずに時刻を入れたら「今日」に移す（従来どおり）
-          if (data.start !== null && data.end !== null) {
-            return this.commitInboxToDay(current, startOfDay(new Date()), data);
-          }
-          return this.commitInboxUpdate(current, data);
-        }),
-      onDelete: () => serially(() => this.commitInboxDelete(current)),
-      onOpenNote: () => serially(() => this.openInboxTaskInNote(current)),
-    }).open();
-  }
-
-  /** Inbox の編集ダイアログからの自動保存（時刻は付けずに保存する） */
-  private async commitInboxAutoSave(task: Task, data: TaskDraft): Promise<Task | null> {
-    const inbox = this.plugin.inbox;
-    if (!inbox) return null;
-    const draft = { ...data, start: null, end: null };
-    try {
-      if (!(await inbox.update(INBOX_DATE, task, draft))) return null;
-    } catch (e) {
-      console.error(e);
-      return null;
-    }
-    await this.reloadInbox();
-    return (await this.relocateTask(inbox, INBOX_DATE, task, draft)) ?? task;
-  }
-
-  private async openInboxTaskInNote(task: Task): Promise<void> {
-    const inbox = this.plugin.inbox;
-    if (!inbox) return;
-    try {
-      const link = await inbox.linkTo(INBOX_DATE, task);
-      if (link) await this.app.workspace.openLinkText(link, "", false);
-      else await this.app.workspace.getLeaf("tab").openFile(await inbox.ensureFile(INBOX_DATE));
-    } catch (e) {
-      console.error(e);
-      new Notice("ノートを開けませんでした: " + String(e));
-    }
-  }
-
-  private async commitInboxUpdate(task: Task, data: TaskDraft): Promise<void> {
-    const inbox = this.plugin.inbox;
-    if (!inbox) return;
-    try {
-      const ok = await inbox.update(INBOX_DATE, task, { ...data, start: null, end: null });
-      if (!ok) new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを保存できませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  private async commitInboxDelete(task: Task): Promise<void> {
-    const inbox = this.plugin.inbox;
-    if (!inbox) return;
-    const doDelete = async () => {
-      try {
-        const ok = await inbox.remove(INBOX_DATE, task);
-        if (!ok) new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
-      } catch (e) {
-        console.error(e);
-        new Notice("タスクを削除できませんでした: " + String(e));
-      }
-      await this.reload();
-    };
-    if (this.plugin.settings.confirmBodyDelete && (await inbox.hasBody(INBOX_DATE, task))) {
-      new ConfirmModal(
-        this.app,
-        `「${task.title || "(無題)"}」には本文があります。ブロックごと削除しますか？`,
-        "削除",
-        doDelete
-      ).open();
-      return;
-    }
-    await doDelete();
-  }
-
-  /** Inbox のタスクをその日のノートへ移す。draft があれば移動後にその内容で更新 */
-  private async commitInboxToDay(task: Task, to: Date, draft?: TaskDraft): Promise<void> {
-    const inbox = this.plugin.inbox;
-    const day = this.plugin.blockStore();
-    if (!inbox || !day) return;
-    try {
-      const block = await inbox.takeBlock(INBOX_DATE, task);
-      if (!block) {
-        new Notice("タスクが見つかりませんでした。Inbox が変更された可能性があります。");
-      } else {
-        await day.putBlock(to, block, draft?.start ?? null);
-        if (draft) {
-          const ok = await day.update(to, task, draft);
-          if (!ok) new Notice("移動しましたが、時刻を更新できませんでした");
-        }
-        new Notice(`${moment(to).format("M月D日")} へ移動しました`);
-      }
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを移動できませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  /** その日のタスクを Inbox へ戻す（時刻も外す）。draft があれば移動後にその内容で更新 */
-  private async commitDayToInbox(from: Date, task: Task, draft?: TaskDraft): Promise<void> {
-    const inbox = this.plugin.inbox;
-    const day = this.plugin.blockStore();
-    if (!inbox || !day) return;
-    try {
-      const block = await day.takeBlock(from, task);
-      if (!block) {
-        new Notice("タスクが見つかりませんでした。ノートが変更された可能性があります。");
-      } else {
-        await inbox.putBlock(INBOX_DATE, block, null);
-        // 時刻を外し、Inbox に入れた日を「登録日」として刻む（滞留日数を後から判定できるように）
-        await inbox.update(INBOX_DATE, task, {
-          ...(draft ?? this.draftOf(task)),
-          start: null,
-          end: null,
-          registered: moment().format("YYYY-MM-DD"),
-        });
-        new Notice("Inbox へ戻しました（日付未定）");
-      }
-    } catch (e) {
-      console.error(e);
-      new Notice("タスクを移動できませんでした: " + String(e));
-    }
-    await this.reload();
-  }
-
-  // ---------- その他 ----------
 
   private openDatePicker(): void {
     const input = this.dateInputEl as HTMLInputElement & { showPicker?: () => void };
@@ -4834,7 +1897,7 @@ export class DayTimelineView extends ItemView {
     }
   }
 
-  private async openNote(date: Date): Promise<void> {
+  async openNote(date: Date): Promise<void> {
     try {
       const file = await this.plugin.store.ensureFile(date);
       await this.app.workspace.getLeaf("tab").openFile(file);
@@ -4845,102 +1908,8 @@ export class DayTimelineView extends ItemView {
   }
 }
 
-/** 分を "6:30" のような時:分表示に（日ヘッダーの予実合計用） */
-function hmm(min: number): string {
-  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
-}
-
-/** "YYYY-MM-DD" の日付キーを Date に戻す（読めなければ null） */
-function hoursDecimal(min: number): string {
-  return (min / 60).toFixed(1).replace(/\.0$/, "");
-}
-
-/** 1日の消化度（本日のサマリー用） */
-interface DayStats {
-  /** 数える対象の件数（自分のタスク。持ち越し済み [>] は除く） */
-  total: number;
-  done: number;
-  /** 予定時間の合計と、そのうち完了したタスクぶん（分。時刻のあるタスクだけ） */
-  plan: number;
-  donePlan: number;
-  /** 実績の合計（分）。持ち越し済み [>] のブロックに残した実績も、その日に働いた時間なので含める */
-  actual: number;
-  /** 達成率 0〜1。予定時間があれば時間ベース、無ければ件数ベース。タスクが無ければ null */
-  ratio: number | null;
-}
-
-/**
- * その日のタスクから消化度を出す。メンバーの予定は他の人のものなので数えない。
- * 持ち越し [>] にしたタスクは「今日やる分」から外す（分母から消えるので、整理した分だけ達成率が上がる）
- */
-function dayStats(tasks: Task[]): DayStats {
-  let total = 0;
-  let done = 0;
-  let plan = 0;
-  let donePlan = 0;
-  let actual = 0;
-  for (const t of tasks) {
-    if (t.owner) continue;
-    // 持ち越し済み [>] は件数・予定からは外すが、実績はその日に働いた時間なので足す
-    //（当日内の持ち越しだと、1回目の実績が消えて見えるのが目立つ）
-    actual += t.actual.reduce((m, r) => m + (r.end - r.start), 0);
-    if (t.forwarded) continue;
-    total++;
-    const p = isScheduled(t) ? t.end - t.start : 0;
-    plan += p;
-    if (t.done) {
-      done++;
-      donePlan += p;
-    }
-  }
-  const ratio = plan > 0 ? donePlan / plan : total > 0 ? done / total : null;
-  return { total, done, plan, donePlan, actual, ratio };
-}
-
-/**
- * サマリーのステップの区切りに数えるステップ。空のステップ行は数えない。
- * 持ち越し済み [>] のタスクはチェック済みのステップだけ数える: 未チェックのものは続きのブロックへ
- * 引き継がれている（当日内なら同じ日に並ぶ）ので、両方数えると二重になる。
- * チェック済みのほうはその日にこなした分なので、持ち越しても消えないようにする
- */
-function countedSteps(t: Task): TaskStep[] {
-  return t.steps.filter((sp) => sp.text.trim() && (!t.forwarded || sp.done));
-}
-
-/** 今日の自分のタスクに書かれたステップの消化（持ち越し済み [>] はチェック済みだけ数える） */
-function stepStats(tasks: Task[]): { total: number; done: number } {
-  let total = 0;
-  let done = 0;
-  for (const t of tasks) {
-    if (t.owner) continue;
-    for (const sp of countedSteps(t)) {
-      total++;
-      if (sp.done) done++;
-    }
-  }
-  return { total, done };
-}
-
-/** 進み具合に応じた一言（本日のサマリーの見出しの右端）。控えめに */
-function summaryMessage(st: DayStats): string {
-  if (!st.total) return "";
-  if (st.done === st.total) return "おつかれさま！全部終わりました";
-  if (st.done === 0) return "まずは 1 件";
-  const r = st.ratio ?? 0;
-  if (r >= 0.8) return "あと少し";
-  if (r >= 0.5) return "折り返し";
-  return "いい調子";
-}
-
-/**
- * 非同期処理を1つずつ順番に実行するキュー。
- * 編集ダイアログの自動保存と、閉じる・削除などの操作が同じノートに重ならないようにする
- */
-function serialQueue() {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(fn: () => T | Promise<T>): Promise<T> => {
-    const run = tail.then(fn);
-    tail = run.catch(() => undefined);
-    return run;
-  };
-}
+// 責務ごとに分けたメソッド群を 1 つのクラスに合成する（TypeScript のミックスイン）。
+// 実行時のオブジェクトは 1 つのままなので、各ファイルのメソッドは this でビューの状態にそのまま触れる。
+// 型の上では、この interface の宣言マージで各ミックスインのメソッドがビューのメンバーになる
+export interface DayTimelineView extends SidebarMixin, PointerMixin, ActionsMixin {}
+applyMixins(DayTimelineView, [SidebarMixin, PointerMixin, ActionsMixin]);

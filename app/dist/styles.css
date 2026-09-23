@@ -361,7 +361,7 @@
   flex: 1 1 0;
 }
 
-/* ---------- Inbox（日付を決めていないタスク）: 左のサイドバー ---------- */
+/* ---------- 左のサイドバー（パネル）: Inbox・時刻なしの一覧、プロジェクト、本日のサマリー ---------- */
 .dt-inbox {
   display: none;
   position: relative;
@@ -425,6 +425,7 @@
   letter-spacing: 0.1em;
 }
 .dt-inbox-count {
+  position: relative;
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
   background: var(--background-primary);
@@ -436,74 +437,92 @@
 .dt-inbox.is-collapsed .dt-inbox-count {
   padding: 0 4px;
 }
-.dt-inbox-add,
-.dt-inbox-open {
-  flex: 0 0 auto;
-}
-.dt-inbox-open {
-  margin-left: auto;
-}
-.dt-inbox.is-collapsed .dt-inbox-open {
-  margin-left: 0;
-}
-
-/* パネルのタブ（Inbox ⇄ プロジェクト ⇄ 再スケジュール。2つ以上あるときだけ出る） */
-.dt-panel-tabs {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 3px 4px 0;
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex: 0 0 auto;
-}
-.dt-panel-tab {
-  position: relative;
-  /* 名前の長さに合わせて配分し、余りを分け合う（均等割だと長い名前だけ省略されてしまう） */
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: center;
-  font-size: 11px;
-  line-height: 1.7;
-  color: var(--text-muted);
-  padding: 1px 2px;
-  border-radius: var(--radius-s) var(--radius-s) 0 0;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.dt-panel-tab:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-.dt-panel-tab.is-active {
-  color: var(--text-normal);
-  font-weight: 600;
-  background: var(--background-primary);
-  box-shadow: inset 0 -2px 0 var(--interactive-accent);
-}
-/* 過去に取り残された時刻なしタスクがあるとき（再スケジュールのタブ）の赤い点 */
-.dt-panel-tab.has-overdue {
-  padding-right: 9px; /* 点が名前に重ならないぶんの余白 */
-}
-.dt-panel-tab.has-overdue::after {
+/* 過去に取り残された時刻なしタスクがあるときの赤い点（件数に付ける） */
+.dt-inbox-count.has-overdue::after {
   content: "";
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: -2px;
+  right: -2px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--color-red, #c04545);
 }
 
-/* 1行1タスクで縦に並べる。タブで1つだけ表示するので、パネルの高さいっぱいを使う */
-.dt-inbox-list {
+/* パネルの中身: セクションを縦に並べ、パネル全体で 1 本のスクロールにする */
+.dt-inbox-body {
   flex: 1 1 auto;
-  min-height: 60px;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+/* セクション（Inbox・時刻なし / プロジェクト）。見出しのクリックで畳む */
+.dt-section {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.dt-section + .dt-section {
+  border-top: 1px solid var(--background-modifier-border);
+}
+.dt-section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 4px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  flex: 0 0 auto;
+}
+.dt-section-head:hover {
+  background: var(--background-modifier-hover);
+}
+/* サマリーだけのときの見出し（開閉しない） */
+.dt-section-head.is-plain {
+  cursor: default;
+}
+.dt-section-head.is-plain:hover {
+  background: none;
+}
+.dt-section-lead {
+  display: flex;
+  flex: 0 0 auto;
+}
+.dt-section-chevron {
+  display: flex;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.dt-section-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-section-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-section-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.dt-section-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 1行1タスクで縦に並べる（スクロールはパネル全体で） */
+.dt-inbox-list {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -519,14 +538,20 @@
   width: 100%;
   max-width: none;
   border-radius: var(--radius-s);
-  border-style: dashed;
   background: var(--background-primary);
   padding: 4px 8px 4px 6px;
+}
+/* 日付未定（Inbox）のタスクは破線で、日付付きの時刻なしタスクと見分ける */
+.dt-inbox-chip.is-undated {
+  border-style: dashed;
 }
 .dt-inbox-chip .dt-tray-title {
   flex: 1 1 auto;
   white-space: normal;
   line-height: 1.3;
+}
+.dt-inbox-chip .dt-project-child-date {
+  align-self: center;
 }
 /* プロジェクトがパネルに出ていないため Inbox に出ているタスクのバッジ */
 .dt-inbox-project {
@@ -552,16 +577,13 @@
   background: var(--background-modifier-border);
 }
 
-/* ---------- プロジェクトのタブの中身 ---------- */
+/* ---------- プロジェクトのセクションの中身 ---------- */
 .dt-projects {
-  min-height: 60px;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
 }
 .dt-projects-list {
-  overflow-y: auto;
-  min-height: 0;
   padding: 6px 6px 8px;
 }
 /* グループの見出し行（frontmatter の group で分けたプロジェクトの区切り） */
@@ -818,36 +840,7 @@
   white-space: nowrap;
 }
 
-/* ---------- 再スケジュールのタブの中身（時刻を決めていないタスク） ---------- */
-.dt-reschedule {
-  flex: 1 1 auto;
-  min-height: 48px;
-  overflow-y: auto;
-}
-.dt-reschedule-list {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
-  padding: 6px;
-}
-.dt-reschedule-item {
-  display: flex;
-  width: 100%;
-  max-width: none;
-  border-radius: var(--radius-s);
-  background: var(--background-primary);
-}
-.dt-reschedule-item .dt-tray-title {
-  flex: 1 1 auto;
-  white-space: normal;
-  line-height: 1.3;
-}
-.dt-reschedule-item .dt-project-child-date {
-  align-self: center;
-}
-
-/* ---------- 本日のサマリー（サイドバーのタブの下に常に出す） ---------- */
+/* ---------- 本日のサマリー（パネルの一番下に常に出す） ---------- */
 .dt-summary {
   flex: 0 0 auto;
   border-top: 1px solid var(--background-modifier-border);
@@ -2924,7 +2917,7 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
 .dt-view.is-narrow .dt-pane {
   margin-right: 6px;
 }
-/* パネルの見出し（Inbox / プロジェクト / 再スケジュール）はツールバーの月タイトルと同じ見た目に */
+/* パネルの見出しはツールバーの月タイトルと同じ見た目に */
 .dt-view.is-narrow.is-pane-panel .dt-inbox-label {
   display: inline-flex;
   align-items: center;
@@ -2942,9 +2935,6 @@ body.is-mobile .dt-event:not(.is-short):not(.is-tiny) .dt-event-resize::after {
 /* 見出しと右端の操作の間の伸びる余白（狭い画面のパネルのヘッダーだけ） */
 .dt-inbox-spacer {
   flex: 1 1 0;
-}
-.dt-view.is-narrow.is-pane-panel .dt-inbox-open {
-  margin-left: 0;
 }
 /* 3日・週表示はすぐ下に曜日ヘッダーの帯が続くので、境目の線は引かず1枚に見せる */
 .dt-view.is-narrow.is-multi-day .dt-toolbar {
@@ -3070,20 +3060,15 @@ body.is-mobile .dt-view {
   /* ヘッダーの月タイトル（.dt-date-label）用。TickTick のヘッダーと同じくらいの大きさ */
   --font-ui-large: 21px;
 }
-/* パネルのタブはスマホでは主要なナビ。タップの的も兼ねて一段大きく */
-body.is-mobile .dt-panel-tab {
+/* セクションの見出しはスマホでは主要なナビ。タップの的も兼ねて一段大きく */
+body.is-mobile .dt-section-head {
+  padding: 8px 8px 8px 6px;
+}
+body.is-mobile .dt-section-title {
   font-size: var(--font-ui-small);
-  line-height: 2;
 }
-body.is-mobile .dt-panel-tab.has-overdue::after {
-  top: 5px;
-  right: 5px;
-  width: 7px;
-  height: 7px;
-}
-/* タスクの一覧（Inbox・再スケジュール）はパネルの主役なので本文サイズで */
-body.is-mobile .dt-inbox-chip,
-body.is-mobile .dt-reschedule-item {
+/* タスクの一覧（Inbox・時刻なし）はパネルの主役なので本文サイズで */
+body.is-mobile .dt-inbox-chip {
   font-size: var(--font-ui-small);
 }
 /* 予実合計・プロジェクトの集計などの補足の数字も読めるサイズまで上げる */

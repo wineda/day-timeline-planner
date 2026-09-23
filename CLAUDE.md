@@ -10,7 +10,10 @@ Obsidian プラグイン。タスクを日付ノートの Markdown ブロック�
   - `src/markdown/blocks.ts` … ブロック（見出し + メタ行 + フィールド + ステップ + 本文）の解析・書き出し（Obsidian 非依存）
   - `src/markdown/edit.ts` … 追加・更新・削除・並べ替え（ブロック単位の部分置換）
   - `src/model.ts` … ビューが扱う `Task` 型
-  - `src/settings.ts` / `src/modal.ts` / `src/view.ts` … 設定・編集ダイアログ・タイムライン
+  - `src/settings.ts` / `src/modal.ts` … 設定・編集ダイアログ
+  - `src/view.ts` … タイムラインビュー本体。サイドバー（`view-sidebar.ts`）・ポインタ操作（`view-pointer.ts`）・
+    保存操作（`view-actions.ts`）はミックスイン（`this` はビュー自身）として分け、`view.ts` の末尾で 1 つのクラスに合成する。
+    共有する型・定数は `view-shared.ts`。ビューにメソッドを足すときは責務の合うファイルに書く
   - `src/spec.ts` … 保存形式の仕様書（Markdown）の生成。`docs/format.md` と保管庫への書き出しの両方がこれを使う
   - `scripts/bump.mjs` … バージョン更新（`npm run bump`）
   - `scripts/gen-spec.mjs` … 仕様書の生成（`npm run gen:spec`。`--check` で最新かの検証）
