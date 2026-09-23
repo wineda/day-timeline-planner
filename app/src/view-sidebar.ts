@@ -246,7 +246,13 @@ export class SidebarMixin {
     sec.toggleClass("is-collapsed", o.collapsed);
     const head = sec.createDiv({
       cls: "dt-section-head",
-      attr: { role: "button", "aria-expanded": String(!o.collapsed) },
+      attr: { role: "button", tabindex: "0", "aria-expanded": String(!o.collapsed) },
+    });
+    head.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        o.onToggle();
+      }
     });
     // 見出しの中のボタンのクリックは開閉に使わない
     const stop = (el: HTMLElement) => {
