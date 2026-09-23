@@ -2,7 +2,7 @@
  * タイムラインビュー（view.ts）と、その責務ごとの分割ファイル（view-sidebar / view-pointer / view-actions）が
  * 共通で使う型・定数・小さなヘルパー。ビューのファイル同士は互いに import しないよう、ここに集める
  */
-import type { HoverParent, HoverPopover } from "obsidian";
+import { Platform, type HoverParent, type HoverPopover, type Menu, type MenuItem } from "obsidian";
 import { Task, isScheduled } from "./model";
 import type { TaskStep } from "./markdown/blocks";
 import type { ViewMode } from "./settings";
@@ -233,4 +233,22 @@ export function applyMixins(target: { prototype: object }, mixins: { prototype: 
       if (desc) Object.defineProperty(target.prototype, name, desc);
     }
   }
+}
+
+/** MenuItem.setSubmenu は Obsidian の公開 API には無い（実装にはある）ので、あるときだけ使う */
+type SubmenuCapable = MenuItem & { setSubmenu?: () => Menu };
+
+/**
+ * サブメニュー付きの項目を足す。デスクトップで setSubmenu が使えればサブメニューに、
+ * スマホや使えないときは見出し（ラベル）の下に平らに並べる
+ */
+export function addSubmenu(menu: Menu, title: string, icon: string, build: (sub: Menu) => void): void {
+  let sub = null as Menu | null;
+  menu.addItem((item) => {
+    item.setTitle(title).setIcon(icon);
+    const capable = item as SubmenuCapable;
+    if (!Platform.isMobile && typeof capable.setSubmenu === "function") sub = capable.setSubmenu();
+    else item.setIsLabel(true);
+  });
+  build(sub ?? menu);
 }
