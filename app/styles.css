@@ -1828,18 +1828,32 @@
 .dt-modal .setting-item.dt-tight {
   padding-top: 0;
 }
-/* 2つの欄を横に並べる行 */
-.dt-modal .dt-row-pair {
-  display: flex;
-  gap: 16px;
+/* ラベルは1文字ずつ折り返さない。Obsidian の設定行はラベル列と入力列が同じ比率で縮むので、
+   入力欄の広い行（プロジェクト・タグ）でラベルが縦1列に潰れるのを防ぐ */
+.dt-modal .setting-item-name {
+  white-space: nowrap;
 }
-.dt-modal .dt-row-pair .setting-item {
-  flex: 1 1 50%;
+/* 入力列は中身より狭くなれるようにする（タグのチップは残りの幅で折り返す） */
+.dt-modal .setting-item-control {
   min-width: 0;
 }
-.dt-modal .dt-row-pair .setting-item-control {
+/* プロジェクト: 選択肢は名前の幅まで（長い名前は詰めて省略し、↗ は同じ行に残す）。
+   新規作成の入力欄が出て収まらなければ次の行に落とす */
+.dt-modal .dt-project-setting .setting-item-control {
   flex-wrap: wrap;
-  justify-content: flex-end;
+}
+.dt-modal .dt-project-setting select {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: max-content;
+}
+/* 誰の予定か: 色の点と選択肢は同じ行に置く（スマホで選択肢が全幅になっても折り返さない） */
+.dt-modal .dt-owner-setting .setting-item-control {
+  flex-wrap: nowrap;
+}
+.dt-modal .dt-owner-setting select {
+  min-width: 0;
+  max-width: 100%;
 }
 /* 畳んである欄・領域（「詳細」、モバイルの日時欄など） */
 .dt-modal .dt-collapsed {
@@ -1884,6 +1898,7 @@
   justify-content: flex-start;
   flex-direction: column;
   align-items: stretch;
+  text-align: left; /* チップの下の説明も左寄せ */
 }
 
 /* サブタグの段（親タグを選ぶと出る） */
