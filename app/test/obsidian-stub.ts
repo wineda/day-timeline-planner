@@ -26,8 +26,10 @@ export class Notice extends Base {}
 export class Plugin extends Component {}
 export class PluginSettingTab extends Base {}
 export class Setting extends Base {}
-export class TFile extends Base {}
-export class TFolder extends Base {}
+export class Scope extends Base {}
+export class TAbstractFile extends Base {}
+export class TFile extends TAbstractFile {}
+export class TFolder extends TAbstractFile {}
 export class Vault extends Base {}
 export class WorkspaceLeaf extends Base {}
 
