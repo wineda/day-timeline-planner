@@ -52,7 +52,7 @@ import {
   type SidebarTab,
   type ViewMode,
 } from "./settings";
-import { applyRecurring, instanceOf, noteRecurringDeletion, RecurringModal } from "./recurring";
+import { applyRecurring, noteRecurringDeletion, RecurringModal } from "./recurring";
 import { BlockTaskStore, INBOX_DATE } from "./store";
 import {
   addDays,

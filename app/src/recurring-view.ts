@@ -16,6 +16,7 @@ import {
   describeRule,
   instanceOf,
   occurrenceInfo,
+  parseTimeRange,
   propagateAndNotify,
   reapplyOccurrence,
   setInstance,
@@ -23,9 +24,9 @@ import {
   stepsMatchRule,
   type OccurrenceInfo,
 } from "./recurring";
-import { ConfirmModal, endOfDayFix, setupTimeInput } from "./modal";
+import { ConfirmModal, setupTimeInput } from "./modal";
 import { iconName } from "./icons";
-import { addDays, dateKey, minutesToHHMM, parseTimeInput, startOfDay } from "./util";
+import { addDays, dateKey, minutesToHHMM, startOfDay } from "./util";
 
 export const VIEW_TYPE_RECURRING = "day-timeline-recurring-view";
 
@@ -65,14 +66,27 @@ export class RecurringManagerView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass("dt-rec-view");
-    // タイムラインやノートの直接編集による変化を拾って、状態表示を最新に保つ
-    this.registerEvent(this.app.vault.on("modify", () => this.refreshOccDebounced()));
+    // タイムラインやノートの直接編集による変化を拾って、状態表示を最新に保つ。
+    // 読み直すのは「今後の予定」に出る日付ノートが変わったときだけ（他のノートの編集では動かない）
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (this.isOccurrenceNote(file.path)) this.refreshOccDebounced();
+      })
+    );
     if (!this.selectedId) this.selectedId = this.plugin.settings.recurring[0]?.id ?? null;
     this.render();
   }
 
   async onClose(): Promise<void> {
     this.contentEl.empty();
+  }
+
+  /** 「今後の予定」の期間（今日から OCCURRENCE_DAYS 日）の自分の日付ノートか */
+  private isOccurrenceNote(path: string): boolean {
+    const d = this.plugin.blockStore().dateFromPath(path);
+    if (!d) return false;
+    const today = startOfDay(new Date());
+    return d >= today && d < addDays(today, OCCURRENCE_DAYS);
   }
 
   private selectedRule(): RecurringRule | null {
@@ -267,8 +281,7 @@ export class RecurringManagerView extends ItemView {
     for (let i = 0; i < OCCURRENCE_DAYS; i++) {
       const d = addDays(today, i);
       const key = dateKey(d);
-      const hasRecord =
-        !!instanceOf(s, key, rule.id) || (s.recurringApplied[key] ?? []).includes(rule.id);
+      const hasRecord = !!instanceOf(s, key, rule.id);
       // 曜日が合う日と、（曜日を変えた後などで）記録が残っている日を出す
       if (rule.weekdays.includes(d.getDay()) || hasRecord) dates.push(d);
     }
@@ -425,11 +438,10 @@ export class RecurringManagerView extends ItemView {
 
     // 個別詳細エディタ（未反映と反映済みの日で開ける）
     const editable =
-      !!this.plugin.blockStore() &&
-      (info.kind === "pending" ||
-        info.kind === "pending-custom" ||
-        info.kind === "applied" ||
-        info.kind === "applied-custom");
+      info.kind === "pending" ||
+      info.kind === "pending-custom" ||
+      info.kind === "applied" ||
+      info.kind === "applied-custom";
     const expandKey = `${rule.id}|${key}`;
     if (editable) {
       row.addClass("is-editable");
@@ -513,21 +525,12 @@ export class RecurringManagerView extends ItemView {
     endText: string,
     detailsText: string
   ): Promise<void> {
-    let start: number | null = null;
-    let end: number | null = null;
-    if (startText.trim() !== "" || endText.trim() !== "") {
-      start = parseTimeInput(startText);
-      end = parseTimeInput(endText);
-      if (start === null || end === null) {
-        new Notice("時刻は 09:00 のように入力してください");
-        return;
-      }
-      end = endOfDayFix(start, end);
-      if (end <= start) {
-        new Notice("終了時刻は開始時刻より後にしてください");
-        return;
-      }
+    const range = parseTimeRange(startText, endText);
+    if ("error" in range) {
+      new Notice(range.error);
+      return;
     }
+    const { start, end } = range;
     const s = this.plugin.settings;
     const key = dateKey(date);
     const details = detailsText.replace(/\s+$/, "");
@@ -538,7 +541,7 @@ export class RecurringManagerView extends ItemView {
       // すでにノートにある日: タスクを直接書き換える
       const store = this.plugin.blockStore();
       const blockId = info.task?.blockId ?? null;
-      if (!store || !blockId) {
+      if (!blockId) {
         new Notice("このタスクは追跡できないため、ノートを直接編集してください");
         return;
       }
@@ -575,10 +578,9 @@ export class RecurringManagerView extends ItemView {
   }
 
   private async openTask(date: Date, info: OccurrenceInfo): Promise<void> {
-    const store = this.plugin.blockStore();
-    if (!store || !info.task) return;
+    if (!info.task) return;
     try {
-      const link = await store.linkTo(date, info.task);
+      const link = await this.plugin.blockStore().linkTo(date, info.task);
       if (link) await this.app.workspace.openLinkText(link, "", true);
     } catch (e) {
       console.error(e);

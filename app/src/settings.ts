@@ -161,7 +161,7 @@ export const DEFAULT_DAILY_REPORT_FOLDER = "daily";
 /** Inbox（日付を決めていないタスク）のノート */
 export const DEFAULT_INBOX_PATH = "Timeline/Inbox";
 /** 設定の版。旧既定値からの移行判定に使う */
-export const SETTINGS_VERSION = 10;
+export const SETTINGS_VERSION = 11;
 
 /** 過去の版にあって廃止した設定のキー（読み込み時に落とす） */
 const REMOVED_SETTING_KEYS = [
@@ -189,6 +189,8 @@ const REMOVED_SETTING_KEYS = [
   // タグ別フィールド（必須・候補・文言）と保存前チェック（v2.120 で廃止。記録欄は手書きか AI が書く）
   "tagFieldSchema",
   "validateRequiredOnSave",
+  // 定期タスクの「反映済み」の帳簿（v2.121 で recurringInstances に統合。migrateSettings で畳んでから落とす）
+  "recurringApplied",
 ];
 
 export interface DayTimelineSettings {
@@ -260,9 +262,10 @@ export interface DayTimelineSettings {
   recurring: RecurringRule[];
   /** 定期タスクを表示時に自動でノートへ書き込むか */
   autoApplyRecurring: boolean;
-  /** 日付キー → 反映済みのルール ID（消したタスクが復活しないように覚えておく） */
-  recurringApplied: Record<string, string[]>;
-  /** 日付キー → ルール ID → 発生日ごとの記録（ブロックID・取り消し・個別調整） */
+  /**
+   * 日付キー → ルール ID → 発生日ごとの記録（反映済みのブロックID・取り消し・個別調整）。
+   * 「その回を入れたか」の帳簿はこれ 1 つ（記録があれば二度と自動では入れない）
+   */
   recurringInstances: Record<string, Record<string, RecurringInstance>>;
 
   /** Inbox のノート（拡張子なしでも可） */
@@ -337,7 +340,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   tagColors: DEFAULT_TAG_COLORS,
   recurring: [],
   autoApplyRecurring: true,
-  recurringApplied: {},
   recurringInstances: {},
   inboxPath: DEFAULT_INBOX_PATH,
   showInbox: true,
@@ -367,6 +369,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  * v6〜v9: タグ別フィールド（tagFieldSchema）を持っていた（v10 で廃止）。v9 で「開発/バグ」のタグを追加。
  * v10: 表示モードを 日 / 3日 / 週 に絞り、ゲーム要素・タグ別フィールド・旧リスト形式などの設定を廃止
  *      （REMOVED_SETTING_KEYS を読み込み時に落とす）。
+ * v11: 定期タスクの帳簿を recurringInstances の 1 つに統合（recurringApplied を畳んで落とす）。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -411,15 +414,34 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
     }
   }
   if (!Array.isArray(s.recurring)) s.recurring = [];
-  if (!s.recurringApplied || typeof s.recurringApplied !== "object") s.recurringApplied = {};
-  if (!s.recurringInstances || typeof s.recurringInstances !== "object") s.recurringInstances = {};
+  // 既定値のオブジェクトを共有しないよう、帳簿は必ずコピーして持つ
+  s.recurringInstances =
+    s.recurringInstances && typeof s.recurringInstances === "object" ? { ...s.recurringInstances } : {};
   // 旧形式（文字列）の発生日記録をオブジェクトに揃える（何度通っても安全）
-  for (const map of Object.values(s.recurringInstances)) {
-    if (!map || typeof map !== "object") continue;
-    const m = map as Record<string, unknown>;
+  for (const [key, map] of Object.entries(s.recurringInstances)) {
+    if (!map || typeof map !== "object") {
+      delete s.recurringInstances[key];
+      continue;
+    }
+    const m = { ...(map as Record<string, unknown>) };
     for (const [ruleId, inst] of Object.entries(m)) {
       if (typeof inst === "string") m[ruleId] = { blockId: inst };
       else if (!inst || typeof inst !== "object") delete m[ruleId];
+    }
+    s.recurringInstances[key] = m as Record<string, RecurringInstance>;
+  }
+  // v11: 「反映済み」の帳簿 recurringApplied を recurringInstances に統合する。発生日の記録が無いのに
+  // 反映済みとだけ記録されていた回（旧版の書き込み）は「取り消し」として残し、二重に入らないようにする
+  // （管理画面の「入れ直す」で入れ直せる）
+  const legacyApplied = (loaded as Record<string, unknown>).recurringApplied;
+  if (legacyApplied && typeof legacyApplied === "object") {
+    for (const [key, ids] of Object.entries(legacyApplied as Record<string, unknown>)) {
+      if (!Array.isArray(ids)) continue;
+      for (const id of ids) {
+        if (typeof id !== "string") continue;
+        const map = s.recurringInstances[key] ?? (s.recurringInstances[key] = {});
+        if (!map[id]) map[id] = { blockId: null, skipped: true };
+      }
     }
   }
   if (!s.inboxPath.trim()) s.inboxPath = DEFAULT_INBOX_PATH;
