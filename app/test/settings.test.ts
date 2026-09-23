@@ -33,6 +33,12 @@ describe("migrateSettings: 定期タスクの帳簿", () => {
     expect(DEFAULT_SETTINGS.recurringInstances).toEqual({});
   });
 
+  it("タイムラインに出すバーの選択は既定が「予定と実績」。壊れた値は既定に戻す", () => {
+    expect(load({}).planActualMode).toBe("both");
+    expect(load({ planActualMode: "actual" }).planActualMode).toBe("actual");
+    expect(load({ planActualMode: "nope" }).planActualMode).toBe("both");
+  });
+
   it("廃止した設定のキーは落ちる", () => {
     const s = load({ settingsVersion: 9, bossBattle: true, sidebarTab: "inbox", storageFormat: "list" });
     for (const k of ["bossBattle", "storageFormat", "recurringApplied"]) expect(k in s, k).toBe(false);

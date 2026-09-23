@@ -97,6 +97,11 @@ export default class DayTimelinePlugin extends Plugin {
       v.toggleViewMode()
     );
     viewCommand(
+      "timeline-cycle-plan-actual",
+      "タイムスケジュール: 表示を切り替える（予定だけ → 予定と実績 → 実績だけ）",
+      (v) => v.cyclePlanActualMode()
+    );
+    viewCommand(
       "timeline-projects-toggle-expand",
       "タイムスケジュール: プロジェクトのツリーをすべて展開 / 閉じる",
       (v) => v.toggleAllProjects()

@@ -7,6 +7,13 @@ import { requestNotificationPermission, showAlert } from "./notify";
 export type ViewLocation = "tab" | "right" | "left";
 export type InsertPosition = "time" | "end";
 export type ViewMode = "day" | "3day" | "week";
+/** タイムラインに出すバー: 予定だけ / 予定と実績（左右に並べる） / 実績だけ */
+export type PlanActualMode = "plan" | "both" | "actual";
+export const PLAN_ACTUAL_MODES: [PlanActualMode, string][] = [
+  ["plan", "予定だけ"],
+  ["both", "予定と実績（左に予定、右に実績）"],
+  ["actual", "実績だけ"],
+];
 /** 左サイドバーのタブ */
 
 /** プロジェクト一覧の絞り込み: すべて / 本日タスクがあるものだけ */
@@ -252,6 +259,8 @@ export interface DayTimelineSettings {
   viewLocation: ViewLocation;
   /** 日表示 / 週表示 */
   viewMode: ViewMode;
+  /** タイムラインに出すバー（予定 / 予定と実績 / 実績）。ツールバーの ⋮ メニューとコマンドで切り替える */
+  planActualMode: PlanActualMode;
   /** スマホ（Platform.isPhone）での表示モード。画面が狭く週（7列）は使いにくいので別に記憶する */
   viewModeMobile: ViewMode;
   /** 週の始まり（0 = 日曜 … 6 = 土曜） */
@@ -338,6 +347,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   showUnscheduledTray: true,
   viewLocation: "tab",
   viewMode: "week",
+  planActualMode: "both",
   viewModeMobile: "day",
   weekStart: 0,
   tagColors: DEFAULT_TAG_COLORS,
@@ -478,6 +488,7 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   const modes: ViewMode[] = ["day", "3day", "week"];
   if (!modes.includes(s.viewMode)) s.viewMode = DEFAULT_SETTINGS.viewMode;
   if (!modes.includes(s.viewModeMobile)) s.viewModeMobile = DEFAULT_SETTINGS.viewModeMobile;
+  if (!PLAN_ACTUAL_MODES.some(([m]) => m === s.planActualMode)) s.planActualMode = DEFAULT_SETTINGS.planActualMode;
   // 廃止した設定は保存ファイルから落とす（{ ...DEFAULT_SETTINGS, ...loaded } は未知のキーも残すため）
   for (const key of REMOVED_SETTING_KEYS) delete (s as unknown as Record<string, unknown>)[key];
   s.settingsVersion = SETTINGS_VERSION;
