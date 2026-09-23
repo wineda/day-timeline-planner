@@ -18,7 +18,15 @@ import { projectDisplayName, type ProjectSummary } from "./project";
 import { iconName } from "./icons";
 import { DropdownMenu, type MenuLike } from "./dropdown";
 import { layoutEvents, type LayoutInfo } from "./layout";
-import { DEFAULT_SETTINGS, colorForTags, ticketUrl, type Member, type ViewMode } from "./settings";
+import {
+  DEFAULT_SETTINGS,
+  PLAN_ACTUAL_MODES,
+  colorForTags,
+  ticketUrl,
+  type Member,
+  type PlanActualMode,
+  type ViewMode,
+} from "./settings";
 import { applyRecurring } from "./recurring";
 import { INBOX_DATE } from "./store";
 import {
@@ -612,6 +620,14 @@ export class DayTimelineView extends ItemView {
         .setDisabled(s.hourHeight === DEFAULT_SETTINGS.hourHeight)
         .onClick(() => this.resetZoom())
     );
+    // タイムラインに出すバー: 予定だけ / 予定と実績 / 実績だけ
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle("タイムラインに出すバー").setDisabled(true));
+    for (const [mode, label] of PLAN_ACTUAL_MODES) {
+      menu.addItem((i) =>
+        i.setTitle(label).setChecked(s.planActualMode === mode).onClick(() => this.setPlanActualMode(mode))
+      );
+    }
     // メンバー（他の人の予定）の表示切替
     if (this.plugin.blockStore() && s.members.length > 0) {
       if (!empty) menu.addSeparator();
@@ -1074,7 +1090,9 @@ export class DayTimelineView extends ItemView {
     const s = this.plugin.settings;
     const dayStart = s.startHour * 60;
     const dayEnd = s.endHour * 60;
-    // 予定は左のレーン、実績は右のレーン
+    // 予定と実績の両方を出すときは予定を左のレーン、実績を右のレーンに。片方だけなら列いっぱいに
+    const pa = s.planActualMode;
+    const full = { left: 0, width: 1 };
     this.taskEls.clear();
 
     let anyBar = false;
@@ -1082,13 +1100,16 @@ export class DayTimelineView extends ItemView {
       col.eventsEl.empty();
       const tasks = this.dataFor(col.date).tasks;
 
-      const visible = tasks.filter(isScheduled).filter((t) => t.end > dayStart && t.start < dayEnd);
-      const layout = layoutEvents(visible);
-      for (const task of visible) {
-        this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, { left: 0, width: 0.5 }, true);
-        anyBar = true;
+      if (pa !== "actual") {
+        const visible = tasks.filter(isScheduled).filter((t) => t.end > dayStart && t.start < dayEnd);
+        const layout = layoutEvents(visible);
+        const lane = pa === "both" ? { left: 0, width: 0.5 } : full;
+        for (const task of visible) {
+          this.renderPlanBar(col, task, layout.get(task) ?? { col: 0, cols: 1 }, lane, pa === "both");
+          anyBar = true;
+        }
       }
-      {
+      if (pa !== "plan") {
         // 実績は区間ごとに1本のバーにする（idx = タスク内の何番目の区間か。ドラッグ修正に使う）
         const items = tasks.flatMap((t) =>
           t.actual
@@ -1096,8 +1117,9 @@ export class DayTimelineView extends ItemView {
             .filter((it) => it.end > dayStart && it.start < dayEnd)
         );
         const actualLayout = layoutEvents(items);
+        const lane = pa === "both" ? { left: 0.5, width: 0.5 } : full;
         for (const item of items) {
-          this.renderActualBar(col, item, actualLayout.get(item) ?? { col: 0, cols: 1 }, { left: 0.5, width: 0.5 });
+          this.renderActualBar(col, item, actualLayout.get(item) ?? { col: 0, cols: 1 }, lane);
           anyBar = true;
         }
       }
@@ -1107,13 +1129,32 @@ export class DayTimelineView extends ItemView {
       this.columns[0].eventsEl.createDiv({
         cls: "dt-empty-hint",
         text:
-          this.mode === "day"
-            ? "空いている時間をクリック、またはドラッグしてタスクを追加"
-            : "空いている時間をクリック / ドラッグしてタスクを追加",
+          pa === "actual"
+            ? "実績はまだありません。タスクの編集ダイアログの「実績」欄で記録できます（⋮ メニューで予定の表示に戻せます）"
+            : this.mode === "day"
+              ? "空いている時間をクリック、またはドラッグしてタスクを追加"
+              : "空いている時間をクリック / ドラッグしてタスクを追加",
       });
     }
     this.updateNowLine();
     this.renderDayTotals();
+  }
+
+  /** タイムラインに出すバー（予定 / 予定と実績 / 実績）を切り替える。⋮ メニューとコマンドから */
+  setPlanActualMode(mode: PlanActualMode): void {
+    const s = this.plugin.settings;
+    if (s.planActualMode === mode) return;
+    s.planActualMode = mode;
+    void this.plugin.persistSettings();
+    this.renderEvents();
+    new Notice(`表示: ${PLAN_ACTUAL_MODES.find(([m]) => m === mode)?.[1] ?? mode}`);
+  }
+
+  /** 予定 → 予定と実績 → 実績 → 予定 … の順に切り替える（コマンド用） */
+  cyclePlanActualMode(): void {
+    const order = PLAN_ACTUAL_MODES.map(([m]) => m);
+    const i = order.indexOf(this.plugin.settings.planActualMode);
+    this.setPlanActualMode(order[(i + 1) % order.length]);
   }
 
   /** レーン内の水平位置。lane の left / width は列の幅に対する 0〜1 の割合 */
