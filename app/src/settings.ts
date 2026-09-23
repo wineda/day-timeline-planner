@@ -8,7 +8,6 @@ export type ViewLocation = "tab" | "right" | "left";
 export type InsertPosition = "time" | "end";
 export type ViewMode = "day" | "3day" | "week";
 /** 左サイドバーのタブ */
-export type SidebarTab = "inbox" | "projects" | "reschedule";
 
 /** プロジェクト一覧の絞り込み: すべて / 本日タスクがあるものだけ */
 export type ProjectsFilter = "all" | "today";
@@ -191,6 +190,8 @@ const REMOVED_SETTING_KEYS = [
   "validateRequiredOnSave",
   // 定期タスクの「反映済み」の帳簿（v2.121 で recurringInstances に統合。migrateSettings で畳んでから落とす）
   "recurringApplied",
+  // サイドバーのタブ（v2.121 で廃止。Inbox・時刻なし / プロジェクト / サマリーを縦に並べる 1 本のパネルに）
+  "sidebarTab",
 ];
 
 export interface DayTimelineSettings {
@@ -245,7 +246,7 @@ export interface DayTimelineSettings {
   useCheckbox: boolean;
   /** 現在時刻のラインを表示するか */
   showCurrentTime: boolean;
-  /** 未スケジュールのタスクのトレイを表示するか */
+  /** 時刻を決めていないタスク（過去 30 日の取り残しを含む）をサイドバーの「Inbox・時刻なし」の一覧に出すか */
   showUnscheduledTray: boolean;
   /** ビューを開く場所 */
   viewLocation: ViewLocation;
@@ -270,11 +271,15 @@ export interface DayTimelineSettings {
 
   /** Inbox のノート（拡張子なしでも可） */
   inboxPath: string;
-  /** Inbox パネルを表示するか */
+  /** Inbox（日付未定）のタスクをサイドバーの「Inbox・時刻なし」の一覧に出すか */
   showInbox: boolean;
-  /** Inbox パネルを畳んでいるか */
+  /** サイドバーのパネル全体を細い帯に畳んでいるか */
   inboxCollapsed: boolean;
-  /** プロジェクトのパネルを表示するか */
+  /** パネルの「Inbox・時刻なし」の一覧を見出しだけに畳んでいるか（見出しのクリックで切替。記憶される） */
+  sidebarTasksCollapsed: boolean;
+  /** パネルのプロジェクトのツリーを見出しだけに畳んでいるか（同上） */
+  sidebarProjectsCollapsed: boolean;
+  /** プロジェクトのツリーをサイドバーに出すか */
   showProjects: boolean;
   /** プロジェクトパネルで完了済み（持ち越し済みを含む）の子タスクを隠すか */
   projectsHideDone: boolean;
@@ -284,10 +289,8 @@ export interface DayTimelineSettings {
   projectGroups: ProjectGroupSetting[];
   /** ツリーのグループ見出しに出す既定のアイコン（Lucide 名か絵文字。"" = なし。グループごとの指定が優先） */
   defaultGroupIcon: string;
-  /** 左サイドバー（Inbox・プロジェクト）の幅（px）。端のドラッグで変えられる */
+  /** 左サイドバーの幅（px）。端のドラッグで変えられる */
   sidebarWidth: number;
-  /** 左サイドバーで表示中のタブ（Inbox / プロジェクト / 再スケジュール）。記憶される */
-  sidebarTab: SidebarTab;
   /** 左サイドバーの下に「本日のサマリー」（消化タスク / 全タスク・達成率・次のタスク・連続達成）を出すか。
    * タスクブロック形式のときだけ使える */
   showTodaySummary: boolean;
@@ -344,13 +347,14 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   inboxPath: DEFAULT_INBOX_PATH,
   showInbox: true,
   inboxCollapsed: false,
+  sidebarTasksCollapsed: false,
+  sidebarProjectsCollapsed: false,
   showProjects: true,
   projectsHideDone: false,
   projectsFilter: "all",
   projectGroups: [],
   defaultGroupIcon: "folder",
   sidebarWidth: 220,
-  sidebarTab: "inbox",
   showTodaySummary: true,
   summaryCollapsed: false,
   reminderEnabled: true,
@@ -370,6 +374,7 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
  * v10: 表示モードを 日 / 3日 / 週 に絞り、ゲーム要素・タグ別フィールド・旧リスト形式などの設定を廃止
  *      （REMOVED_SETTING_KEYS を読み込み時に落とす）。
  * v11: 定期タスクの帳簿を recurringInstances の 1 つに統合（recurringApplied を畳んで落とす）。
+ *      サイドバーのタブ（sidebarTab）を廃止。
  */
 export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimelineSettings {
   const version = loaded.settingsVersion ?? 1;
@@ -462,7 +467,8 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   // v2.43.0 でプロジェクト行のアイコンは廃止（行が見にくくなるため）。保存済みの値は落とす
   delete (s as unknown as Record<string, unknown>).defaultProjectIcon;
   if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
-  if (!["inbox", "projects", "reschedule"].includes(s.sidebarTab)) s.sidebarTab = "inbox";
+  if (typeof s.sidebarTasksCollapsed !== "boolean") s.sidebarTasksCollapsed = false;
+  if (typeof s.sidebarProjectsCollapsed !== "boolean") s.sidebarProjectsCollapsed = false;
   if (s.projectsFilter !== "today") s.projectsFilter = "all";
   if (typeof s.showTodaySummary !== "boolean") s.showTodaySummary = DEFAULT_SETTINGS.showTodaySummary;
   if (typeof s.summaryCollapsed !== "boolean") s.summaryCollapsed = false;
@@ -795,16 +801,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
 
     {
       new Setting(containerEl)
-        .setName("再スケジュール欄を表示")
-        .setDesc("時刻を決めていないタスクを、左サイドバー（プロジェクトの下）の「再スケジュール」欄に日付付きで一覧します。タイムラインへドラッグで時刻を割り当てられます。")
-        .addToggle((t) =>
-          t.setValue(s.showUnscheduledTray).onChange(async (v) => {
-            s.showUnscheduledTray = v;
-            await save();
-          })
-        );
-
-      new Setting(containerEl)
         .setName("プロジェクトのフォルダ")
         .setDesc("プロジェクト（大きなタスク）のノートを置く場所。空欄なら「<フォルダ>/Projects」。")
         .addText((t) =>
@@ -1050,12 +1046,13 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     });
 
     // ---------- Inbox ----------
-    new Setting(containerEl).setName("Inbox（日付を決めていないタスク）").setHeading();
+    // ---------- サイドバー（Inbox・時刻なしの一覧 / プロジェクト / 本日のサマリー） ----------
+    new Setting(containerEl).setName("サイドバーのパネル").setHeading();
     new Setting(containerEl)
-      .setName("Inbox パネルを表示")
+      .setName("Inbox のタスクを一覧に出す")
       .setDesc(
-        "とりあえず登録しておくタスクの置き場。タイムラインの上に一覧し、日付の列へドラッグするとその日に移ります。" +
-          "タスクブロック形式のときだけ使えます。"
+        "日付を決めずに「とりあえず登録」したタスク（Inbox のノート）を、パネル上部の「Inbox・時刻なし」の一覧に出します。" +
+          "日付の列へドラッグするとその日に移ります。"
       )
       .addToggle((t) =>
         t.setValue(s.showInbox).onChange(async (v) => {
@@ -1064,8 +1061,20 @@ export class DayTimelineSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName("プロジェクトのパネルを表示")
-      .setDesc("Inbox の下にプロジェクト（大きなタスク）の一覧・進捗・予実合計を表示します。")
+      .setName("時刻なしのタスクを一覧に出す")
+      .setDesc(
+        "時刻を決めていないタスクを、日付付きで同じ一覧に出します（過去 30 日以内に取り残したものも）。" +
+          "タイムラインへドラッグで時刻を割り当てられます。"
+      )
+      .addToggle((t) =>
+        t.setValue(s.showUnscheduledTray).onChange(async (v) => {
+          s.showUnscheduledTray = v;
+          await save();
+        })
+      );
+    new Setting(containerEl)
+      .setName("プロジェクトのツリーを表示")
+      .setDesc("一覧の下にプロジェクト（大きなタスク）のツリー・進捗を表示します。")
       .addToggle((t) =>
         t.setValue(s.showProjects).onChange(async (v) => {
           s.showProjects = v;
@@ -1075,8 +1084,8 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("本日のサマリーを表示")
       .setDesc(
-        "サイドバーの下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスクを表示します。" +
-          "見出しのクリックで1行に畳めます。タスクブロック形式のときだけ使えます。"
+        "パネルの一番下に今日の消化タスク / 全タスク数・予定時間の達成率・次にやるタスクを表示します。" +
+          "見出しのクリックで1行に畳めます。"
       )
       .addToggle((t) =>
         t.setValue(s.showTodaySummary).onChange(async (v) => {

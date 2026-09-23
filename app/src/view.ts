@@ -49,7 +49,6 @@ import {
   MIN_HOUR_HEIGHT,
   type Member,
   type ProjectsFilter,
-  type SidebarTab,
   type ViewMode,
 } from "./settings";
 import { applyRecurring, noteRecurringDeletion, RecurringModal } from "./recurring";
@@ -143,7 +142,7 @@ interface DayData {
 
 const WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"];
 
-/** 再スケジュール欄のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
+/** 「Inbox・時刻なし」の一覧のために、過去何日ぶんのノートから時刻なしタスクを拾うか */
 const RESCHEDULE_LOOKBACK_DAYS = 30;
 
 /** ビューの幅（px）がこれ未満なら「狭い画面」（スマホなど）。
@@ -207,9 +206,9 @@ export class DayTimelineView extends ItemView {
   private inboxEl!: HTMLElement;
   private inboxTasks: Task[] = [];
   /** 表示範囲の外（今日から過去 RESCHEDULE_LOOKBACK_DAYS 日以内）のノートのタスク（日付キー → その日）。
-   * 再スケジュール欄の取り残しと、本日のサマリー（今日が表示範囲外のとき）に使う */
+   * 「Inbox・時刻なし」の一覧の取り残しと、本日のサマリー（今日が表示範囲外のとき）に使う */
   private pastDays = new Map<string, { date: Date; tasks: Task[] }>();
-  /** 表示範囲の外（過去）に取り残された時刻なしタスク（再スケジュール欄用。pastDays から作る） */
+  /** 表示範囲の外（過去）に取り残された時刻なしタスク（「Inbox・時刻なし」の一覧用。pastDays から作る） */
   private pastUnscheduled: { date: Date; tasks: Task[] }[] = [];
   /** サイドバーの下の「本日のサマリー」の器。出していないときは null */
   private summaryEl: HTMLElement | null = null;
@@ -341,7 +340,7 @@ export class DayTimelineView extends ItemView {
     this.registerDomEvent(document, "selectionchange", () => this.syncCursorDebounced());
 
     // Obsidian の起動時（レイアウト復元中）に開かれたときは、保管庫の索引や
-    // リンク索引（resolvedLinks）がまだできておらず、そのまま読むと再スケジュール欄や
+    // リンク索引（resolvedLinks）がまだできておらず、そのまま読むと「Inbox・時刻なし」の一覧や
     // プロジェクト配下のタスクが空のまま描画されてしまう。初回の読み込みは復元後に行い、
     // リンク索引の初回構築が終わったタイミングでももう一度読み直す
     if (!this.app.workspace.layoutReady) {
@@ -406,7 +405,7 @@ export class DayTimelineView extends ItemView {
     const panel = this.iconButton(
       parent,
       "list-tree",
-      "パネル（Inbox・プロジェクト・再スケジュール）を表示",
+      "パネル（Inbox・時刻なし・プロジェクト）を表示",
       () => this.setNarrowPane("panel")
     );
     return { timeline, panel };
@@ -1209,7 +1208,7 @@ export class DayTimelineView extends ItemView {
         }
       }
     }
-    // 表示範囲の外でも、再スケジュール欄・本日のサマリーが見ている過去のノートなら読み直す
+    // 表示範囲の外でも、「Inbox・時刻なし」の一覧・本日のサマリーが見ている過去のノートなら読み直す
     const blockStore = this.plugin.blockStore();
     if (blockStore && this.needsPastDays()) {
       const d = blockStore.dateFromPath(path);
@@ -1434,18 +1433,21 @@ export class DayTimelineView extends ItemView {
     this.renderInbox();
   }
 
-  /** 左サイドバー（Inbox・プロジェクト・再スケジュール）のパネル。タブで1つずつ表示する */
+  /**
+   * 左サイドバーのパネル。上から「Inbox・時刻なし」の一覧、プロジェクトのツリー、本日のサマリー。
+   * タブは無く、セクションごとに見出しのクリックで畳める（記憶される）
+   */
   private renderInbox(): void {
     const s = this.plugin.settings;
     const inbox = this.plugin.inbox;
     this.inboxEl.empty();
     const showInbox = !!inbox && s.showInbox;
+    const reschedule = this.rescheduleGroups(); // 設定「時刻なしのタスクを一覧に出す」がオフなら空
+    const showTasks = showInbox || s.showUnscheduledTray;
     const showProjects = !!this.plugin.projects && s.showProjects;
-    const reschedule = this.rescheduleGroups();
-    const showReschedule = reschedule.length > 0;
-    // 本日のサマリーはタブの下に常に出す（タブが1つも無くても、これだけでパネルを出す）
+    // 本日のサマリーは一番下に常に出す（他が無くても、これだけでパネルを出す）
     const showSummary = s.showTodaySummary && !!this.plugin.blockStore();
-    const visible = showInbox || showProjects || showReschedule || showSummary;
+    const visible = showTasks || showProjects || showSummary;
     this.summaryEl = null;
     this.inboxEl.toggleClass("is-visible", visible);
     // 狭い画面の切替ボタンは、パネルに出すものがあるときだけ出す
@@ -1457,23 +1459,11 @@ export class DayTimelineView extends ItemView {
     }
     if (!visible) return;
 
-    // 縦に全部並べると長くなるので、タブで1つだけ表示する。
-    // 再スケジュールのタブは、今までの欄と同じくタスクがあるときだけ出る
+    const today = startOfDay(new Date());
+    const inboxTasks = showInbox ? this.inboxTasks : [];
+    const waiting = reschedule.reduce((n, g) => n + g.tasks.length, 0) + inboxTasks.length;
+    const overdue = reschedule.some((g) => g.date < today);
     const activeProjects = this.projectData.filter((x) => !x.done);
-    const tabs: { id: SidebarTab; label: string; count: number }[] = [];
-    if (showInbox) tabs.push({ id: "inbox", label: "Inbox", count: this.inboxTasks.length });
-    if (showProjects)
-      tabs.push({ id: "projects", label: "プロジェクト", count: activeProjects.length });
-    if (showReschedule)
-      tabs.push({
-        id: "reschedule",
-        label: "再スケジュール",
-        count: reschedule.reduce((n, g) => n + g.tasks.length, 0),
-      });
-    // 選んでいたタブが出ていないとき（再スケジュールが空になった等）は先頭のタブへ。
-    // 設定は書き換えないので、また出てきたら選んでいたタブに戻る。
-    // タブが1つも無い（Inbox・プロジェクトを切っていて取り残しも無い）ときは null で、サマリーだけを出す
-    const active = tabs.find((t) => t.id === s.sidebarTab) ?? tabs[0] ?? null;
 
     // 狭い画面でパネルを全面表示しているときは、畳まず幅も固定しない
     const narrowPanel = this.isNarrow && this.narrowPane === "panel";
@@ -1487,122 +1477,239 @@ export class DayTimelineView extends ItemView {
       void this.plugin.persistSettings();
       this.renderInbox();
     };
-    const head = this.inboxEl.createDiv("dt-inbox-head");
+    const toggleButton = (parent: HTMLElement) => {
+      const b = this.iconButton(
+        parent,
+        collapsed ? "panel-left-open" : "panel-left-close",
+        collapsed ? "パネルを開く" : "パネルを畳む",
+        doToggle
+      );
+      b.addClass("dt-inbox-toggle");
+    };
+
+    if (collapsed) {
+      // 細い帯: 開くボタンと縦書きの見出し、待っているタスクの件数
+      const head = this.inboxEl.createDiv("dt-inbox-head");
+      toggleButton(head);
+      const label = head.createSpan({ cls: "dt-inbox-label", text: "パネル" });
+      label.onclick = doToggle;
+      if (showTasks) {
+        const count = head.createSpan({ cls: "dt-inbox-count", text: String(waiting) });
+        count.toggleClass("has-overdue", overdue);
+        count.setAttr(
+          "aria-label",
+          overdue ? "過去に取り残された時刻なしタスクがあります" : "Inbox・時刻なしのタスクの件数"
+        );
+      }
+      return;
+    }
     if (narrowPanel) {
       // パネルを全面表示中はツールバー（タイムライン⇄パネルの切替ごと）が隠れているので、
       // 同じ切替セグメントをツールバーと同じ左端に出す（パネル側がアクティブ）。
       // 位置・大きさをそろえておくと、面を行き来しても指を動かさずに押せる
+      const head = this.inboxEl.createDiv("dt-inbox-head");
       const seg = head.createDiv("dt-pane");
       seg.addClass("is-available", "dt-inbox-toggle");
       const btns = this.buildPaneSegmentButtons(seg);
       btns.panel.addClass("is-active");
       btns.timeline.setAttr("aria-pressed", "false");
       btns.panel.setAttr("aria-pressed", "true");
-    } else {
-      const toggle = this.iconButton(
-        head,
-        collapsed ? "panel-left-open" : "panel-left-close",
-        collapsed ? "パネルを開く" : "パネルを畳む",
-        doToggle
-      );
-      toggle.addClass("dt-inbox-toggle");
+      head.createSpan({ cls: "dt-inbox-label", text: "パネル" });
     }
-    const label = head.createSpan({ cls: "dt-inbox-label", text: active?.label ?? "本日のサマリー" });
-    if (!narrowPanel) label.onclick = doToggle;
-    if (active) head.createSpan({ cls: "dt-inbox-count", text: String(active.count) });
-    // 狭い画面ではツールバーと同じ「左に切替と見出し、右に操作」の並びにそろえる
-    if (narrowPanel) head.createDiv("dt-inbox-spacer");
-    // 表示中のタブの操作ボタンだけをヘッダーに出す
-    if (!active) {
-      // サマリーだけのとき: 今日のノートを開くボタン
-      const openBtn = this.iconButton(head, "file-text", "今日のノートを開く", () =>
-        void this.openNote(startOfDay(new Date()))
-      );
-      openBtn.addClass("dt-inbox-open");
-    } else if (active.id === "inbox") {
-      const addBtn = this.iconButton(head, "plus", "Inbox にタスクを追加", () =>
-        this.plugin.openInboxAddModal()
-      );
-      addBtn.addClass("dt-inbox-add");
-      const openBtn = this.iconButton(head, "file-text", "Inbox のノートを開く", () =>
-        void inbox
-          ?.ensureFile(INBOX_DATE)
-          .then((f) => this.app.workspace.getLeaf("tab").openFile(f))
-      );
-      openBtn.addClass("dt-inbox-open");
-    } else if (active.id === "projects") {
-      const kebab = this.menuButton(head, "プロジェクトのメニュー", (menu) =>
-        this.buildProjectsMenu(menu, activeProjects)
-      );
-      kebab.addClass("dt-inbox-add");
-    } else {
-      const addBtn = this.iconButton(head, "plus", "時刻を決めていないタスクを追加", () =>
-        this.openCreateModal(this.date, null, null)
-      );
-      addBtn.addClass("dt-reschedule-add", "dt-inbox-open");
-    }
-    if (collapsed) return;
 
-    // タブの切り替え（2つ以上あるときだけ。1つならヘッダーのラベルで足りる）
-    if (tabs.length > 1) {
-      const bar = this.inboxEl.createDiv("dt-panel-tabs");
-      const today = startOfDay(new Date());
-      for (const tab of tabs) {
-        const el = bar.createDiv({ cls: "dt-panel-tab", text: tab.label });
-        el.toggleClass("is-active", tab.id === active?.id);
-        const tips = [`${tab.label}: ${tab.count} 件`];
-        // 過去の取り残しは、別のタブを見ていても気付けるよう赤い点を出す
-        if (tab.id === "reschedule" && reschedule.some((g) => g.date < today)) {
-          el.addClass("has-overdue");
-          tips.push("過去に取り残された時刻なしタスクがあります");
-        }
-        el.setAttr("aria-label", tips.join("\n"));
-        el.addEventListener("click", () => {
-          if (s.sidebarTab === tab.id) return;
-          s.sidebarTab = tab.id;
+    const body = this.inboxEl.createDiv("dt-inbox-body");
+    // 最初のセクションの見出しに「畳む」ボタンを置く（全面表示中は切替セグメントが代わり）
+    let lead: ((host: HTMLElement) => void) | undefined = narrowPanel ? undefined : toggleButton;
+    if (showTasks) {
+      const sec = this.renderSection(body, {
+        title: "Inbox・時刻なし",
+        count: waiting,
+        overdue,
+        collapsed: s.sidebarTasksCollapsed,
+        tip: "日付や時刻を決めていないタスク。タイムラインへドラッグで予定に",
+        onToggle: () => {
+          s.sidebarTasksCollapsed = !s.sidebarTasksCollapsed;
           void this.plugin.persistSettings();
           this.renderInbox();
-        });
-      }
+        },
+        lead,
+        actions: (host) => {
+          this.iconButton(host, "plus", "タスクを追加（日付未定 / 時刻なし）", () => this.openWaitingAddModal());
+          if (showInbox) {
+            this.iconButton(host, "file-text", "Inbox のノートを開く", () =>
+              void inbox?.ensureFile(INBOX_DATE).then((f) => this.app.workspace.getLeaf("tab").openFile(f))
+            );
+          }
+        },
+      });
+      if (sec) this.renderTaskList(sec, reschedule, inboxTasks);
+      lead = undefined;
     }
-
-    if (!active) {
-      /* サマリーだけ */
-    } else if (active.id === "inbox") this.renderInboxList();
-    else if (active.id === "projects") this.renderProjects(activeProjects);
-    else this.renderReschedule(reschedule);
-
-    // タブの中身の下に「本日のサマリー」。どのタブを見ていても今日の進み具合が見えるよう、タブの外に置く
+    if (showProjects) {
+      const sec = this.renderSection(body, {
+        title: "プロジェクト",
+        count: activeProjects.length,
+        collapsed: s.sidebarProjectsCollapsed,
+        tip: "進行中のプロジェクト。⋮ から新規作成・展開・完了済みの表示切替",
+        onToggle: () => {
+          s.sidebarProjectsCollapsed = !s.sidebarProjectsCollapsed;
+          void this.plugin.persistSettings();
+          this.renderInbox();
+        },
+        lead,
+        actions: (host) => {
+          this.menuButton(host, "プロジェクトのメニュー", (menu) =>
+            this.buildProjectsMenu(menu, activeProjects)
+          );
+        },
+      });
+      if (sec) this.renderProjects(sec, activeProjects);
+      lead = undefined;
+    }
+    if (lead) {
+      // サマリーだけのとき: 畳むボタンと「今日のノートを開く」だけの見出し
+      const head = body.createDiv("dt-section-head is-plain");
+      const leadEl = head.createSpan("dt-section-lead");
+      lead(leadEl);
+      head.createSpan({ cls: "dt-section-title", text: "本日のサマリー" });
+      const actions = head.createDiv("dt-section-actions");
+      this.iconButton(actions, "file-text", "今日のノートを開く", () => void this.openNote(today));
+    }
     if (showSummary) {
       this.summaryEl = this.inboxEl.createDiv("dt-summary");
       this.renderSummary();
     }
   }
 
-  /** Inbox タブの中身（日付を決めていないタスクの一覧） */
-  private renderInboxList(): void {
-    const s = this.plugin.settings;
-    const list = this.inboxEl.createDiv("dt-inbox-list");
-    if (this.inboxTasks.length === 0) {
+  /** パネルのセクション（見出し + 中身）。見出しのクリックで畳む。中身の器を返す（畳んでいれば null） */
+  private renderSection(
+    parent: HTMLElement,
+    o: {
+      title: string;
+      count: number;
+      /** 過去に取り残しがある（件数に赤い点を付ける） */
+      overdue?: boolean;
+      collapsed: boolean;
+      tip: string;
+      onToggle: () => void;
+      /** 見出しの左端に置くもの（パネルを畳むボタン） */
+      lead?: (host: HTMLElement) => void;
+      /** 見出しの右端の操作ボタン */
+      actions?: (host: HTMLElement) => void;
+    }
+  ): HTMLElement | null {
+    const sec = parent.createDiv("dt-section");
+    sec.toggleClass("is-collapsed", o.collapsed);
+    const head = sec.createDiv({
+      cls: "dt-section-head",
+      attr: { role: "button", "aria-expanded": String(!o.collapsed) },
+    });
+    // 見出しの中のボタンのクリックは開閉に使わない
+    const stop = (el: HTMLElement) => {
+      el.addEventListener("click", (e) => e.stopPropagation());
+      el.addEventListener("pointerdown", (e) => e.stopPropagation());
+    };
+    if (o.lead) {
+      const leadEl = head.createSpan("dt-section-lead");
+      stop(leadEl);
+      o.lead(leadEl);
+    }
+    const chevron = head.createSpan("dt-section-chevron");
+    setIcon(chevron, o.collapsed ? "chevron-right" : "chevron-down");
+    head.createSpan({ cls: "dt-section-title", text: o.title });
+    const count = head.createSpan({ cls: "dt-inbox-count", text: String(o.count) });
+    count.toggleClass("has-overdue", !!o.overdue);
+    head.setAttr(
+      "aria-label",
+      [
+        `${o.title}: ${o.count} 件`,
+        o.overdue ? "過去に取り残された時刻なしタスクがあります" : "",
+        o.tip,
+        o.collapsed ? "クリックで開く" : "クリックで畳む",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    head.addEventListener("click", () => o.onToggle());
+    if (o.actions) {
+      const actions = head.createDiv("dt-section-actions");
+      stop(actions);
+      o.actions(actions);
+    }
+    if (o.collapsed) return null;
+    return sec.createDiv("dt-section-body");
+  }
+
+  /**
+   * 「Inbox・時刻なし」の一覧。過去に取り残した時刻なし（赤い日付）→ 表示中の日の時刻なし（日付）→
+   * 日付未定（Inbox。「未定」）の順に 1 行 1 タスクで並べる。
+   * 旧・タイムライン上部の「未スケジュール」トレイと、Inbox / 再スケジュールのタブの置き換え
+   */
+  private renderTaskList(
+    parent: HTMLElement,
+    groups: { date: Date; tasks: Task[] }[],
+    inboxTasks: Task[]
+  ): void {
+    const list = parent.createDiv("dt-inbox-list");
+    const today = startOfDay(new Date());
+    if (!groups.length && !inboxTasks.length) {
       list.createSpan({
         cls: "dt-tray-empty",
-        text: "日付を決めずに登録したタスクがここに並びます。タイムラインへドラッグで予定に。",
+        text: "日付や時刻を決めていないタスクがここに並びます。＋ で追加、タイムラインへドラッグで予定に。",
       });
+      return;
     }
-    for (const t of this.inboxTasks) {
+    const chipBase = (t: Task, undated: boolean) => {
       const chip = list.createDiv("dt-tray-chip dt-inbox-chip");
+      chip.toggleClass("is-undated", undated);
       chip.toggleClass("is-done", t.done);
-      const color = colorForTags(t.tags, s.tagColors);
+      const color = this.taskColor(t);
       if (color) {
         const dot = chip.createSpan("dt-tray-color");
         dot.style.background = color;
       }
       const box = chip.createDiv("dt-tray-check");
       setIcon(box, iconName(t.done ? "check-square" : "square"));
+      return { chip, box };
+    };
+    for (const g of groups) {
+      for (const t of g.tasks) {
+        const { chip, box } = chipBase(t, false);
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
+        });
+        const dateEl = chip.createSpan({
+          cls: "dt-project-child-date is-unscheduled",
+          text: `${g.date.getMonth() + 1}/${g.date.getDate()}`,
+        });
+        // 過去の取り残しは赤系で目立たせる
+        if (g.date < today) dateEl.addClass("is-overdue");
+        const owner = this.ownerName(t);
+        if (owner) chip.createSpan({ cls: "dt-owner-label", text: owner });
+        chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
+        chip.setAttr(
+          "aria-label",
+          [
+            t.title || "(無題)",
+            `${moment(g.date).format("M月D日 (ddd)")}（時刻は未定）`,
+            t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
+            t.preview,
+            "タイムラインへドラッグで時刻を割り当て。クリックで編集、右クリックでメニュー",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+        this.attachTrayInteractions(chip, g.date, t);
+      }
+    }
+    for (const t of inboxTasks) {
+      const { chip, box } = chipBase(t, true);
       box.addEventListener("click", (e) => {
         e.stopPropagation();
         void this.commitInboxUpdate(t, { ...this.draftOf(t), done: !t.done });
       });
+      chip.createSpan({ cls: "dt-project-child-date is-undated", text: "未定" });
       chip.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
       if (t.project) {
         // プロジェクトがパネルに出ていない（完了済み・見つからない）ため Inbox に出ているタスク
@@ -1616,9 +1723,67 @@ export class DayTimelineView extends ItemView {
           else void this.plugin.openProject(link);
         });
       }
-      chip.setAttr("aria-label", [t.title, t.doneCondition ? `完了条件: ${t.doneCondition}` : "", t.preview].filter(Boolean).join("\n"));
+      chip.setAttr(
+        "aria-label",
+        [
+          t.title || "(無題)",
+          "日付未定（Inbox）",
+          t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
+          t.preview,
+          "タイムラインへドラッグでその日の予定に。クリックで編集、右クリックでメニュー",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
       this.attachInboxInteractions(chip, t);
     }
+  }
+
+  /**
+   * 「Inbox・時刻なし」の ＋ からのタスク追加。日付を空のまま保存すると日付未定（Inbox）、
+   * 日付を選ぶとその日へ（時刻を空にすれば時刻なしのまま）。日付を選ばずに時刻だけ入れたら表示中の日へ
+   */
+  private openWaitingAddModal(): void {
+    const inbox = this.plugin.inbox;
+    if (!inbox) {
+      this.openCreateModal(this.date, null, null);
+      return;
+    }
+    const s = this.plugin.settings;
+    const dayLabel = moment(this.date).format("M月D日");
+    new TaskModal(this.app, {
+      mode: "create",
+      initial: { title: "", start: null, end: null, done: false },
+      snapMinutes: s.snapMinutes,
+      allowUnscheduled: true,
+      dateLabel: "日付未定",
+      dateField: {
+        value: null,
+        allowEmpty: true,
+        hint: "空のままなら日付を決めずに Inbox に登録します",
+      },
+      unscheduledHint: `時刻なし — 日付を選べばその日の時刻なしのタスクに、空なら Inbox に入ります（時刻を入れると ${dayLabel} に登録）`,
+      tagChoices: s.tagColors,
+      reminderDefault: s.reminderDefaultMinutes,
+      trackers: s.trackers,
+      ...this.projectOptions(),
+      onSubmit: async (data, dateSel) => {
+        // 日付を選んだらその日へ。選ばずに時刻だけ入れたら表示中の日へ
+        const to = dateSel ?? (data.start !== null && data.end !== null ? this.date : null);
+        if (to) {
+          await this.commitCreate(to, data);
+          return;
+        }
+        try {
+          await inbox.create(INBOX_DATE, { ...data, start: null, end: null });
+          new Notice("Inbox に追加しました");
+        } catch (e) {
+          console.error(e);
+          new Notice("Inbox に追加できませんでした: " + errorText(e));
+        }
+        await this.reloadInbox();
+      },
+    }).open();
   }
 
   /**
@@ -1753,11 +1918,11 @@ export class DayTimelineView extends ItemView {
     );
   }
 
-  /** プロジェクトのタブの中身（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない。
-   * ⋮（ケバブ）メニューはパネルのヘッダー側に出る */
-  private renderProjects(all: ProjectSummary[]): void {
+  /** プロジェクトのセクションの中身（一覧・進捗・予実合計・子タスク）。完了済のプロジェクトは出さない。
+   * ⋮（ケバブ）メニューはセクションの見出し側に出る */
+  private renderProjects(parent: HTMLElement, all: ProjectSummary[]): void {
     const hiddenDone = this.projectData.length - all.length;
-    const wrap = this.inboxEl.createDiv("dt-projects");
+    const wrap = parent.createDiv("dt-projects");
     // 絞り込みの切替（すべて / 本日タスクあり）。よく使うので ⋮ メニューではなく一覧の上に出す
     const filter = this.plugin.settings.projectsFilter;
     const todayOnes = all.filter((s) => this.projectHasToday(s));
@@ -2375,11 +2540,9 @@ export class DayTimelineView extends ItemView {
     );
   }
 
-  /** 未スケジュールのタスクのトレイ */
-  /** 再スケジュール欄に出すタスク: 表示中の日の時刻を決めていないタスクに加えて、
+  /** 「Inbox・時刻なし」の一覧に出す時刻なしタスク: 表示中の日の時刻を決めていないタスクに加えて、
    * 表示範囲の外（過去 RESCHEDULE_LOOKBACK_DAYS 日以内）に取り残された時刻なしタスク。
-   * 週をまたいでも取り残しが消えないようにする。いずれも日付順。
-   * 月表示では時刻なしのタスクもマスの中に出すので欄は使わない */
+   * 週をまたいでも取り残しが消えないようにする。いずれも日付順 */
   private rescheduleGroups(): { date: Date; tasks: Task[] }[] {
     const s = this.plugin.settings;
     if (!s.showUnscheduledTray) return [];
@@ -2390,7 +2553,7 @@ export class DayTimelineView extends ItemView {
     return [...this.pastUnscheduled, ...visible];
   }
 
-  /** 表示範囲の外の過去のノートを読む必要があるか（再スケジュール欄の取り残し・本日のサマリー） */
+  /** 表示範囲の外の過去のノートを読む必要があるか（「Inbox・時刻なし」の一覧の取り残し・本日のサマリー） */
   private needsPastDays(): boolean {
     const s = this.plugin.settings;
     if (!this.plugin.blockStore()) return false;
@@ -2398,7 +2561,7 @@ export class DayTimelineView extends ItemView {
   }
 
   /**
-   * 表示範囲の外のノートを読む（再スケジュール欄の取り残し・本日のサマリー用）。
+   * 表示範囲の外のノートを読む（「Inbox・時刻なし」の一覧の取り残し・本日のサマリー用）。
    * 今日から過去 RESCHEDULE_LOOKBACK_DAYS 日のノートを見る。表示中の日は通常の
    * 読み込みが拾うので除外。古い日付から順に入る
    */
@@ -2422,7 +2585,7 @@ export class DayTimelineView extends ItemView {
     return out;
   }
 
-  /** 表示範囲の外に取り残された時刻なしタスク（再スケジュール欄用）。
+  /** 表示範囲の外に取り残された時刻なしタスク（「Inbox・時刻なし」の一覧用）。
    * 完了・持ち越し済み [>] は「片付いた」ものなので出さない */
   private pastUnscheduledFrom(
     past: Map<string, { date: Date; tasks: Task[] }>
@@ -2713,53 +2876,6 @@ export class DayTimelineView extends ItemView {
     });
   }
 
-
-  /** 再スケジュールのタブの中身: 時刻を決めていないタスクを日付順に縦に一覧。
-   * 旧・タイムライン上部の「未スケジュール」トレイの置き換え。＋ボタンはパネルのヘッダー側に出る */
-  private renderReschedule(groups: { date: Date; tasks: Task[] }[]): void {
-    const wrap = this.inboxEl.createDiv("dt-reschedule");
-    const list = wrap.createDiv("dt-reschedule-list");
-    const today = startOfDay(new Date());
-    for (const g of groups) {
-      for (const t of g.tasks) {
-        const item = list.createDiv("dt-tray-chip dt-reschedule-item");
-        item.toggleClass("is-done", t.done);
-        const color = this.taskColor(t);
-        if (color) {
-          const dot = item.createSpan("dt-tray-color");
-          dot.style.background = color;
-        }
-        const box = item.createDiv("dt-tray-check");
-        setIcon(box, iconName(t.done ? "check-square" : "square"));
-        box.addEventListener("click", (e) => {
-          e.stopPropagation();
-          void this.commitUpdate(g.date, t, { ...this.draftOf(t), done: !t.done });
-        });
-        const dateEl = item.createSpan({
-          cls: "dt-project-child-date is-unscheduled",
-          text: `${g.date.getMonth() + 1}/${g.date.getDate()}`,
-        });
-        // 過去の取り残しは赤系で目立たせる
-        if (g.date < today) dateEl.addClass("is-overdue");
-        const owner = this.ownerName(t);
-        if (owner) item.createSpan({ cls: "dt-owner-label", text: owner });
-        item.createSpan({ cls: "dt-tray-title", text: this.displayTitle(t) });
-        item.setAttr(
-          "aria-label",
-          [
-            t.title || "(無題)",
-            `${moment(g.date).format("M月D日 (ddd)")}（時刻は未定）`,
-            t.doneCondition ? `完了条件: ${t.doneCondition}` : "",
-            t.preview,
-            "タイムラインへドラッグで時刻を割り当て。クリックで編集、右クリックでメニュー",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        );
-        this.attachTrayInteractions(item, g.date, t);
-      }
-    }
-  }
 
   private renderEvents(): void {
     const s = this.plugin.settings;
