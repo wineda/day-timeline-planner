@@ -1,6 +1,6 @@
 ---
 format_version: "2.1"
-plugin_version: "2.123.0"
+plugin_version: "2.124.0"
 generated_by: Day Timeline Planner
 ---
 

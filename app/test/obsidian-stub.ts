@@ -11,6 +11,7 @@ class Base {
   constructor(..._args: unknown[]) {}
 }
 
+export class AbstractInputSuggest extends Base {}
 export class App extends Base {}
 export class Component extends Base {}
 export class DropdownComponent extends Base {}
@@ -42,6 +43,10 @@ export function getIcon(): SVGSVGElement | null {
   return null;
 }
 export function setIcon(): void {}
+export function prepareSimpleSearch(): () => null {
+  return () => null;
+}
+export function renderMatches(): void {}
 export function normalizePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
 }

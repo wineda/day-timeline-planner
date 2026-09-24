@@ -1844,15 +1844,39 @@
 .dt-modal .setting-item-control {
   min-width: 0;
 }
-/* プロジェクト: 選択肢は名前の幅まで（長い名前は詰めて省略し、↗ は同じ行に残す）。
-   新規作成の入力欄が出て収まらなければ次の行に落とす */
+/* プロジェクト: 入力で絞り込む欄。長い名前でも ↗ は同じ行に残す */
 .dt-modal .dt-project-setting .setting-item-control {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
-.dt-modal .dt-project-setting select {
+.dt-modal .dt-project-setting .dt-project-input {
   flex: 1 1 0;
   min-width: 0;
-  max-width: max-content;
+  max-width: 360px;
+  text-overflow: ellipsis;
+}
+/* プロジェクト欄の候補（ポップアップはダイアログの外に出る） */
+.dt-project-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dt-project-suggestion-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dt-project-suggestion-check {
+  display: inline-flex;
+  color: var(--interactive-accent);
+}
+.dt-project-suggestion-check svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-project-suggestion.is-none {
+  color: var(--text-muted);
+}
+.dt-project-suggestion.is-create {
+  color: var(--text-accent);
 }
 /* 誰の予定か: 色の点と選択肢は同じ行に置く（スマホで選択肢が全幅になっても折り返さない） */
 .dt-modal .dt-owner-setting .setting-item-control {
