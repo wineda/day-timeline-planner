@@ -1,4 +1,16 @@
-import { App, DropdownComponent, Modal, Notice, Platform, Setting, moment, setIcon } from "obsidian";
+import {
+  AbstractInputSuggest,
+  App,
+  Modal,
+  Notice,
+  Platform,
+  Setting,
+  moment,
+  prepareSimpleSearch,
+  renderMatches,
+  setIcon,
+  type SearchMatches,
+} from "obsidian";
 import type { TaskDraft } from "./model";
 import { projectDisplayName, type ProjectRef } from "./project";
 import { actualTotal, type ActualRange, type ReminderSetting, type TaskStep, type TicketRef } from "./markdown/blocks";
@@ -68,6 +80,52 @@ export interface OtherActual {
 
 /** 実績の重複とみなす最小の分数（これ以下の重なりは注意しない） */
 const OVERLAP_MIN = 15;
+
+/** 「プロジェクト」欄の候補 1 件 */
+type ProjectChoice =
+  | { kind: "project"; linktext: string; label: string; matches: SearchMatches | null; current: boolean }
+  | { kind: "none" }
+  | { kind: "create"; name: string };
+
+/** 「プロジェクト」欄の候補ポップアップ（入力に合わせて絞り込む） */
+class ProjectSuggest extends AbstractInputSuggest<ProjectChoice> {
+  constructor(
+    app: App,
+    inputEl: HTMLInputElement,
+    private source: (query: string) => ProjectChoice[],
+    private onChoose: (c: ProjectChoice) => void
+  ) {
+    super(app, inputEl);
+    this.limit = 0; // 多くても全部出す（絞り込みで減らす前提）
+  }
+
+  protected getSuggestions(query: string): ProjectChoice[] {
+    return this.source(query);
+  }
+
+  renderSuggestion(c: ProjectChoice, el: HTMLElement): void {
+    el.addClass("dt-project-suggestion");
+    if (c.kind === "project") {
+      const name = el.createSpan("dt-project-suggestion-name");
+      renderMatches(name, c.label, c.matches);
+      if (c.current) {
+        el.addClass("is-current");
+        setIcon(el.createSpan("dt-project-suggestion-check"), "check");
+      }
+    } else if (c.kind === "none") {
+      el.addClass("is-none");
+      el.setText("なし（プロジェクトから外す）");
+    } else {
+      el.addClass("is-create");
+      el.setText(`＋ 新規作成「${c.name}」`);
+    }
+  }
+
+  selectSuggestion(c: ProjectChoice): void {
+    this.close();
+    this.onChoose(c);
+  }
+}
 
 /**
  * タスクを追加・編集するダイアログ。
@@ -801,87 +859,99 @@ export class TaskModal extends Modal {
 
   // ---------- プロジェクト ----------
 
-  /** 「プロジェクト」欄（選択・新規作成・ノートを開く） */
+  /** 「プロジェクト」欄（入力で絞り込んで選択・新規作成・ノートを開く） */
   private buildProjectSection(contentEl: HTMLElement): Setting {
     const projects = this.opts.projects ?? [];
     const setting = new Setting(contentEl).setName("プロジェクト");
     setting.settingEl.addClass("dt-project-setting");
     setting.settingEl.setAttr(
       "title",
-      "大きなタスクにまとめると、日をまたいでメモや進捗を共有できます。↗ ボタンでプロジェクトノートを開けます。"
+      "入力すると候補を絞り込めます（スペース区切りで複数語）。候補に無い名前は「＋ 新規作成」で作れます。↗ ボタンでプロジェクトノートを開けます。"
     );
-    let dd: DropdownComponent | null = null;
 
-    // 「＋ 新規作成…」を選んだときに出す入力欄
-    const newInput = setting.controlEl.createEl("input", {
+    /** 作成したプロジェクト（opts.projects には無いので名前をここで覚える） */
+    const created = new Map<string, string>();
+    const labelOf = (link: string | null): string => {
+      if (!link) return "";
+      const p = projects.find((x) => x.linktext === link);
+      if (p) return p.done ? p.name + "（完了）" : p.name;
+      return created.get(link) ?? projectDisplayName(link);
+    };
+
+    const input = setting.controlEl.createEl("input", {
       type: "text",
-      cls: "dt-project-new",
-      attr: { placeholder: "新しいプロジェクト名（Enter で作成）" },
+      cls: "dt-project-input",
+      attr: { placeholder: "なし（入力して検索）", spellcheck: "false" },
     });
-    const hideNew = () => newInput.removeClass("is-visible");
-    const cancelNew = () => {
-      newInput.value = "";
-      hideNew();
-      dd?.setValue(this.project ?? "");
-    };
-    const commitNew = async () => {
-      const name = newInput.value.trim();
-      if (!name) {
-        cancelNew();
-        return;
-      }
-      const link = await this.opts.onCreateProject?.(name);
-      if (!link) {
-        new Notice("プロジェクトを作成できませんでした");
-        return;
-      }
-      if (dd && !Array.from(dd.selectEl.options).some((o) => o.value === link)) {
-        dd.addOption(link, projectDisplayName(link));
-      }
-      this.project = link;
-      dd?.setValue(link);
-      newInput.value = "";
-      hideNew();
-      this.scheduleAutosave(); // setValue はイベントを出さないので明示的に
-    };
-    newInput.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.isComposing) return;
-      if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        void commitNew();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        cancelNew();
-      }
-    });
+    input.value = labelOf(this.project);
+    // 自動保存の見張り（contentEl の input）に打鍵を拾わせない。値は選んだときに変わる
+    input.addEventListener("input", (e) => e.stopPropagation());
 
-    setting.addDropdown((d) => {
-      dd = d;
-      d.addOption("", "なし");
-      // 完了済のプロジェクトは選択肢に出さない（既に選ばれているものは表示を保つ）
-      for (const p of projects) {
-        if (p.done && p.linktext !== this.project) continue;
-        d.addOption(p.linktext, p.done ? p.name + "（完了）" : p.name);
-      }
-      if (this.project && !projects.some((p) => p.linktext === this.project)) {
-        d.addOption(this.project, projectDisplayName(this.project));
-      }
-      d.addOption("__new__", "＋ 新規作成…");
-      d.setValue(this.project ?? "");
-      d.onChange((v) => {
-        if (v === "__new__") {
-          newInput.addClass("is-visible");
-          newInput.focus();
+    const choose = async (c: ProjectChoice) => {
+      if (c.kind === "create") {
+        const link = await this.opts.onCreateProject?.(c.name);
+        if (!link) {
+          new Notice("プロジェクトを作成できませんでした");
+          input.value = labelOf(this.project);
           return;
         }
-        hideNew();
-        this.project = v || null;
-      });
+        created.set(link, projectDisplayName(link));
+        this.project = link;
+      } else {
+        this.project = c.kind === "project" ? c.linktext : null;
+      }
+      input.value = labelOf(this.project);
+      input.blur();
+      this.scheduleAutosave(); // 候補はダイアログの外に出るので明示的に
+    };
+
+    const suggestions = (query: string): ProjectChoice[] => {
+      const q = query.trim();
+      // 選択中の名前がそのまま入っている間は絞り込まない（全候補を出す）
+      const filtering = q !== "" && q !== labelOf(this.project);
+      const match = filtering ? prepareSimpleSearch(q) : null;
+      const out: ProjectChoice[] = [];
+      const current = this.project;
+      if (current && !filtering) {
+        out.push({ kind: "project", linktext: current, label: labelOf(current), matches: null, current: true });
+      }
+      for (const p of projects) {
+        if (!filtering && p.linktext === current) continue;
+        // 完了済のプロジェクトは選択肢に出さない（既に選ばれているものは表示を保つ）
+        if (p.done && p.linktext !== current) continue;
+        const label = labelOf(p.linktext);
+        const r = match ? match(label) : null;
+        if (match && !r) continue;
+        out.push({ kind: "project", linktext: p.linktext, label, matches: r?.matches ?? null, current: p.linktext === current });
+      }
+      if (filtering) {
+        for (const [link, name] of created) {
+          if (projects.some((p) => p.linktext === link)) continue;
+          const r = match?.(name);
+          if (r) out.push({ kind: "project", linktext: link, label: name, matches: r.matches, current: link === current });
+        }
+      }
+      if (!filtering && current) out.push({ kind: "none" });
+      const exact = projects.some((p) => p.name === q) || Array.from(created.values()).includes(q);
+      if (filtering && !exact && this.opts.onCreateProject) out.push({ kind: "create", name: q });
+      return out;
+    };
+
+    new ProjectSuggest(this.app, input, suggestions, (c) => void choose(c));
+    // 入力欄に入ったら全選択（そのまま打てば置き換わる）
+    input.addEventListener("focus", () => window.setTimeout(() => input.select(), 0));
+    // フォーカスしたままのクリックでも候補を出し直す（選んだ直後など）
+    input.addEventListener("click", () => input.dispatchEvent(new Event("input")));
+    // 変換確定の Enter で候補を選ばない
+    input.addEventListener("keydown", (e) => {
+      if (e.isComposing) e.stopPropagation();
     });
-    // 入力欄はドロップダウンの後ろに出す
-    setting.controlEl.appendChild(newInput);
+    // 選ばずに離れたら表示を選択中のものに戻す（候補のクリックより後に動くよう少し待つ）
+    input.addEventListener("blur", () => {
+      window.setTimeout(() => {
+        if (activeDocument.activeElement !== input) input.value = labelOf(this.project);
+      }, 200);
+    });
 
     setting.addExtraButton((b) =>
       b
