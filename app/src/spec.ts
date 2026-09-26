@@ -345,6 +345,26 @@ export function renderFormatSpec(ctx: SpecContext): string {
   out.push(code([...renderTaskBlock(carry.from, opts), "", ...renderTaskBlock(carry.to, opts)]));
   out.push("");
 
+  out.push("## プロジェクトノートの frontmatter");
+  out.push("");
+  out.push(
+    "プロジェクトの完了は **frontmatter の `done`** が正（Bases など本文を読めない機能からも扱えるように）。" +
+      "本文先頭の `- [ ] ^id` は ID としてだけ使い、チェックの有無は完了判定に使わない。" +
+      "進捗はプラグインがタスク表（`<!-- dt-project-tasks -->` の中）を更新するたびに書き直す。"
+  );
+  out.push("");
+  out.push("| property | 内容 |");
+  out.push("|---|---|");
+  out.push("| `done` | 完了なら `true`（YAML の真偽値。文字列にしない）。`false` / 未設定は進行中 |");
+  out.push("| `completed` | 完了にした日（`YYYY-MM-DD`）。進行中に戻すと消える |");
+  out.push("| `group` | グループ名（パネルの区切り） |");
+  out.push("| `tasks_total` / `tasks_done` | タスク表の件数と完了数（数値。プラグインが書く） |");
+  out.push("| `last_done` | 最後に完了したタスク（`YYYY-MM-DD タスク名`。無ければキーごと無い） |");
+  out.push("| `next_task` | 未完了で日付がいちばん近いタスク（`YYYY-MM-DD タスク名`。日付未定だけなら `未定 タスク名`） |");
+  out.push("| `due` | 期日（`YYYY-MM-DD`）。本文の `- 期日:` 行から写す |");
+  out.push("| `next` | 人が手で書く「次にやること」。プラグインは触らない |");
+  out.push("");
+
   out.push("## 読むときの約束（AI 向け）");
   out.push("");
   out.push("- メタ行の無い見出し、コードブロック（```）の中、frontmatter は無視する");

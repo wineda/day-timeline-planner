@@ -19,12 +19,14 @@ import { addDays, dateKey, minutesToHHMM, nowMinutes, startOfDay, startOfWeek, s
 import { buildDailyReport, buildWeeklyReport, type ReportDay } from "./report";
 import {
   ProjectStore,
+  buildProgress,
   buildTaskListSection,
   knownGroupNames,
   projectDisplayName,
   summarize,
   upsertTaskListSection,
   type ProjectChild,
+  type ProjectFields,
   type ProjectSummary,
 } from "./project";
 import { newBlockId } from "./markdown/id";
@@ -215,6 +217,35 @@ export default class DayTimelinePlugin extends Plugin {
       checkCallback: (checking) => {
         if (!this.projects) return false;
         if (!checking) void this.updateAllProjectNotes();
+        return true;
+      },
+    });
+    // 開いているプロジェクトノートの完了を切り替える（frontmatter の done）。完了済みはパネルに出ないので、戻す入口はここ
+    this.addCommand({
+      id: "project-toggle-done",
+      name: "プロジェクトの完了を切り替える（開いているプロジェクトノート）",
+      checkCallback: (checking) => {
+        const projects = this.projects;
+        const file = this.app.workspace.getActiveFile();
+        if (!projects || !projects.isProjectFile(file)) return false;
+        if (!checking) void this.toggleProjectDone(file.path.replace(/\.md$/, ""));
+        return true;
+      },
+    });
+    // 旧形式（先頭のチェック / status）→ frontmatter の done
+    this.addCommand({
+      id: "projects-migrate-done",
+      name: "プロジェクトの完了状態を frontmatter に移す",
+      checkCallback: (checking) => {
+        const projects = this.projects;
+        if (!projects) return false;
+        if (!checking) {
+          void projects.migrateDoneToFrontmatter().then((r) => {
+            const extra = r.statusRemoved ? `（status を削除: ${r.statusRemoved} 件）` : "";
+            new Notice(`done: true ${r.done} 件 / done: false ${r.notDone} 件 / 変更なし ${r.unchanged} 件${extra}`);
+            for (const v of this.timelineViews()) void v.reloadInbox();
+          });
+        }
         return true;
       },
     });
@@ -741,20 +772,56 @@ export default class DayTimelinePlugin extends Plugin {
     return sums;
   }
 
-  /** 1つのプロジェクトの子タスクを集める */
-  async collectProjectChildren(linktext: string): Promise<ProjectChild[]> {
+  /** 1つのプロジェクトの集計（見つからなければ null） */
+  async projectSummary(linktext: string): Promise<ProjectSummary | null> {
     const all = await this.projectSummaries();
-    return all.find((s) => s.ref.linktext === linktext)?.children ?? [];
+    return all.find((s) => s.ref.linktext === linktext) ?? null;
   }
 
-  /** プロジェクトノートの「タスク」セクション（自動更新）を書き換える */
+  /** 1つのプロジェクトの子タスクを集める */
+  async collectProjectChildren(linktext: string): Promise<ProjectChild[]> {
+    return (await this.projectSummary(linktext))?.children ?? [];
+  }
+
+  /** プロジェクトノートの「タスク」セクション（自動更新）を書き換え、進捗を frontmatter に書く */
   async updateProjectNote(linktext: string): Promise<boolean> {
     const file = this.app.vault.getAbstractFileByPath(linktext + ".md");
     if (!(file instanceof TFile)) return false;
-    const children = await this.collectProjectChildren(linktext);
+    const sum = await this.projectSummary(linktext);
+    await this.writeProjectNote(file, sum?.children ?? [], sum?.fields);
+    return true;
+  }
+
+  /**
+   * タスク表（dt-project-tasks）を差し替え、同じノートの frontmatter に進捗
+   * （tasks_total / tasks_done / last_done / next_task。本文に期日があれば due も）を書く
+   */
+  private async writeProjectNote(file: TFile, children: ProjectChild[], fields?: ProjectFields): Promise<void> {
     const section = buildTaskListSection(children);
     await this.app.vault.process(file, (c) => upsertTaskListSection(c, section));
-    return true;
+    try {
+      await this.projects.writeProgress(file.path.replace(/\.md$/, ""), buildProgress(children), fields);
+    } catch (e) {
+      console.error(e); // 進捗の書き込みに失敗してもタスク表の更新は済んでいる
+    }
+  }
+
+  /** プロジェクトの完了を切り替える（コマンドから。frontmatter の done / completed を書く） */
+  async toggleProjectDone(linktext: string): Promise<void> {
+    const projects = this.projects;
+    if (!projects) return;
+    const done = (await projects.isDone(linktext)) === true;
+    const ok = await projects.setDone(linktext, !done);
+    if (!ok) {
+      new Notice("プロジェクトの完了を書き込めませんでした");
+      return;
+    }
+    new Notice(
+      done
+        ? `プロジェクト「${projectDisplayName(linktext)}」を進行中に戻しました`
+        : `プロジェクト「${projectDisplayName(linktext)}」を完了にしました`
+    );
+    for (const v of this.timelineViews()) void v.reloadInbox();
   }
 
   /** プロジェクトノートを（タスク一覧を最新にしてから）開く */
@@ -778,8 +845,7 @@ export default class DayTimelinePlugin extends Plugin {
     for (const s of summaries) {
       const file = this.app.vault.getAbstractFileByPath(s.ref.linktext + ".md");
       if (!(file instanceof TFile)) continue;
-      const section = buildTaskListSection(s.children);
-      await this.app.vault.process(file, (c) => upsertTaskListSection(c, section));
+      await this.writeProjectNote(file, s.children, s.fields);
       n++;
     }
     new Notice(`${n} 件のプロジェクトノートのタスク一覧を更新しました`);

@@ -543,8 +543,9 @@ export class ActionsMixin {
       const children = await this.plugin.collectProjectChildren(link);
       // 持ち越し済み [>] のブロックは「閉じた記録」なので、完了扱いで数える
       if (!children.length || !children.every((c) => c.task.done || c.task.forwarded)) return;
-      // メタ行なし（null）は「未完了」とみなす（setDone がメタ行を書き足してくれる）
-      if ((await projects.isDone(link)) === true) return; // 既に完了
+      // ノートが見つからない（null）ときも提案しない
+      const done = await projects.isDone(link);
+      if (done !== false) return; // 既に完了、または frontmatter を書ける相手が無い
       new ConfirmModal(
         this.app,
         `プロジェクト「${projectDisplayName(link)}」のタスクがすべて完了しました。プロジェクトも完了にしますか？`,

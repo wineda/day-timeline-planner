@@ -7,7 +7,7 @@ import { App, Notice, TFile, TFolder, getIcon, moment, normalizePath, setIcon } 
 import type { DayTimelineSettings } from "./settings";
 import type { Task } from "./model";
 import { newBlockId } from "./markdown/id";
-import { stripTags } from "./util";
+import { dateKey, stripTags } from "./util";
 import {
   normalizeBlockOptions,
   parseBlockDocument,
@@ -15,14 +15,13 @@ import {
   type TaskBlock,
   type TicketRef,
 } from "./markdown/blocks";
-import { updateTask } from "./markdown/edit";
 
 export interface ProjectRef {
   /** リンクに書く文字列（フォルダ付き・拡張子なし） */
   linktext: string;
   /** 表示名（ファイル名） */
   name: string;
-  /** ノート自身の完了チェックが付いているか（選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
+  /** ノート自身が完了か（frontmatter の `done: true`。選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
   done?: boolean;
   /** グループ名（frontmatter の group。無ければ null） */
   group?: string | null;
@@ -188,6 +187,130 @@ export function extractProjectFields(content: string): ProjectFields {
 /** プロジェクトノートの frontmatter でグループ名を持つキー */
 const GROUP_KEY = "group";
 
+// ---------- frontmatter（完了・完了日・進捗） ----------
+// プロジェクトの完了は frontmatter の `done`（真偽値）が正。Obsidian の Bases など、本文を読めない
+// 機能からも完了を扱えるようにするため。本文先頭のメタ行（`- [ ] ^id`）は ID としてだけ使い、
+// チェックの有無は見ない（双方向の同期はしない。目印は 1 つだけ）
+
+/** 完了（true / false） */
+export const DONE_KEY = "done";
+/** 完了にした日（YYYY-MM-DD）。未完了に戻すと消える */
+export const COMPLETED_KEY = "completed";
+/** 移行前に使われていた「状態」のキー（`status: done`）。移行コマンドが `done` に置き換えて削除する */
+export const STATUS_KEY = "status";
+/** 期日（YYYY-MM-DD）。本文の「- 期日:」行から写す */
+export const DUE_KEY = "due";
+/** タスク表の進捗（タスク表を更新するたびに書く） */
+export const PROGRESS_KEYS = {
+  total: "tasks_total",
+  done: "tasks_done",
+  lastDone: "last_done",
+  nextTask: "next_task",
+} as const;
+
+/** frontmatter の値が「完了」か（YAML の真偽値 true だけを完了とみなす。文字列 "true" は不可） */
+export function isDoneValue(v: unknown): boolean {
+  return v === true;
+}
+
+/** frontmatter の `status` が「完了」を表すか（移行用。`done` / `完了` を受け付ける） */
+export function isStatusDone(v: unknown): boolean {
+  if (typeof v !== "string") return false;
+  const t = v.trim().toLowerCase();
+  return t === "done" || t === "完了";
+}
+
+/** ノート先頭の frontmatter ブロックの行範囲（開始行と終了行）。無ければ null */
+function frontmatterRange(lines: string[]): { open: number; close: number } | null {
+  if (lines[0]?.trim() !== "---") return null;
+  const close = lines.findIndex((l, i) => i > 0 && (l.trim() === "---" || l.trim() === "..."));
+  return close > 0 ? { open: 0, close } : null;
+}
+
+/**
+ * ノートの内容から frontmatter の 1 行の値（`key: 値` の値の部分）を読む（純関数）。
+ * キーが無ければ null。入れ子や複数行の値は扱わない（このプラグインが書くキーは 1 行だけ）
+ */
+export function frontmatterValueOf(content: string, key: string): string | null {
+  const lines = content.split(/\r?\n/);
+  const range = frontmatterRange(lines);
+  if (!range) return null;
+  const re = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.*?)\\s*$`);
+  for (let i = 1; i < range.close; i++) {
+    const m = re.exec(lines[i]);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * ノートの内容から frontmatter の `done` を読む（純関数）。
+ * `done: true` なら true、それ以外（false・未設定・frontmatter なし）は false。
+ * メタデータキャッシュの更新を待たずに、書き込み直後のノートでも同じ判定ができるようにするためのもの
+ */
+export function readFrontmatterDone(content: string): boolean {
+  return frontmatterValueOf(content, DONE_KEY)?.toLowerCase() === "true";
+}
+
+/**
+ * 新しいプロジェクトノートの内容に `done: false` を入れる（純関数）。
+ * frontmatter があれば `done` が無いときだけ末尾に足し、無ければ先頭に frontmatter を作る
+ */
+export function ensureFrontmatterDone(content: string): string {
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const range = frontmatterRange(lines);
+  if (!range) return `---${eol}${DONE_KEY}: false${eol}---${eol}` + content;
+  for (let i = 1; i < range.close; i++) if (/^done\s*:/.test(lines[i])) return content;
+  lines.splice(range.close, 0, `${DONE_KEY}: false`);
+  return lines.join(eol);
+}
+
+/** タスク表の進捗（frontmatter に書く値）。last_done / next_task は無ければ null（キーを削除する） */
+export interface ProjectProgress {
+  /** 表にあるタスク数 */
+  total: number;
+  /** 完了（✅。持ち越し先で完了した ✅▶ も含む）のタスク数 */
+  done: number;
+  /** 最後に完了したタスク（`YYYY-MM-DD タスク名`）。日付ありの完了タスクが無ければ null */
+  lastDone: string | null;
+  /** 次にやる未完了のタスク（`YYYY-MM-DD タスク名`。日付未定だけなら `未定 タスク名`）。無ければ null */
+  nextTask: string | null;
+}
+
+/** タスク名をリンク記法（[[パス|別名]]・[名前](URL)）とタグを外した表示名だけにする */
+export function plainTaskTitle(title: string): string {
+  const t = stripTags(title)
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_a, target: string, alias?: string) => {
+      const a = (alias ?? "").trim();
+      if (a) return a;
+      const base = target.split("#")[0].split("/").pop() ?? target;
+      return base.replace(/\.md$/, "").trim() || target;
+    })
+    .replace(/\[([^\]]*)\]\((?:https?:\/\/)?[^)\s]*\)/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return t || "(無題)";
+}
+
+/**
+ * 子タスクからタスク表の進捗を集計する（純関数。タスク表と同じ子タスクを渡す）。
+ * - 完了数はタスク表で ✅ になる行（自身が完了、または持ち越し先で完了）
+ * - 最後に完了したタスク = 自身が完了で日付ありのうち、日付（同日なら開始時刻）がいちばん遅いもの
+ * - 次のタスク = 未完了（持ち越し済み [>] は閉じた記録なので除く）のうち日付がいちばん早いもの。
+ *   日付ありを優先し、日付未定しか無ければ `未定 タスク名`
+ */
+export function buildProgress(children: ProjectChild[]): ProjectProgress {
+  markSettledByCarry(children);
+  const rows = sortChildren(children);
+  const done = rows.filter((c) => isChildSettled(c)).length;
+  const label = (c: ProjectChild) => `${c.date ? dateKey(c.date) : "未定"} ${plainTaskTitle(c.task.title)}`;
+  const finished = rows.filter((c) => c.task.done && c.date);
+  const lastDone = finished.length ? label(finished[finished.length - 1]) : null;
+  const next = rows.find((c) => !c.task.done && !c.task.forwarded);
+  return { total: rows.length, done, lastDone, nextTask: next ? label(next) : null };
+}
+
 /** frontmatter のグループ値を正規化。trim して空なら null（配列は先頭、数値は文字列として扱う） */
 function normalizeGroup(v: unknown): string | null {
   if (Array.isArray(v)) v = v[0];
@@ -276,7 +399,7 @@ export interface ProjectSummary {
   planMin: number;
   actMin: number;
   doneCount: number;
-  /** プロジェクト自身（ノートのメタ行）が完了か。完了済はパネルに出さない */
+  /** プロジェクト自身（frontmatter の `done`）が完了か。完了済はパネルに出さない */
   done?: boolean;
   /** プロジェクト自身の期日・チケット・ドキュメント（ノートから読む） */
   fields?: ProjectFields;
@@ -491,7 +614,7 @@ function bodyStart(lines: string[]): number {
 
 /**
  * 「テンプレートを作成」で書き出すサンプル。
- * {{name}} はプロジェクト名に置き換わる。メタ行（完了チェック）は作成時に自動で入る
+ * {{name}} はプロジェクト名に置き換わる。メタ行（ID）と frontmatter の done: false は作成時に自動で入る
  */
 export const PROJECT_TEMPLATE_SAMPLE = `# {{name}}
 - 期日:
@@ -537,24 +660,32 @@ export class ProjectStore {
           linktext: f.path.replace(/\.md$/, ""),
           name: f.basename,
           done: this.isDoneCached(f),
-          group: normalizeGroup(this.app.metadataCache.getFileCache(f)?.frontmatter?.[GROUP_KEY]),
+          group: normalizeGroup(this.frontmatterOf(f)[GROUP_KEY]),
         });
       }
     }
     return out.sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }
 
+  /** メタデータキャッシュにある frontmatter（無ければ空のオブジェクト） */
+  private frontmatterOf(file: TFile): Record<string, unknown> {
+    return (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+  }
+
   /**
-   * ノート先頭のチェック（メタ行 `- [x] ^id`）が付いているかをメタデータキャッシュから読む。
-   * list() を同期のままにするための近道で、正確な判定は isDone() / setDone() が行う
+   * frontmatter の `done: true` が付いているかをメタデータキャッシュから読む。
+   * list() を同期のままにするための近道で、書き込み直後の判定は selfState()（ノートを読む）が行う
    */
   private isDoneCached(file: TFile): boolean {
-    const items = this.app.metadataCache.getFileCache(file)?.listItems;
-    if (!items?.length) return false;
-    let first = items[0];
-    for (const it of items) if (it.position.start.line < first.position.start.line) first = it;
-    // ブロックID（^id）付きのチェック行だけをメタ行とみなす（手書きのチェックリストと区別する）
-    return typeof first.task === "string" && first.task.toLowerCase() === "x" && !!first.id;
+    return isDoneValue(this.frontmatterOf(file)[DONE_KEY]);
+  }
+
+  /**
+   * ノート先頭のチェック（メタ行 `- [x] ^id`）が付いているか（移行コマンド用。完了判定にはもう使わない）。
+   * ブロックID（^id）付きのチェック行だけをメタ行とみなす（手書きのチェックリストと区別する）
+   */
+  private legacyCheckDone(content: string): boolean {
+    return this.findSelf(content)?.block.done === true;
   }
 
   /**
@@ -592,7 +723,7 @@ export class ProjectStore {
   /**
    * 新しいプロジェクトノートの中身。テンプレートのプレースホルダー
    * （{{name}} / {{title}}・{{date}}・{{time}}・{{group}}）を置き換え、
-   * メタ行（`- [ ] ^id` = プロジェクトの完了チェック）が無ければ見出しの直下に書き足す
+   * メタ行（`- [ ] ^id` = プロジェクトの ID）が無ければ見出しの直下に書き足し、frontmatter に `done: false` を入れる
    */
   private async initialContent(name: string, group: string | null): Promise<string> {
     let content = "";
@@ -613,6 +744,8 @@ export class ProjectStore {
       )
       .replace(/\{\{\s*group\s*\}\}/gi, group ?? "");
     if (!this.findSelf(content)) content = insertSelfMeta(content, name, `- [ ] ^${newBlockId()}`);
+    // 完了の正は frontmatter の done。テンプレートに無ければ `done: false` を入れておく（group と同じ場所）
+    content = ensureFrontmatterDone(content);
     if (!content.endsWith("\n")) content += "\n";
     return content;
   }
@@ -661,50 +794,139 @@ export class ProjectStore {
     return this.app.metadataCache.getFirstLinkpathDest(linktext, "");
   }
 
-  /** プロジェクト自身の完了状態（メタ行が無ければ null） */
+  /** プロジェクト自身が完了か（frontmatter の `done: true`）。ノートが見つからなければ null */
   async isDone(linktext: string): Promise<boolean | null> {
     const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return null;
     const content = await this.app.vault.cachedRead(file);
-    return this.findSelf(content)?.block.done ?? null;
+    return readFrontmatterDone(content);
   }
 
-  /** プロジェクト自身の状態（完了 + 期日・チケット・ドキュメント）を1回の読み込みで取る */
-  async selfState(linktext: string): Promise<{ done: boolean | null; fields: ProjectFields } | null> {
+  /**
+   * プロジェクト自身の状態（完了 + 期日・チケット・ドキュメント）を1回の読み込みで取る。
+   * 完了はノートの内容から読む（書き込み直後のメタデータキャッシュの遅れを避ける）
+   */
+  async selfState(linktext: string): Promise<{ done: boolean; fields: ProjectFields } | null> {
     const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return null;
     const content = await this.app.vault.cachedRead(file);
     return {
-      done: this.findSelf(content)?.block.done ?? null,
+      done: readFrontmatterDone(content),
       fields: extractProjectFields(content),
     };
   }
 
-  /** プロジェクト自身のメタ行の完了を切り替える。メタ行が無い手作りのノートには書き足す */
+  /**
+   * プロジェクトの完了を frontmatter に書く。完了なら `done: true` と `completed: YYYY-MM-DD`（今日）、
+   * 未完了に戻すなら `done: false` にして `completed` を消す。本文（メタ行の ^id を含む）には触らず、
+   * 他の property もそのまま。既に同じ値ならノートを書き換えない
+   */
   async setDone(linktext: string, done: boolean): Promise<boolean> {
     const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return false;
-    let ok = false;
-    await this.app.vault.process(file, (content) => {
-      const self = this.findSelf(content);
-      if (!self) {
-        // 先にノートだけ作って結び付けた場合など。ID はここで新しく採番する
-        // （プロジェクトへのリンクはノート単位なので、この ^id を参照するものは無い）
-        ok = true;
-        return insertSelfMeta(content, file.basename, `- [${done ? "x" : " "}] ^${newBlockId()}`);
-      }
-      const t = self.block;
-      const next = updateTask(
-        content,
-        { id: t.id, title: t.title, start: t.start, end: t.end },
-        { done },
-        self.opts
-      );
-      if (next === null) return content;
-      ok = true;
-      return next;
+    const today = dateKey(new Date());
+    const same = (fm: Record<string, unknown>) =>
+      done
+        ? isDoneValue(fm[DONE_KEY]) && typeof fm[COMPLETED_KEY] === "string" && !!fm[COMPLETED_KEY]
+        : fm[DONE_KEY] === false && fm[COMPLETED_KEY] === undefined;
+    if (same(this.frontmatterOf(file)) && readFrontmatterDone(await this.app.vault.cachedRead(file)) === done) {
+      return true;
+    }
+    return this.processFrontMatter(file, (fm) => {
+      if (same(fm)) return;
+      fm[DONE_KEY] = done;
+      if (done) fm[COMPLETED_KEY] = today;
+      else delete fm[COMPLETED_KEY];
     });
-    return ok;
+  }
+
+  /** 開いているノートなどがプロジェクトノート（プロジェクトのフォルダ直下の .md。テンプレート以外）か */
+  isProjectFile(file: TFile | null | undefined): file is TFile {
+    if (!(file instanceof TFile) || file.extension !== "md") return false;
+    if (file.path === this.templatePath()) return false;
+    return file.parent?.path === this.folder();
+  }
+
+  /**
+   * 「プロジェクトの完了状態を frontmatter に移す」: フォルダ直下の全プロジェクトノートを走査し、
+   * `done` が無いノートには 先頭チェックが `[x]` か `status: done` なら `done: true`、それ以外は `done: false` を書く。
+   * `status` キーは（`done` に置き換わるので）削除する。group と ^id は変えない
+   */
+  async migrateDoneToFrontmatter(): Promise<{ done: number; notDone: number; unchanged: number; statusRemoved: number }> {
+    const result = { done: 0, notDone: 0, unchanged: 0, statusRemoved: 0 };
+    for (const ref of this.list()) {
+      const file = this.resolveFile(ref.linktext);
+      if (!(file instanceof TFile)) continue;
+      const cached = this.frontmatterOf(file);
+      const content = await this.app.vault.cachedRead(file);
+      // キャッシュが古いことがあるので、ノートの内容でも `done` の有無を確かめる
+      const hasDone = DONE_KEY in cached || frontmatterValueOf(content, DONE_KEY) !== null;
+      const hasStatus = STATUS_KEY in cached || frontmatterValueOf(content, STATUS_KEY) !== null;
+      if (hasDone && !hasStatus) {
+        result.unchanged++;
+        continue;
+      }
+      const value = hasDone
+        ? null
+        : this.legacyCheckDone(content) ||
+          isStatusDone(cached[STATUS_KEY] ?? frontmatterValueOf(content, STATUS_KEY) ?? undefined);
+      const ok = await this.processFrontMatter(file, (fm) => {
+        if (value !== null && fm[DONE_KEY] === undefined) fm[DONE_KEY] = value;
+        delete fm[STATUS_KEY];
+      });
+      if (!ok) continue;
+      if (hasStatus) result.statusRemoved++;
+      if (value === null) result.unchanged++;
+      else if (value) result.done++;
+      else result.notDone++;
+    }
+    return result;
+  }
+
+  /**
+   * タスク表の進捗（tasks_total / tasks_done / last_done / next_task）と、本文の期日（due）を frontmatter に書く。
+   * タスク表（dt-project-tasks）を更新するタイミングで呼ぶ。値が同じならノートを書き換えない。
+   * `next`（人が手で書く「次にやること」）など他の property には触らない
+   */
+  async writeProgress(linktext: string, progress: ProjectProgress, fields?: ProjectFields): Promise<boolean> {
+    const file = this.resolveFile(linktext);
+    if (!(file instanceof TFile)) return false;
+    const due = fields?.dueDate ? dateKey(fields.dueDate) : undefined;
+    const apply = (fm: Record<string, unknown>): boolean => {
+      let changed = false;
+      const set = (key: string, v: string | number | undefined) => {
+        if (v === undefined) {
+          if (key in fm) {
+            delete fm[key];
+            changed = true;
+          }
+        } else if (fm[key] !== v) {
+          fm[key] = v;
+          changed = true;
+        }
+      };
+      set(PROGRESS_KEYS.total, progress.total);
+      set(PROGRESS_KEYS.done, progress.done);
+      set(PROGRESS_KEYS.lastDone, progress.lastDone ?? undefined);
+      set(PROGRESS_KEYS.nextTask, progress.nextTask ?? undefined);
+      // 期日は本文にあるときだけ写す（無いときは手書きの値を消さない）
+      if (due !== undefined) set(DUE_KEY, due);
+      return changed;
+    };
+    // キャッシュの値と同じなら書かない（キャッシュが古いときは書いてしまうが害はない）
+    if (!apply({ ...this.frontmatterOf(file) })) return true;
+    return this.processFrontMatter(file, (fm) => void apply(fm));
+  }
+
+  /** processFrontMatter の薄い包み（失敗はログに出して false） */
+  private async processFrontMatter(file: TFile, fn: (fm: Record<string, unknown>) => void): Promise<boolean> {
+    try {
+      await this.app.fileManager.processFrontMatter(file, fn);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
   }
 
   /** プロジェクトのグループを付け替える（frontmatter の group を書き換える。null で外す） */
@@ -712,16 +934,10 @@ export class ProjectStore {
     const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return false;
     const g = group?.trim() || null;
-    try {
-      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-        if (g) fm[GROUP_KEY] = g;
-        else delete fm[GROUP_KEY];
-      });
-      return true;
-    } catch (e) {
-      console.error(e);
-      return false;
-    }
+    return this.processFrontMatter(file, (fm) => {
+      if (g) fm[GROUP_KEY] = g;
+      else delete fm[GROUP_KEY];
+    });
   }
 
   /** プロジェクトノートを開く */

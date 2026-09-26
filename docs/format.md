@@ -1,6 +1,6 @@
 ---
 format_version: "2.1"
-plugin_version: "2.124.0"
+plugin_version: "2.125.0"
 generated_by: Day Timeline Planner
 ---
 
@@ -121,6 +121,21 @@ Day Timeline Planner（Obsidian プラグイン）がタスクを保存すると
 - 持ち越し元: [[Timeline/2026-08-18#^dtp-9b2c44]]
 - [ ] 図を描く
 ```
+
+## プロジェクトノートの frontmatter
+
+プロジェクトの完了は **frontmatter の `done`** が正（Bases など本文を読めない機能からも扱えるように）。本文先頭の `- [ ] ^id` は ID としてだけ使い、チェックの有無は完了判定に使わない。進捗はプラグインがタスク表（`<!-- dt-project-tasks -->` の中）を更新するたびに書き直す。
+
+| property | 内容 |
+|---|---|
+| `done` | 完了なら `true`（YAML の真偽値。文字列にしない）。`false` / 未設定は進行中 |
+| `completed` | 完了にした日（`YYYY-MM-DD`）。進行中に戻すと消える |
+| `group` | グループ名（パネルの区切り） |
+| `tasks_total` / `tasks_done` | タスク表の件数と完了数（数値。プラグインが書く） |
+| `last_done` | 最後に完了したタスク（`YYYY-MM-DD タスク名`。無ければキーごと無い） |
+| `next_task` | 未完了で日付がいちばん近いタスク（`YYYY-MM-DD タスク名`。日付未定だけなら `未定 タスク名`） |
+| `due` | 期日（`YYYY-MM-DD`）。本文の `- 期日:` 行から写す |
+| `next` | 人が手で書く「次にやること」。プラグインは触らない |
 
 ## 読むときの約束（AI 向け）
 
