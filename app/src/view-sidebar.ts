@@ -769,8 +769,8 @@ export class SidebarMixin {
         new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
         return;
       }
-      sum.done = true; // すぐパネルから消す（次の再読み込みでも isDone が同じ判定を返す）
-      new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノート先頭のチェックを外すと戻せます`);
+      sum.done = true; // すぐパネルから消す（次の再読み込みでも frontmatter の done が同じ判定を返す）
+      new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノートの done を false にすると戻せます`);
       this.renderInbox();
     };
     const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;

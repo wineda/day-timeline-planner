@@ -69,6 +69,12 @@ class MiniMoment {
   toDate(): Date {
     return new Date(this.d.getTime());
   }
+  /** その日の 0:00 に切り詰める（"day" だけ対応） */
+  startOf(_unit: "day"): MiniMoment {
+    const d = new Date(this.d.getTime());
+    d.setHours(0, 0, 0, 0);
+    return new MiniMoment(d, this.valid);
+  }
   valueOf(): number {
     return this.d.getTime();
   }
@@ -139,10 +145,18 @@ function parseStrict(text: string, fmt: string): MiniMoment {
   return new MiniMoment(d, ok);
 }
 
-export function moment(input?: Date | string | number, fmt?: string, _strict?: boolean): MiniMoment {
+export function moment(input?: Date | string | number, fmt?: string | string[], _strict?: boolean): MiniMoment {
   if (input === undefined) return new MiniMoment(new Date());
   if (input instanceof Date) return new MiniMoment(new Date(input.getTime()));
   if (typeof input === "number") return new MiniMoment(new Date(input));
+  if (Array.isArray(fmt)) {
+    // 書式の配列（project.ts の期日）: 先に合ったものを採る
+    for (const f of fmt) {
+      const m = parseStrict(input, f);
+      if (m.isValid()) return m;
+    }
+    return new MiniMoment(new Date(NaN), false);
+  }
   if (fmt) return parseStrict(input, fmt);
   const d = new Date(input);
   return new MiniMoment(d, !Number.isNaN(d.getTime()));
