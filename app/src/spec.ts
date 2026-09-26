@@ -357,6 +357,10 @@ export function renderFormatSpec(ctx: SpecContext): string {
   out.push("|---|---|");
   out.push("| `done` | 完了なら `true`（YAML の真偽値。文字列にしない）。`false` / 未設定は進行中 |");
   out.push("| `completed` | 完了にした日（`YYYY-MM-DD`）。進行中に戻すと消える |");
+  out.push(
+    "| `started` | 着手済みなら `true`（真偽値）。子タスクが完了した・実績が付いた・タスク表に ✅ があるときにプラグインが `true` にする。" +
+      "`false` に戻すのは人だけ。状態は `done` → `started` の順に見て 完了 / 着手 / 未着手 |"
+  );
   out.push("| `group` | グループ名（パネルの区切り） |");
   out.push("| `tasks_total` / `tasks_done` | タスク表の件数と完了数（数値。プラグインが書く） |");
   out.push("| `last_done` | 最後に完了したタスク（`YYYY-MM-DD タスク名`。無ければキーごと無い） |");

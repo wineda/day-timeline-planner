@@ -1,6 +1,6 @@
 ---
 format_version: "2.1"
-plugin_version: "2.125.0"
+plugin_version: "2.126.0"
 generated_by: Day Timeline Planner
 ---
 
@@ -130,6 +130,7 @@ Day Timeline Planner（Obsidian プラグイン）がタスクを保存すると
 |---|---|
 | `done` | 完了なら `true`（YAML の真偽値。文字列にしない）。`false` / 未設定は進行中 |
 | `completed` | 完了にした日（`YYYY-MM-DD`）。進行中に戻すと消える |
+| `started` | 着手済みなら `true`（真偽値）。子タスクが完了した・実績が付いた・タスク表に ✅ があるときにプラグインが `true` にする。`false` に戻すのは人だけ。状態は `done` → `started` の順に見て 完了 / 着手 / 未着手 |
 | `group` | グループ名（パネルの区切り） |
 | `tasks_total` / `tasks_done` | タスク表の件数と完了数（数値。プラグインが書く） |
 | `last_done` | 最後に完了したタスク（`YYYY-MM-DD タスク名`。無ければキーごと無い） |

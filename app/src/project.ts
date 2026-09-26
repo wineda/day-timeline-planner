@@ -23,6 +23,8 @@ export interface ProjectRef {
   name: string;
   /** ノート自身が完了か（frontmatter の `done: true`。選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
   done?: boolean;
+  /** 着手済みか（frontmatter の `started: true`。未着手のプロジェクトをパネルで薄く見せる） */
+  started?: boolean;
   /** グループ名（frontmatter の group。無ければ null） */
   group?: string | null;
 }
@@ -196,6 +198,11 @@ const GROUP_KEY = "group";
 export const DONE_KEY = "done";
 /** 完了にした日（YYYY-MM-DD）。未完了に戻すと消える */
 export const COMPLETED_KEY = "completed";
+/**
+ * 着手済み（true / false）。子タスクが完了した・実績が付いた・タスク表に ✅ があるときに true にする。
+ * false に戻すのは人だけ（自動では戻さない）。完了 / 着手 / 未着手 の 3 状態は done → started の順に見る
+ */
+export const STARTED_KEY = "started";
 /** 移行前に使われていた「状態」のキー（`status: done`）。移行コマンドが `done` に置き換えて削除する */
 export const STATUS_KEY = "status";
 /** 期日（YYYY-MM-DD）。本文の「- 期日:」行から写す */
@@ -249,21 +256,41 @@ export function frontmatterValueOf(content: string, key: string): string | null 
  * メタデータキャッシュの更新を待たずに、書き込み直後のノートでも同じ判定ができるようにするためのもの
  */
 export function readFrontmatterDone(content: string): boolean {
-  return frontmatterValueOf(content, DONE_KEY)?.toLowerCase() === "true";
+  return readFrontmatterFlag(content, DONE_KEY);
+}
+
+/** ノートの内容から frontmatter の真偽値のキーを読む（純関数）。`true` だけが true */
+export function readFrontmatterFlag(content: string, key: string): boolean {
+  return frontmatterValueOf(content, key)?.toLowerCase() === "true";
 }
 
 /**
- * 新しいプロジェクトノートの内容に `done: false` を入れる（純関数）。
- * frontmatter があれば `done` が無いときだけ末尾に足し、無ければ先頭に frontmatter を作る
+ * 新しいプロジェクトノートの内容に `done: false` と `started: false` を入れる（純関数）。
+ * frontmatter があれば無いキーだけ末尾に足し、無ければ先頭に frontmatter を作る
  */
 export function ensureFrontmatterDone(content: string): string {
   const eol = content.includes("\r\n") ? "\r\n" : "\n";
   const lines = content.split(/\r?\n/);
   const range = frontmatterRange(lines);
-  if (!range) return `---${eol}${DONE_KEY}: false${eol}---${eol}` + content;
-  for (let i = 1; i < range.close; i++) if (/^done\s*:/.test(lines[i])) return content;
-  lines.splice(range.close, 0, `${DONE_KEY}: false`);
+  const missing = [DONE_KEY, STARTED_KEY].filter((k) => frontmatterValueOf(content, k) === null);
+  if (!missing.length) return content;
+  const added = missing.map((k) => `${k}: false`);
+  if (!range) return `---${eol}${added.join(eol)}${eol}---${eol}` + content;
+  lines.splice(range.close, 0, ...added);
   return lines.join(eol);
+}
+
+/** タスク表（dt-project-tasks の中）で完了（✅。✅▶ も含む）になっている行の数（純関数。表が無ければ 0） */
+export function countTaskTableDone(content: string): number {
+  const lines = content.split(/\r?\n/);
+  const start = lines.findIndex((l) => l.trim() === SECTION_START);
+  if (start < 0) return 0;
+  let n = 0;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].trim() === SECTION_END) break;
+    if (/^\|\s*✅/.test(lines[i])) n++;
+  }
+  return n;
 }
 
 /** タスク表の進捗（frontmatter に書く値）。last_done / next_task は無ければ null（キーを削除する） */
@@ -401,6 +428,8 @@ export interface ProjectSummary {
   doneCount: number;
   /** プロジェクト自身（frontmatter の `done`）が完了か。完了済はパネルに出さない */
   done?: boolean;
+  /** 着手済みか（frontmatter の `started`）。未着手はパネルで薄く見せる */
+  started?: boolean;
   /** プロジェクト自身の期日・チケット・ドキュメント（ノートから読む） */
   fields?: ProjectFields;
 }
@@ -660,6 +689,7 @@ export class ProjectStore {
           linktext: f.path.replace(/\.md$/, ""),
           name: f.basename,
           done: this.isDoneCached(f),
+          started: isDoneValue(this.frontmatterOf(f)[STARTED_KEY]),
           group: normalizeGroup(this.frontmatterOf(f)[GROUP_KEY]),
         });
       }
@@ -806,14 +836,58 @@ export class ProjectStore {
    * プロジェクト自身の状態（完了 + 期日・チケット・ドキュメント）を1回の読み込みで取る。
    * 完了はノートの内容から読む（書き込み直後のメタデータキャッシュの遅れを避ける）
    */
-  async selfState(linktext: string): Promise<{ done: boolean; fields: ProjectFields } | null> {
+  async selfState(
+    linktext: string
+  ): Promise<{ done: boolean; started: boolean; fields: ProjectFields } | null> {
     const file = this.resolveFile(linktext);
     if (!(file instanceof TFile)) return null;
     const content = await this.app.vault.cachedRead(file);
     return {
       done: readFrontmatterDone(content),
+      started: readFrontmatterFlag(content, STARTED_KEY),
       fields: extractProjectFields(content),
     };
+  }
+
+  /** プロジェクトが着手済みか（frontmatter の `started: true`）。ノートが見つからなければ null */
+  async isStarted(linktext: string): Promise<boolean | null> {
+    const file = this.resolveFile(linktext);
+    if (!(file instanceof TFile)) return null;
+    return readFrontmatterFlag(await this.app.vault.cachedRead(file), STARTED_KEY);
+  }
+
+  /**
+   * 着手済みを frontmatter に書く（`started: true` / `false`）。本文と他の property には触らず、
+   * 既に同じ値ならノートを書き換えない。false へ戻すのはコマンド（人の操作）からだけ
+   */
+  async setStarted(linktext: string, started: boolean): Promise<boolean> {
+    const file = this.resolveFile(linktext);
+    if (!(file instanceof TFile)) return false;
+    if (
+      this.frontmatterOf(file)[STARTED_KEY] === started &&
+      readFrontmatterFlag(await this.app.vault.cachedRead(file), STARTED_KEY) === started
+    ) {
+      return true;
+    }
+    return this.processFrontMatter(file, (fm) => {
+      if (fm[STARTED_KEY] !== started) fm[STARTED_KEY] = started;
+    });
+  }
+
+  /**
+   * 子タスクの保存に合わせて着手済みにする: タスクが完了した、または実績が付いたなら `started: true`。
+   * 既に true なら何もしない。リンク先が無い（ノートが見つからない）ときも何もしない
+   */
+  async markStartedByTask(project: string | null, done: boolean, hasActual: boolean): Promise<void> {
+    if (!project || !(done || hasActual)) return;
+    try {
+      const file = this.resolveFile(project);
+      if (!(file instanceof TFile)) return;
+      if (readFrontmatterFlag(await this.app.vault.cachedRead(file), STARTED_KEY)) return;
+      await this.setStarted(file.path.replace(/\.md$/, ""), true);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   /**
@@ -852,17 +926,26 @@ export class ProjectStore {
    * `done` が無いノートには 先頭チェックが `[x]` か `status: done` なら `done: true`、それ以外は `done: false` を書く。
    * `status` キーは（`done` に置き換わるので）削除する。group と ^id は変えない
    */
-  async migrateDoneToFrontmatter(): Promise<{ done: number; notDone: number; unchanged: number; statusRemoved: number }> {
-    const result = { done: 0, notDone: 0, unchanged: 0, statusRemoved: 0 };
+  async migrateDoneToFrontmatter(): Promise<{
+    done: number;
+    notDone: number;
+    unchanged: number;
+    statusRemoved: number;
+    /** `started` を書いた件数（無かったノートだけ。値はタスク表の ✅ の有無） */
+    started: number;
+  }> {
+    const result = { done: 0, notDone: 0, unchanged: 0, statusRemoved: 0, started: 0 };
     for (const ref of this.list()) {
       const file = this.resolveFile(ref.linktext);
       if (!(file instanceof TFile)) continue;
       const cached = this.frontmatterOf(file);
       const content = await this.app.vault.cachedRead(file);
-      // キャッシュが古いことがあるので、ノートの内容でも `done` の有無を確かめる
-      const hasDone = DONE_KEY in cached || frontmatterValueOf(content, DONE_KEY) !== null;
-      const hasStatus = STATUS_KEY in cached || frontmatterValueOf(content, STATUS_KEY) !== null;
-      if (hasDone && !hasStatus) {
+      // キャッシュが古いことがあるので、ノートの内容でもキーの有無を確かめる
+      const has = (key: string) => key in cached || frontmatterValueOf(content, key) !== null;
+      const hasDone = has(DONE_KEY);
+      const hasStatus = has(STATUS_KEY);
+      const hasStarted = has(STARTED_KEY);
+      if (hasDone && !hasStatus && hasStarted) {
         result.unchanged++;
         continue;
       }
@@ -870,12 +953,16 @@ export class ProjectStore {
         ? null
         : this.legacyCheckDone(content) ||
           isStatusDone(cached[STATUS_KEY] ?? frontmatterValueOf(content, STATUS_KEY) ?? undefined);
+      // 着手済みはタスク表（dt-project-tasks）に ✅ の行があるかで決める（done: true のノートにも同じ規則で書く）
+      const started = hasStarted ? null : countTaskTableDone(content) > 0;
       const ok = await this.processFrontMatter(file, (fm) => {
         if (value !== null && fm[DONE_KEY] === undefined) fm[DONE_KEY] = value;
+        if (started !== null && fm[STARTED_KEY] === undefined) fm[STARTED_KEY] = started;
         delete fm[STATUS_KEY];
       });
       if (!ok) continue;
       if (hasStatus) result.statusRemoved++;
+      if (started !== null) result.started++;
       if (value === null) result.unchanged++;
       else if (value) result.done++;
       else result.notDone++;
@@ -885,6 +972,7 @@ export class ProjectStore {
 
   /**
    * タスク表の進捗（tasks_total / tasks_done / last_done / next_task）と、本文の期日（due）を frontmatter に書く。
+   * 完了の行が 1 つでもあれば `started: true` も書く。
    * タスク表（dt-project-tasks）を更新するタイミングで呼ぶ。値が同じならノートを書き換えない。
    * `next`（人が手で書く「次にやること」）など他の property には触らない
    */
@@ -911,6 +999,11 @@ export class ProjectStore {
       set(PROGRESS_KEYS.nextTask, progress.nextTask ?? undefined);
       // 期日は本文にあるときだけ写す（無いときは手書きの値を消さない）
       if (due !== undefined) set(DUE_KEY, due);
+      // タスク表に ✅ が 1 つでもあれば着手済み（true にするだけで、false には戻さない）
+      if (progress.done > 0 && fm[STARTED_KEY] !== true) {
+        fm[STARTED_KEY] = true;
+        changed = true;
+      }
       return changed;
     };
     // キャッシュの値と同じなら書かない（キャッシュが古いときは書いてしまうが害はない）

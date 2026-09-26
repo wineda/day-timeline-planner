@@ -668,6 +668,14 @@ export class SidebarMixin {
     const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
+    // 未着手（frontmatter の started が true でない）は行を薄くしてラベルを付ける
+    if (!sum.started) {
+      row.addClass("is-not-started");
+      row.createSpan({ cls: "dt-project-not-started", text: "未着手" }).setAttr(
+        "aria-label",
+        "未着手（frontmatter の started が true でない）。子タスクの完了か実績の記録で着手済みになります"
+      );
+    }
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
