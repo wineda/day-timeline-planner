@@ -703,6 +703,20 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
 }
+/* 未着手のプロジェクト（frontmatter の started が true でない）: 名前を薄くしてラベルを付ける */
+.dt-project-row.is-not-started .dt-project-name {
+  color: var(--text-muted);
+}
+.dt-project-not-started {
+  flex: 0 0 auto;
+  font-size: 0.72em;
+  color: var(--text-faint);
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 4px;
+  white-space: nowrap;
+  line-height: 1.5;
+}
 /* 期日を過ぎたプロジェクト */
 .dt-project-due.is-overdue {
   color: var(--color-red, #c04545);

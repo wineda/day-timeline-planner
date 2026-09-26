@@ -232,7 +232,19 @@ export default class DayTimelinePlugin extends Plugin {
         return true;
       },
     });
-    // 旧形式（先頭のチェック / status）→ frontmatter の done
+    // 開いているプロジェクトノートの着手済みを切り替える（frontmatter の started）
+    this.addCommand({
+      id: "project-toggle-started",
+      name: "プロジェクトの着手を切り替える（開いているプロジェクトノート）",
+      checkCallback: (checking) => {
+        const projects = this.projects;
+        const file = this.app.workspace.getActiveFile();
+        if (!projects || !projects.isProjectFile(file)) return false;
+        if (!checking) void this.toggleProjectStarted(file.path.replace(/\.md$/, ""));
+        return true;
+      },
+    });
+    // 旧形式（先頭のチェック / status）→ frontmatter の done。started が無いノートにも書く
     this.addCommand({
       id: "projects-migrate-done",
       name: "プロジェクトの完了状態を frontmatter に移す",
@@ -242,7 +254,10 @@ export default class DayTimelinePlugin extends Plugin {
         if (!checking) {
           void projects.migrateDoneToFrontmatter().then((r) => {
             const extra = r.statusRemoved ? `（status を削除: ${r.statusRemoved} 件）` : "";
-            new Notice(`done: true ${r.done} 件 / done: false ${r.notDone} 件 / 変更なし ${r.unchanged} 件${extra}`);
+            new Notice(
+              `done: true ${r.done} 件 / done: false ${r.notDone} 件 / 変更なし ${r.unchanged} 件${extra}` +
+                `\nstarted を更新: ${r.started} 件`
+            );
             for (const v of this.timelineViews()) void v.reloadInbox();
           });
         }
@@ -549,6 +564,10 @@ export default class DayTimelinePlugin extends Plugin {
         new MemberStore(this.app, () => this.settings, () => this.settings.members.find((x) => x.id === id) ?? m)
       );
     }
+    // 子タスクが完了した・実績が付いたら、そのプロジェクトを着手済み（frontmatter の started: true）にする
+    for (const st of [this.store, this.inbox, ...this.memberStores.values()]) {
+      st.onTaskWritten = (info) => void this.projects.markStartedByTask(info.project, info.done, info.hasActual);
+    }
   }
 
   /** タスクの持ち主に応じたストア（自分 / メンバー） */
@@ -763,6 +782,7 @@ export default class DayTimelinePlugin extends Plugin {
         try {
           const st = await projects.selfState(s.ref.linktext);
           s.done = st?.done === true;
+          s.started = st?.started === true;
           s.fields = st?.fields;
         } catch (e) {
           console.error(e);
@@ -820,6 +840,24 @@ export default class DayTimelinePlugin extends Plugin {
       done
         ? `プロジェクト「${projectDisplayName(linktext)}」を進行中に戻しました`
         : `プロジェクト「${projectDisplayName(linktext)}」を完了にしました`
+    );
+    for (const v of this.timelineViews()) void v.reloadInbox();
+  }
+
+  /** プロジェクトの着手済みを切り替える（コマンドから。frontmatter の started を書く） */
+  async toggleProjectStarted(linktext: string): Promise<void> {
+    const projects = this.projects;
+    if (!projects) return;
+    const started = (await projects.isStarted(linktext)) === true;
+    const ok = await projects.setStarted(linktext, !started);
+    if (!ok) {
+      new Notice("プロジェクトの着手を書き込めませんでした");
+      return;
+    }
+    new Notice(
+      started
+        ? `プロジェクト「${projectDisplayName(linktext)}」を未着手に戻しました`
+        : `プロジェクト「${projectDisplayName(linktext)}」を着手済みにしました`
     );
     for (const v of this.timelineViews()) void v.reloadInbox();
   }
