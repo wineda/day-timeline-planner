@@ -2068,13 +2068,14 @@ body.is-mobile .modal.dt-modal.dt-modal-compact {
   top: auto !important;
   left: 8px !important;
   right: 8px !important;
-  bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  bottom: calc(8px + var(--dt-keyboard, 0px) + env(safe-area-inset-bottom, 0px)) !important;
   width: calc(100% - 16px) !important;
   max-width: none !important;
   min-width: 0 !important;
   height: auto !important;
   max-height: 80vh;
-  max-height: 80dvh;
+  /* キーボードが出ているときは、残った高さに収める（中はスクロール） */
+  max-height: min(80dvh, calc(100dvh - var(--dt-keyboard, 0px) - 16px));
   margin: 0 !important;
   transform: none !important;
   box-sizing: border-box;
@@ -4041,12 +4042,13 @@ body.is-mobile .modal.dt-modal {
   top: auto;
   left: 8px;
   right: 8px;
-  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  /* --dt-keyboard = ソフトキーボードで隠れる高さ（modal.ts の trackKeyboard が入れる）。そのぶん持ち上げる */
+  bottom: calc(8px + var(--dt-keyboard, 0px) + env(safe-area-inset-bottom, 0px));
   width: auto;
   max-width: none;
   height: auto;
   max-height: 78vh;
-  max-height: 78dvh;
+  max-height: min(78dvh, calc(100dvh - var(--dt-keyboard, 0px) - 16px));
   border-radius: 18px;
   display: flex;
   flex-direction: column;

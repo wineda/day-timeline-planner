@@ -87,6 +87,28 @@ type ProjectChoice =
   | { kind: "create"; name: string };
 
 /**
+ * モバイル: ソフトキーボードで隠れる高さを CSS 変数（--dt-keyboard）に入れ続ける。
+ * カードは画面の下端に固定しているので、そのままだとキーボードの後ろに隠れる。
+ * 戻り値は後片付け（閉じるときに呼ぶ）。visualViewport が無い環境では何もしない
+ */
+function trackKeyboard(modal: Modal): () => void {
+  const vv = window.visualViewport;
+  if (!Platform.isMobile || !vv) return () => {};
+  const apply = () => {
+    const covered = Math.max(0, Math.round(window.innerHeight - (vv.height + vv.offsetTop)));
+    modal.modalEl.style.setProperty("--dt-keyboard", `${covered}px`);
+    modal.modalEl.toggleClass("is-keyboard", covered > 80);
+  };
+  vv.addEventListener("resize", apply);
+  vv.addEventListener("scroll", apply);
+  apply();
+  return () => {
+    vv.removeEventListener("resize", apply);
+    vv.removeEventListener("scroll", apply);
+  };
+}
+
+/**
  * タスクを追加・編集するダイアログ（PC・モバイル共通のコンパクトな構成。TickTick の詳細画面と同じ並び）。
  * 上部バー（プロジェクト名 ⌄ / 追加・⋮）→ 大きなチェック + 日時 → 実績/予定 → タイトル → 説明 → ステップ
  * → 結果・ふりかえりなど（下のツールバーで開く）→ タグ → ツールバー。
@@ -147,6 +169,8 @@ export class TaskModal extends Modal {
   private stepsProgressEl: HTMLElement | null = null;
   /** モバイル: 「実績 / 予定」の行の表示を更新する（モバイル以外は null） */
   private refreshDuration: (() => void) | null = null;
+  /** モバイル: キーボードの追従をやめる（閉じるときに呼ぶ） */
+  private untrackKeyboard: (() => void) | null = null;
 
   constructor(app: App, opts: TaskModalOptions) {
     super(app);
@@ -258,6 +282,7 @@ export class TaskModal extends Modal {
       if (mobile) {
         this.modalEl.addClass("dt-modal-mobile");
         this.containerEl.addClass("dt-modal-container-mobile"); // 暗幕とカードの位置の指定用（:has に頼らない）
+        this.untrackKeyboard = trackKeyboard(this); // キーボードが出たらそのぶんカードを持ち上げる
       }
       this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
       // Obsidian 本体が付ける × は取り除く（PC は上部バーの ×、モバイルは ⋮ の「閉じる」・外側のタップ・戻るボタンで閉じる）。
@@ -877,6 +902,8 @@ export class TaskModal extends Modal {
   }
 
   onClose(): void {
+    this.untrackKeyboard?.();
+    this.untrackKeyboard = null;
     if (this.autosaveTimer !== null) {
       window.clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
@@ -1643,6 +1670,8 @@ export interface ChoiceModalOptions {
  * 一覧を大きなボタンで出し、タップで決めて閉じる
  */
 export class ChoiceModal extends Modal {
+  private untrackKeyboard: (() => void) | null = null;
+
   constructor(
     app: App,
     private opts: ChoiceModalOptions
@@ -1653,6 +1682,7 @@ export class ChoiceModal extends Modal {
   onOpen(): void {
     this.modalEl.addClass("dt-modal");
     this.modalEl.addClass("dt-choice-modal");
+    this.untrackKeyboard = trackKeyboard(this); // 検索欄でキーボードが出てもシートが隠れないように
     this.titleEl.setText(this.opts.title);
     const { contentEl } = this;
     let query = "";
@@ -1718,6 +1748,8 @@ export class ChoiceModal extends Modal {
   }
 
   onClose(): void {
+    this.untrackKeyboard?.();
+    this.untrackKeyboard = null;
     this.contentEl.empty();
   }
 }
