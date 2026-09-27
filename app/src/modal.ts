@@ -89,22 +89,45 @@ type ProjectChoice =
 /**
  * モバイル: ソフトキーボードで隠れる高さを CSS 変数（--dt-keyboard）に入れ続ける。
  * カードは画面の下端に固定しているので、そのままだとキーボードの後ろに隠れる。
- * 戻り値は後片付け（閉じるときに呼ぶ）。visualViewport が無い環境では何もしない
+ * 戻り値は後片付け（閉じるときに呼ぶ）。visualViewport が無い環境では window の高さで代用する
  */
 function trackKeyboard(modal: Modal): () => void {
+  if (!Platform.isMobile) return () => {};
   const vv = window.visualViewport;
-  if (!Platform.isMobile || !vv) return () => {};
   const apply = () => {
-    const covered = Math.max(0, Math.round(window.innerHeight - (vv.height + vv.offsetTop)));
+    // 「見えている領域の下端」と「モーダルの入れ物（画面いっぱいの固定枠）の下端」の差が、キーボードで隠れる高さ。
+    // window.innerHeight との差で測ると、ウィンドウ全体がキーボードに合わせて縮む端末では 0 になってしまう
+    const viewportBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const containerBottom = modal.containerEl.getBoundingClientRect().bottom;
+    const covered = Math.max(0, Math.round(containerBottom - viewportBottom));
     modal.modalEl.style.setProperty("--dt-keyboard", `${covered}px`);
     modal.modalEl.toggleClass("is-keyboard", covered > 80);
   };
-  vv.addEventListener("resize", apply);
-  vv.addEventListener("scroll", apply);
+  // キーボードの出入りはアニメーションで遅れて確定するので、フォーカスの前後に何度か測り直す
+  const timers = new Set<number>();
+  const later = () => {
+    for (const delay of [50, 200, 400, 700]) {
+      const id = window.setTimeout(() => {
+        timers.delete(id);
+        apply();
+      }, delay);
+      timers.add(id);
+    }
+  };
+  vv?.addEventListener("resize", apply);
+  vv?.addEventListener("scroll", apply);
+  window.addEventListener("resize", apply);
+  modal.modalEl.addEventListener("focusin", later);
+  modal.modalEl.addEventListener("focusout", later);
   apply();
+  later();
   return () => {
-    vv.removeEventListener("resize", apply);
-    vv.removeEventListener("scroll", apply);
+    vv?.removeEventListener("resize", apply);
+    vv?.removeEventListener("scroll", apply);
+    window.removeEventListener("resize", apply);
+    modal.modalEl.removeEventListener("focusin", later);
+    modal.modalEl.removeEventListener("focusout", later);
+    for (const id of timers) window.clearTimeout(id);
   };
 }
 
