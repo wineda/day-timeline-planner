@@ -2012,6 +2012,7 @@
 /* Obsidian 本体がモバイルのモーダルに付ける大きな × は出さない（⋮ の「閉じる」か外側のタップで閉じる）。
    モバイルではこのボタンが .modal の外（.modal-container 直下）に置かれることがあるので両方に効かせる */
 .dt-modal-mobile .modal-close-button,
+.dt-modal-container-mobile .modal-close-button,
 body.is-mobile .modal-container:has(.dt-modal-mobile) .modal-close-button {
   display: none !important;
 }
@@ -2071,7 +2072,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 0 10px;
+  padding: 10px 0 6px;
   margin: 0 !important;
   background: var(--background-primary);
 }
@@ -2082,7 +2083,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   align-items: center;
 }
 .dt-modal-mobile .dt-m-top-title {
-  font-size: 1.1em;
+  font-size: var(--font-ui-medium);
   font-weight: 700;
   color: var(--text-normal);
 }
@@ -2097,7 +2098,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 1.1em;
+  font-size: var(--font-ui-medium);
   font-weight: 700;
   color: var(--text-normal);
 }
@@ -2118,8 +2119,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   flex: 0 0 auto;
 }
 .dt-modal-mobile .dt-m-project-chevron svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 .dt-modal-mobile .dt-m-top-right {
   display: flex;
@@ -2141,14 +2142,15 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   justify-content: center;
 }
 .dt-modal-mobile button.dt-m-top-btn svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 .dt-modal-mobile button.dt-m-top-cta {
   min-height: 0;
-  height: 32px;
-  padding: 0 16px;
-  border-radius: 16px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 15px;
+  font-size: var(--font-ui-small);
   font-weight: 600;
 }
 
@@ -2162,12 +2164,12 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 .dt-modal-mobile button.dt-m-done {
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   min-height: 0;
-  margin-top: 3px;
+  margin-top: 4px;
   padding: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   border: 2px solid var(--text-muted);
   background: transparent;
   box-shadow: none;
@@ -2177,8 +2179,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   color: transparent; /* 未完了はチェックを見せない */
 }
 .dt-modal-mobile button.dt-m-done svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 .dt-modal-mobile button.dt-m-done.is-done {
   background: var(--interactive-accent);
@@ -2201,7 +2203,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   box-shadow: none;
   text-align: left;
   justify-content: flex-start;
-  font-size: var(--font-ui-medium);
+  font-size: var(--font-ui-small);
   color: var(--text-accent);
 }
 .dt-modal-mobile button.dt-m-date-btn:not(.is-set) {
@@ -2223,7 +2225,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--font-ui-small);
+  font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
 .dt-modal-mobile button.dt-m-owner-btn .dt-owner-dot {
@@ -2238,7 +2240,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   align-items: center;
   gap: 6px;
   margin-top: 6px;
-  font-size: var(--font-ui-small);
+  font-size: var(--font-ui-smaller);
   color: var(--text-normal);
 }
 .dt-modal-mobile .dt-m-progress.is-hidden {
@@ -2250,8 +2252,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   color: var(--text-muted);
 }
 .dt-modal-mobile .dt-m-progress-icon svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 /* 実績 / 予定 の行（TickTick の 0m / 15m と同じ。タップで実績の入力へ） */
 .dt-modal-mobile button.dt-m-duration {
@@ -2267,7 +2269,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
-  font-size: var(--font-ui-medium);
+  font-size: var(--font-ui-small);
   color: var(--text-muted);
 }
 .dt-modal-mobile button.dt-m-duration.is-set {
@@ -2282,8 +2284,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   color: var(--text-normal);
 }
 .dt-modal-mobile .dt-m-duration-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
 }
 
 /* 日時の欄（開いたとき）とタグの選択: 少し明るい面にまとめる（枠線なし） */
@@ -2335,7 +2337,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   display: none;
 }
 .dt-modal-mobile .dt-title-setting input.dt-title-input {
-  font-size: 1.35em;
+  font-size: 1.15em;
   font-weight: 700;
   color: var(--text-normal);
   background: transparent !important;
@@ -2372,10 +2374,10 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 /* 行は箱にせず、TickTick と同じく薄い区切り線だけ */
 .dt-modal-mobile .dt-m-steps .dt-step,
 .dt-modal-mobile .dt-m-steps .dt-step-add {
-  min-height: 44px;
-  padding: 4px 0;
+  min-height: 38px;
+  padding: 2px 0;
   margin: 0;
-  gap: 12px;
+  gap: 10px;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--background-modifier-border);
@@ -2401,8 +2403,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   touch-action: none;
 }
 .dt-modal-mobile .dt-m-steps .dt-step-grip svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 .dt-modal-mobile .dt-m-steps .dt-step-delete {
   order: 2;
@@ -2418,8 +2420,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 .dt-modal-mobile .dt-m-steps .dt-step-check svg,
 .dt-modal-mobile .dt-m-steps .dt-step-add-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
 }
 /* 完了したステップは TickTick と同じく灰色に */
 .dt-modal-mobile .dt-m-steps .dt-step.is-done .dt-step-check {
@@ -2427,7 +2429,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 .dt-modal-mobile .dt-m-steps .dt-step-text,
 .dt-modal-mobile .dt-m-steps .dt-step-add input {
-  font-size: var(--font-ui-medium);
+  font-size: var(--font-ui-small);
   color: var(--text-normal);
   background: transparent !important;
   border: none !important;
@@ -2466,7 +2468,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   border-color: transparent;
   padding-left: 0;
   padding-right: 0;
-  min-height: 40px;
+  min-height: 36px;
+  font-size: var(--font-ui-small);
   color: var(--text-normal);
 }
 .dt-modal-mobile .dt-m-memo .dt-details-field.is-active {
@@ -2483,15 +2486,23 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 .dt-modal-mobile button.dt-m-tag-pill {
   min-height: 0;
-  height: 30px;
-  padding: 0 14px;
-  border-radius: 15px;
+  height: 26px;
+  padding: 0 12px 0 10px;
+  border-radius: 13px;
   border: none;
   box-shadow: none;
-  font-size: var(--font-ui-small);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-smaller);
   color: var(--text-normal);
   background: var(--background-modifier-hover);
-  border-left: 4px solid var(--dt-chip-color, transparent);
+}
+.dt-modal-mobile .dt-m-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
 }
 .dt-modal-mobile button.dt-m-tag-pill.is-hidden {
   display: none;
@@ -2519,6 +2530,15 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-size: var(--font-ui-smaller);
   color: var(--text-normal);
 }
+/* 欄の中の入力・文字も一段小さく */
+.dt-modal-mobile .dt-m-field input,
+.dt-modal-mobile .dt-m-field select,
+.dt-modal-mobile .dt-m-field textarea,
+.dt-modal-mobile .dt-m-sched-body input,
+.dt-modal-mobile .dt-m-sched-body .setting-item-name,
+.dt-modal-mobile .dt-m-sched-body .setting-item-description {
+  font-size: var(--font-ui-small);
+}
 
 /* 下部ツールバー: アイコンだけを左に並べる（TickTick と同じ）。右端に保存の状態 */
 .dt-modal-mobile .dt-m-toolbar {
@@ -2527,9 +2547,9 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   margin: auto 0 0 !important;
-  padding: 10px 0 6px;
+  padding: 8px 0 4px;
   background: var(--background-primary);
 }
 .dt-modal-mobile .dt-m-toolbar:empty {
@@ -2550,8 +2570,8 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   border-radius: var(--radius-s);
 }
 .dt-modal-mobile button.dt-m-tool svg {
-  width: 24px;
-  height: 24px;
+  width: 21px;
+  height: 21px;
 }
 .dt-modal-mobile button.dt-m-tool.is-set {
   color: var(--text-accent);
