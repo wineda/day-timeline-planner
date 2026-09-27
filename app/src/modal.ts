@@ -87,46 +87,72 @@ type ProjectChoice =
   | { kind: "create"; name: string };
 
 /**
- * モバイル: ソフトキーボードで隠れる高さを CSS 変数（--dt-keyboard）に入れ続ける。
+ * モバイル: ソフトキーボードで隠れる高さを CSS 変数（--dt-keyboard）に入れ続け、
+ * 入力欄にフォーカスがある間は is-keyboard-focus を付ける（カードを上寄せにする）。
  * カードは画面の下端に固定しているので、そのままだとキーボードの後ろに隠れる。
  * 戻り値は後片付け（閉じるときに呼ぶ）。visualViewport が無い環境では window の高さで代用する
  */
 function trackKeyboard(modal: Modal): () => void {
   if (!Platform.isMobile) return () => {};
   const vv = window.visualViewport;
+  const el = modal.modalEl;
   const apply = () => {
     // 「見えている領域の下端」と「モーダルの入れ物（画面いっぱいの固定枠）の下端」の差が、キーボードで隠れる高さ。
-    // window.innerHeight との差で測ると、ウィンドウ全体がキーボードに合わせて縮む端末では 0 になってしまう
+    // ただし端末や設定によってはキーボードが WebView に一切通知されず、この差が 0 のままになる
     const viewportBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
     const containerBottom = modal.containerEl.getBoundingClientRect().bottom;
     const covered = Math.max(0, Math.round(containerBottom - viewportBottom));
-    modal.modalEl.style.setProperty("--dt-keyboard", `${covered}px`);
-    modal.modalEl.toggleClass("is-keyboard", covered > 80);
+    el.style.setProperty("--dt-keyboard", `${covered}px`);
+    el.toggleClass("is-keyboard", covered > 80);
   };
-  // キーボードの出入りはアニメーションで遅れて確定するので、フォーカスの前後に何度か測り直す
+  // 高さが通知されない端末のための保険: 入力欄にフォーカスがある間はカードを画面の上寄せにして
+  // 高さを画面の半分に収める（キーボードはおおむね下半分を覆う）。フォーカスが外れれば下へ戻す
   const timers = new Set<number>();
-  const later = () => {
-    for (const delay of [50, 200, 400, 700]) {
-      const id = window.setTimeout(() => {
-        timers.delete(id);
-        apply();
-      }, delay);
-      timers.add(id);
-    }
+  const schedule = (fn: () => void, delay: number) => {
+    const id = window.setTimeout(() => {
+      timers.delete(id);
+      fn();
+    }, delay);
+    timers.add(id);
+  };
+  const isTextInput = (t: EventTarget | null) =>
+    t instanceof HTMLTextAreaElement ||
+    (t instanceof HTMLInputElement && !["date", "time", "checkbox", "button"].includes(t.type));
+  let focused = false;
+  const paintFocus = () => el.toggleClass("is-keyboard-focus", focused);
+  const onFocusIn = (e: FocusEvent) => {
+    if (!isTextInput(e.target)) return;
+    focused = true;
+    paintFocus();
+    for (const d of [50, 200, 400, 700]) schedule(apply, d);
+  };
+  const onFocusOut = () => {
+    // 別の入力欄へ移るときに一瞬戻らないよう、少し待ってから判定する
+    schedule(() => {
+      focused = isTextInput(activeDocument.activeElement) && el.contains(activeDocument.activeElement);
+      paintFocus();
+      apply();
+    }, 120);
   };
   vv?.addEventListener("resize", apply);
   vv?.addEventListener("scroll", apply);
   window.addEventListener("resize", apply);
-  modal.modalEl.addEventListener("focusin", later);
-  modal.modalEl.addEventListener("focusout", later);
+  el.addEventListener("focusin", onFocusIn);
+  el.addEventListener("focusout", onFocusOut);
   apply();
-  later();
+  // 開いた直後に自動フォーカスされる場合（作成時のタイトル）も拾う
+  schedule(() => {
+    if (isTextInput(activeDocument.activeElement) && el.contains(activeDocument.activeElement)) {
+      focused = true;
+      paintFocus();
+    }
+  }, 30);
   return () => {
     vv?.removeEventListener("resize", apply);
     vv?.removeEventListener("scroll", apply);
     window.removeEventListener("resize", apply);
-    modal.modalEl.removeEventListener("focusin", later);
-    modal.modalEl.removeEventListener("focusout", later);
+    el.removeEventListener("focusin", onFocusIn);
+    el.removeEventListener("focusout", onFocusOut);
     for (const id of timers) window.clearTimeout(id);
   };
 }
