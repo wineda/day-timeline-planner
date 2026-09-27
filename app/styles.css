@@ -2081,6 +2081,12 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   margin: 0 !important;
   width: 100%;
   box-sizing: border-box;
+  /* スクロールバーは出さない（指で動かす。出すと右だけ余白が広く見える） */
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+}
+body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content::-webkit-scrollbar {
+  display: none;
 }
 /* カードの中で開く面（日時の欄・タグの選択・詳細）は、さらにひと段階明るく */
 body.theme-dark .dt-modal-compact .dt-m-sched-body,
@@ -2513,6 +2519,8 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   border-color: transparent;
   padding-left: 0;
   padding-right: 0;
+  max-height: none; /* 内側ではスクロールしない（カード全体のスクロールだけにする） */
+  overflow-y: hidden;
   min-height: 36px;
   font-size: var(--font-ui-small);
   color: var(--text-normal);
@@ -2612,7 +2620,8 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   border-radius: 0;
   padding: 2px 0 6px;
   min-height: 44px; /* 2 行ぶん。フォーカスしても空白で広がらない */
-  max-height: 40vh;
+  max-height: none; /* 内側ではスクロールしない */
+  overflow-y: hidden;
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   transition: none;
