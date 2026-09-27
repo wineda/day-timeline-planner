@@ -298,8 +298,18 @@ export class TaskModal extends Modal {
       this.containerEl.addClass("dt-modal-container-mobile"); // 暗幕とカードの位置の指定用（:has に頼らない）
       this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
       // Obsidian 本体が付ける大きな × は取り除く（⋮ の「閉じる」・外側のタップ・戻るボタンで閉じられる）。
-      // CSS の指定は本体側の詳細度に負けることがあるので、要素ごと消す
-      this.containerEl.querySelectorAll(".modal-close-button").forEach((el) => el.remove());
+      // クラス名は本体の版で変わるので、モーダル直下の「内容・見出し以外」の要素を消す。
+      // open() の後で足される場合に備えて、描画後にもう一度行う
+      const dropCloseButton = () => {
+        this.containerEl.querySelectorAll(".modal-close-button").forEach((el) => el.remove());
+        for (const el of Array.from(this.modalEl.children)) {
+          if (el === this.contentEl || el === this.titleEl || el.contains(this.titleEl)) continue;
+          el.remove();
+        }
+      };
+      dropCloseButton();
+      window.setTimeout(dropCloseButton, 0);
+      window.requestAnimationFrame(dropCloseButton);
       const top = contentEl.createDiv("dt-m-top");
       chipsEl = top.createDiv("dt-m-top-left"); // プロジェクト名（TickTick のリスト名の位置）
       if (!this.opts.projects) {
@@ -712,6 +722,8 @@ export class TaskModal extends Modal {
       // モバイル: 選択中のタグを丸い札で出し、札かツールバーのタグアイコンのタップで選択を開閉
       const pill = tagRow.createEl("button", { cls: "dt-m-tag-pill", attr: { type: "button" } });
       tip(pill, "タップでタグの選択を開閉します。");
+      const pillDot = pill.createSpan("dt-m-tag-dot");
+      const pillText = pill.createSpan("dt-m-tag-text");
       const panel = tagPanel;
       const tool = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": "タグ" } });
       tip(tool, "タグ");
@@ -721,9 +733,9 @@ export class TaskModal extends Modal {
       const paintPill = () => {
         const cur = deepestTag(this.selectedTags);
         const def = this.tagChoices.find((c) => c.tag === cur) ?? this.tagChoices.find((c) => c.tag === cur.split("/")[0]);
-        pill.setText(cur);
+        pillText.setText(cur);
         pill.toggleClass("is-hidden", !cur);
-        pill.style.setProperty("--dt-chip-color", cur && def ? def.color : "");
+        pillDot.style.background = cur && def ? def.color : "transparent";
         paintTool("tag", !!cur);
       };
       const toggle = () => {
