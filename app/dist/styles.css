@@ -2410,6 +2410,29 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   color: var(--text-muted);
   text-decoration: line-through;
 }
+/* 本文風の入力（タイトル・説明・ステップ・結果・ふりかえり）は、フォーカスしても枠線や光る輪を出さない
+   （Obsidian 本体はフォーカス時に box-shadow の輪を付けるが、枠なしのデザインに合わないため） */
+.dt-modal-compact input.dt-title-input,
+.dt-modal-compact .dt-m-memo textarea,
+.dt-modal-compact .dt-m-field textarea,
+.dt-modal-compact .dt-m-steps .dt-step-text,
+.dt-modal-compact .dt-m-steps .dt-step-add input,
+.dt-modal-compact input.dt-title-input:focus,
+.dt-modal-compact .dt-m-memo textarea:focus,
+.dt-modal-compact .dt-m-field textarea:focus,
+.dt-modal-compact .dt-m-steps .dt-step-text:focus,
+.dt-modal-compact .dt-m-steps .dt-step-add input:focus,
+.dt-modal-compact input.dt-title-input:focus-visible,
+.dt-modal-compact .dt-m-memo textarea:focus-visible,
+.dt-modal-compact .dt-m-field textarea:focus-visible,
+.dt-modal-compact .dt-m-steps .dt-step-text:focus-visible,
+.dt-modal-compact .dt-m-steps .dt-step-add input:focus-visible {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  border-radius: 0;
+}
 /* プレースホルダーはダークでも読める濃さに（既定の --text-faint は背景に溶ける） */
 .dt-modal-compact input::placeholder,
 .dt-modal-compact textarea::placeholder {
@@ -2536,6 +2559,7 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
 }
 .dt-modal-compact .dt-m-memo .dt-details-field.is-active {
   border-color: transparent;
+  box-shadow: none;
 }
 
 /* タグの丸い札（選んでいるときだけ。TickTick の灰色の札と同じ） */
