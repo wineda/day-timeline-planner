@@ -183,6 +183,10 @@ export class TaskModal extends Modal {
   private createdProjects = new Map<string, string>();
   /** プロジェクトの選択が変わったときに表示（入力欄・チップ）を更新する */
   private onProjectChanged: (() => void) | null = null;
+  /** モバイル: 日時の行の右に出すステップの進捗（33% など）。無ければ null */
+  private stepsProgressEl: HTMLElement | null = null;
+  /** モバイル: 「実績 / 予定」の行の表示を更新する（モバイル以外は null） */
+  private refreshDuration: (() => void) | null = null;
 
   constructor(app: App, opts: TaskModalOptions) {
     super(app);
@@ -370,10 +374,23 @@ export class TaskModal extends Modal {
       tip(sched, "タップで日付・時間の欄を開閉します。");
       const schedText = sched.createSpan("dt-m-date-text");
       ownerHost = dateCol.createDiv("dt-m-date-sub");
+      // 右端: ステップの進捗（TickTick の 33% と同じ位置。ステップがあるときだけ）
+      const progress = dateRow.createDiv({ cls: ["dt-m-progress", "is-hidden"] });
+      setIcon(progress.createSpan("dt-m-progress-icon"), iconName("pie-chart"));
+      progress.createSpan("dt-m-progress-text");
+      this.stepsProgressEl = progress;
+      // 「実績 / 予定」の行（編集時。タップで日時の欄を開いて実績欄へ）
+      let duration: HTMLElement | null = null;
+      if (this.opts.showActual) {
+        duration = contentEl.createEl("button", { cls: "dt-m-duration", attr: { type: "button" } });
+        tip(duration, "実績 / 予定の時間。タップで実績を入力できます。");
+        setIcon(duration.createSpan("dt-m-duration-icon"), "timer");
+        duration.createSpan("dt-m-duration-text");
+      }
       schedBody = contentEl.createDiv({ cls: ["dt-m-sched-body", "dt-collapsed"] });
       titleHost = contentEl.createDiv("dt-m-title-row");
+      memoHost = contentEl.createDiv("dt-m-memo"); // TickTick と同じくタイトルの直下に説明
       stepsHost = contentEl.createDiv("dt-m-steps");
-      memoHost = contentEl.createDiv("dt-m-memo");
       tagRow = contentEl.createDiv("dt-m-tag-row");
       tagPanel = contentEl.createDiv({ cls: ["dt-m-tag-panel", "dt-collapsed"] });
       extraHost = contentEl.createDiv("dt-m-extra");
@@ -411,18 +428,26 @@ export class TaskModal extends Modal {
         sched.toggleClass("is-set", set);
       };
       this.refreshSchedSummary();
-      // 実績のアイコン（ツールバー）は日時の欄を開いて実績欄へ移動する
-      if (this.opts.showActual) {
-        const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": "実績" } });
-        tip(b, "実績");
-        setIcon(b, "timer");
-        b.onclick = () => {
+      if (duration) {
+        const el = duration;
+        const short = (min: number) => (min >= 60 && min % 60 === 0 ? `${min / 60}h` : min >= 60 ? `${Math.floor(min / 60)}h${min % 60}m` : `${min}m`);
+        this.refreshDuration = () => {
+          const r = this.parse();
+          const plan = "error" in r || r.start === null || r.end === null ? null : r.end - r.start;
+          const act = this.parseActual();
+          const actMin = act === null ? null : actualTotal(act);
+          const text = el.querySelector(".dt-m-duration-text");
+          text?.setText(`${actMin === null ? "?" : short(actMin)} / ${plan === null ? "–" : short(plan)}`);
+          el.toggleClass("is-set", actMin !== null && actMin > 0);
+          el.toggleClass("is-error", act === null);
+        };
+        this.refreshDuration();
+        el.onclick = () => {
           toggleSched(true);
           const input = schedBody?.querySelector<HTMLInputElement>(".dt-actual-input");
           input?.focus();
           input?.scrollIntoView({ block: "center" });
         };
-        toolIcons.set("actual", b);
       }
     }
     /** 日付・時間・実績の欄の親（モバイルでは折りたたみ領域の中に入れる） */
@@ -729,7 +754,7 @@ export class TaskModal extends Modal {
       "dt-details-field",
       2,
       mobile ? 480 : 320,
-      mobile ? "メモ" : "自由なメモ（Markdown）",
+      mobile ? "説明" : "自由なメモ（Markdown）",
       () => this.details,
       (v) => (this.details = v)
     );
@@ -921,13 +946,6 @@ export class TaskModal extends Modal {
     } else if (toolbar) {
       // 保存の状態はツールバーの右端に小さく（TickTick には無いが、失敗したときに気づけるように）
       if (this.autosaveOn) this.autosaveStatusEl = toolbar.createDiv("dt-m-status");
-      if (this.opts.showActual) {
-        // 実績のアイコンは値の有無で色を変える（入力は日時の欄の中）
-        const paintActual = () => paintTool("actual", (this.parseActual() ?? []).length > 0);
-        contentEl.addEventListener("input", paintActual);
-        contentEl.addEventListener("change", paintActual);
-        paintActual();
-      }
     }
 
     if (this.autosaveOn) {
@@ -975,6 +993,7 @@ export class TaskModal extends Modal {
   }
 
   private updateActualDesc(): void {
+    this.refreshDuration?.();
     const el = this.actualDescEl;
     if (!el) return;
     const r = this.parseActual();
@@ -1345,6 +1364,12 @@ export class TaskModal extends Modal {
     this.stepsCountEl.setText(this.steps.length ? `${done} / ${this.steps.length} 完了` : "");
     this.stepsBarEl.style.width = this.steps.length ? `${(done / this.steps.length) * 100}%` : "0%";
     this.stepsBarEl.parentElement?.toggleClass("is-empty", this.steps.length === 0);
+    if (this.stepsProgressEl) {
+      const real = this.steps.filter((st) => st.text.trim()).length;
+      const pct = real ? Math.round((this.steps.filter((st) => st.done && st.text.trim()).length / real) * 100) : 0;
+      this.stepsProgressEl.querySelector(".dt-m-progress-text")?.setText(`${pct}%`);
+      this.stepsProgressEl.toggleClass("is-hidden", real === 0);
+    }
 
     this.steps.forEach((st, idx) => {
       const row = list.createDiv("dt-step");
@@ -1511,6 +1536,7 @@ export class TaskModal extends Modal {
       this.hintEl.removeClass("is-error");
     }
     this.refreshSchedSummary?.();
+    this.refreshDuration?.();
   }
 
   private async submit(): Promise<void> {
