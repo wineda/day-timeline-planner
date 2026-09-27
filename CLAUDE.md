@@ -22,6 +22,7 @@ Obsidian プラグイン。タスクを日付ノートの Markdown ブロック�
     テストの型検査は `tsconfig.test.json`（`npm run typecheck`）
   - `dist/` … リリース成果物（`main.js` / `manifest.json` / `styles.css`）。**コミットする**
 - `docs/format.md` … 生成された仕様書（手で直さない）。`docs/ai-instructions-template.md` は保管庫側の指示書の雛形
+- `docs/architecture.md` … 構成図（Mermaid）。層・import の向き・ビルドの流れを図にしたもの。ファイルを足したり依存の向きを変えたら直す
 - `manifest.json`（ルート） … BRAT 用の `app/manifest.json` のコピー
 - `.github/workflows/ci.yml` … テスト・ビルド・dist の一致検証（全ブランチ）
 - `.github/workflows/release.yml` … master への push で GitHub Release を作る

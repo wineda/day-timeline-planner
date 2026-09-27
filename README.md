@@ -382,7 +382,7 @@ npm run dev        # 変更を監視して自動ビルド
 3. リポジトリ直下の `manifest.json`（BRAT がリポジトリを認識するためのコピー）
 4. `app/versions.json` に新バージョンの行を追加
 
-`src/` の構成:
+`src/` の構成（層の分け方・依存の向き・ビルドの流れは図にしてある: [docs/architecture.md](docs/architecture.md)）:
 
 - `main.ts` … プラグイン本体（ビューの登録、コマンド、設定、プロジェクトの集計、実績の計測）
 - `model.ts` … ビューが扱うタスクの型
