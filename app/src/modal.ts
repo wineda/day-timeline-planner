@@ -270,14 +270,16 @@ export class TaskModal extends Modal {
     };
     const mobile = Platform.isMobile;
 
-    // ---- モバイル: TickTick 風の詳細シート ----
-    // 上から「×・状態・追加/⋯」の上部バー → 日時・プロジェクト・タグ・誰の予定かのチップ列
-    // → （チップで開く日付・時間・実績の欄、タグの選択）→ 丸チェック + タイトル → ステップ
-    // → メモ → 使用頻度の低い欄（チケット・リマインド・結果・ふりかえり。下のツールバーで開く）→ ツールバー。
+    // ---- モバイル: TickTick の詳細シートと同じ構成 ----
+    // 上から「プロジェクト名 ⌄ … 追加 / ⋮」の上部バー → 大きなチェック + 日時（アクセント色の文字）
+    // → （タップで開く日付・時間・実績の欄）→ 大きなタイトル → ステップ → メモ → タグの丸い札
+    // → （タグの選択）→ 使用頻度の低い欄（下のツールバーで開く）→ アイコンだけのツールバー。
+    // 枠線は使わず、白い文字と余白で区切る（ダークテーマで枠線が背景に溶けるため）。
     // 表示順 = DOM の順なので、入れ物を先に作っておき、各欄はその中へ作る
     let schedBody: HTMLElement | null = null;
     let chipsEl: HTMLElement | null = null;
     let tagPanel: HTMLElement | null = null;
+    let tagRow: HTMLElement | null = null;
     let titleHost: HTMLElement = contentEl;
     let stepsHost: HTMLElement = contentEl;
     let memoHost: HTMLElement = contentEl;
@@ -285,16 +287,16 @@ export class TaskModal extends Modal {
     let toolbar: HTMLElement | null = null;
     /** 下部ツールバーのアイコン（欄のキー → ボタン）。値の有無で色を変える */
     const toolIcons = new Map<string, HTMLElement>();
+    /** モバイル: 「誰の予定か」の行の親（日時の下） */
+    let ownerHost: HTMLElement | null = null;
     if (mobile) {
       this.modalEl.addClass("dt-modal-mobile");
       this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
       const top = contentEl.createDiv("dt-m-top");
-      const closeBtn = top.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "閉じる" } });
-      setIcon(closeBtn, "x");
-      closeBtn.onclick = () => this.close();
-      const status = top.createDiv("dt-m-top-status");
-      status.setText(this.opts.mode === "create" ? "タスクを追加" : "");
-      if (this.autosaveOn) this.autosaveStatusEl = status;
+      chipsEl = top.createDiv("dt-m-top-left"); // プロジェクト名（TickTick のリスト名の位置）
+      if (!this.opts.projects) {
+        chipsEl.createSpan({ cls: "dt-m-top-title", text: this.opts.mode === "create" ? "タスクを追加" : "タスク" });
+      }
       const right = top.createDiv("dt-m-top-right");
       if (this.opts.mode === "create" || !this.autosaveOn) {
         const cta = right.createEl("button", {
@@ -303,61 +305,79 @@ export class TaskModal extends Modal {
           attr: { type: "button" },
         });
         cta.onclick = () => void this.submit();
-        if (this.opts.mode === "edit") {
-          const cancel = right.createEl("button", { cls: "dt-m-top-btn", text: "キャンセル", attr: { type: "button" } });
-          right.prepend(cancel);
-          cancel.onclick = () => this.close();
-        }
       }
-      if (this.opts.mode === "edit" && (this.opts.onDelete || this.opts.onOpenNote)) {
-        const more = right.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "その他" } });
-        setIcon(more, iconName("more-vertical"));
-        more.onclick = (e) => {
-          const menu = new Menu();
-          const onOpenNote = this.opts.onOpenNote;
-          if (onOpenNote) {
-            menu.addItem((it) =>
-              it
-                .setTitle("ノートで開く")
-                .setIcon("file-text")
-                .onClick(async () => {
-                  this.close();
-                  await onOpenNote();
-                })
-            );
-          }
-          const onDelete = this.opts.onDelete;
-          if (onDelete) {
-            menu.addItem((it) =>
-              it
-                .setTitle("削除")
-                .setIcon("trash-2")
-                .setWarning(true)
-                .onClick(async () => {
-                  this.close();
-                  await onDelete();
-                })
-            );
-          }
-          menu.showAtMouseEvent(e);
+      // ⋮ メニュー: ノートで開く・削除・閉じる（× は置かず、TickTick と同じく外側のタップでも閉じる）
+      const more = right.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "その他" } });
+      setIcon(more, iconName("more-vertical"));
+      more.onclick = (e) => {
+        const menu = new Menu();
+        const onOpenNote = this.opts.onOpenNote;
+        if (this.opts.mode === "edit" && onOpenNote) {
+          menu.addItem((it) =>
+            it
+              .setTitle("ノートで開く")
+              .setIcon("file-text")
+              .onClick(async () => {
+                this.close();
+                await onOpenNote();
+              })
+          );
+        }
+        const onDelete = this.opts.onDelete;
+        if (this.opts.mode === "edit" && onDelete) {
+          menu.addItem((it) =>
+            it
+              .setTitle("削除")
+              .setIcon("trash-2")
+              .setWarning(true)
+              .onClick(async () => {
+                this.close();
+                await onDelete();
+              })
+          );
+        }
+        menu.addItem((it) =>
+          it
+            .setTitle(this.opts.mode === "create" ? "キャンセル" : "閉じる")
+            .setIcon("x")
+            .onClick(() => this.close())
+        );
+        menu.showAtMouseEvent(e);
+      };
+
+      // 大きなチェック + 日時の行
+      const dateRow = contentEl.createDiv("dt-m-date-row");
+      if (this.opts.mode === "edit") {
+        const check = dateRow.createEl("button", {
+          cls: "dt-m-done",
+          attr: { type: "button", role: "checkbox", "aria-label": "完了" },
+        });
+        tip(check, "タップすると完了（[x]）として保存されます。");
+        setIcon(check, "check");
+        const paintDone = () => {
+          check.toggleClass("is-done", this.done);
+          check.setAttr("aria-checked", String(this.done));
+          contentEl.toggleClass("is-done", this.done);
+        };
+        paintDone();
+        check.onclick = () => {
+          this.done = !this.done;
+          paintDone();
         };
       }
-
-      chipsEl = contentEl.createDiv("dt-m-chips");
+      const dateCol = dateRow.createDiv("dt-m-date-col");
+      const sched = dateCol.createEl("button", { cls: "dt-m-date-btn", attr: { type: "button" } });
+      tip(sched, "タップで日付・時間の欄を開閉します。");
+      const schedText = sched.createSpan("dt-m-date-text");
+      ownerHost = dateCol.createDiv("dt-m-date-sub");
       schedBody = contentEl.createDiv({ cls: ["dt-m-sched-body", "dt-collapsed"] });
-      tagPanel = contentEl.createDiv({ cls: ["dt-m-tag-panel", "dt-collapsed"] });
       titleHost = contentEl.createDiv("dt-m-title-row");
       stepsHost = contentEl.createDiv("dt-m-steps");
       memoHost = contentEl.createDiv("dt-m-memo");
+      tagRow = contentEl.createDiv("dt-m-tag-row");
+      tagPanel = contentEl.createDiv({ cls: ["dt-m-tag-panel", "dt-collapsed"] });
       extraHost = contentEl.createDiv("dt-m-extra");
       toolbar = contentEl.createDiv("dt-m-toolbar");
-
-      // 日時チップ（タップで日付・時間・実績の欄を開閉）
-      const sched = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-sched"], attr: { type: "button" } });
-      tip(sched, "タップで日付・時間の欄を開閉します。");
-      const schedIcon = sched.createSpan("dt-m-chip-icon");
-      setIcon(schedIcon, "calendar");
-      const schedText = sched.createSpan("dt-m-chip-text");
       const toggleSched = (open?: boolean) => {
         const next = open ?? (schedBody?.hasClass("dt-collapsed") ?? false);
         schedBody?.toggleClass("dt-collapsed", !next);
@@ -370,8 +390,7 @@ export class TaskModal extends Modal {
         if (this.opts.dateField) {
           const d = this.parseDateText();
           if (d) set = true;
-          // チップに収まるよう短い書式（9/28(月)）
-          parts.push(d ? moment(d).format("M/D(ddd)") : this.opts.dateField.allowEmpty ? "日付未定" : "日付を入力");
+          parts.push(d ? moment(d).format("M月D日(ddd)") : this.opts.dateField.allowEmpty ? "日付未定" : "日付を入力");
         } else if (this.opts.dateLabel) {
           parts.push(this.opts.dateLabel);
           set = true;
@@ -384,10 +403,10 @@ export class TaskModal extends Modal {
         } else if (r.start === null) {
           parts.push("時刻なし");
         } else {
-          parts.push(`${minutesToHHMM(r.start)}-${minutesToHHMM(r.end as number)}`);
+          parts.push(`${minutesToHHMM(r.start)} - ${minutesToHHMM(r.end as number)}`);
           set = true;
         }
-        schedText.setText(parts.join(" "));
+        schedText.setText(parts.join(", "));
         sched.toggleClass("is-error", error);
         sched.toggleClass("is-set", set);
       };
@@ -395,8 +414,8 @@ export class TaskModal extends Modal {
       // 実績のアイコン（ツールバー）は日時の欄を開いて実績欄へ移動する
       if (this.opts.showActual) {
         const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": "実績" } });
-        setIcon(b.createSpan("dt-m-tool-icon"), "timer");
-        b.createSpan({ cls: "dt-m-tool-label", text: "実績" });
+        tip(b, "実績");
+        setIcon(b, "timer");
         b.onclick = () => {
           toggleSched(true);
           const input = schedBody?.querySelector<HTMLInputElement>(".dt-actual-input");
@@ -411,25 +430,7 @@ export class TaskModal extends Modal {
     /** モバイル: ツールバーのアイコンの「値あり」の色を更新する */
     const paintTool = (key: string, set: boolean) => toolIcons.get(key)?.toggleClass("is-set", set);
 
-    // ---- タイトル（編集時は「完了」も同じ行に。モバイルは TickTick 風の丸チェックをタイトルの左に）----
-    if (mobile && this.opts.mode === "edit") {
-      const check = titleHost.createEl("button", {
-        cls: "dt-m-done",
-        attr: { type: "button", role: "checkbox", "aria-label": "完了" },
-      });
-      tip(check, "タップすると完了（[x]）として保存されます。");
-      setIcon(check, "check");
-      const paintDone = () => {
-        check.toggleClass("is-done", this.done);
-        check.setAttr("aria-checked", String(this.done));
-        titleHost.toggleClass("is-done", this.done);
-      };
-      paintDone();
-      check.onclick = () => {
-        this.done = !this.done;
-        paintDone();
-      };
-    }
+    // ---- タイトル（編集時は「完了」も同じ行に。モバイルの完了は日時の行の大きなチェック）----
     const titleSetting = new Setting(titleHost).setName("タイトル");
     titleSetting.settingEl.addClass("dt-title-setting");
     titleSetting.addText((t) => {
@@ -649,8 +650,8 @@ export class TaskModal extends Modal {
       if (chipsEl) this.buildProjectChip(chipsEl);
       else this.buildProjectSection(contentEl);
     }
-    if (this.opts.owners?.length && chipsEl) {
-      this.buildOwnerChip(chipsEl, this.opts.owners);
+    if (this.opts.owners?.length && ownerHost) {
+      this.buildOwnerChip(ownerHost, this.opts.owners);
     } else if (this.opts.owners?.length) {
       const owners = this.opts.owners;
       const ownerSetting = new Setting(contentEl).setName("誰の予定か");
@@ -678,32 +679,37 @@ export class TaskModal extends Modal {
     }
 
     // ---- タグ（親タグ → サブタグの2段。書き込むのは最も深い1つ）----
-    if (this.tagChoices.length && chipsEl && tagPanel) {
-      // モバイル: チップに選択中のタグを出し、タップで選択パネルを開閉
-      const chip = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-tag"], attr: { type: "button" } });
-      tip(chip, "タップでタグの選択を開閉します。");
-      const icon = chip.createSpan("dt-m-chip-icon");
-      setIcon(icon, "tag");
-      const text = chip.createSpan("dt-m-chip-text");
+    if (this.tagChoices.length && tagRow && tagPanel && toolbar) {
+      // モバイル: 選択中のタグを丸い札で出し、札かツールバーのタグアイコンのタップで選択を開閉
+      const pill = tagRow.createEl("button", { cls: "dt-m-tag-pill", attr: { type: "button" } });
+      tip(pill, "タップでタグの選択を開閉します。");
       const panel = tagPanel;
-      const paintChip = () => {
+      const tool = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": "タグ" } });
+      tip(tool, "タグ");
+      setIcon(tool, "tag");
+      toolbar.prepend(tool); // TickTick と同じく先頭
+      toolIcons.set("tag", tool);
+      const paintPill = () => {
         const cur = deepestTag(this.selectedTags);
         const def = this.tagChoices.find((c) => c.tag === cur) ?? this.tagChoices.find((c) => c.tag === cur.split("/")[0]);
-        text.setText(cur ? "#" + cur : "タグ");
-        chip.toggleClass("is-set", !!cur);
-        chip.style.setProperty("--dt-chip-color", cur && def ? def.color : "");
-        chip.style.setProperty("--dt-chip-fg", cur && def ? contrastTextColor(def.color) || "#fff" : "");
+        pill.setText(cur);
+        pill.toggleClass("is-hidden", !cur);
+        pill.style.setProperty("--dt-chip-color", cur && def ? def.color : "");
+        paintTool("tag", !!cur);
       };
-      chip.onclick = () => {
+      const toggle = () => {
         const open = panel.hasClass("dt-collapsed");
         panel.toggleClass("dt-collapsed", !open);
-        chip.toggleClass("is-open", open);
+        tool.toggleClass("is-open", open);
+        if (open) panel.scrollIntoView({ block: "nearest" });
       };
+      pill.onclick = toggle;
+      tool.onclick = toggle;
       renderTagChips(panel, this.tagChoices, this.selectedTags, () => {
-        paintChip();
+        paintPill();
         this.scheduleAutosave();
       });
-      paintChip();
+      paintPill();
     } else if (this.tagChoices.length) {
       const tagSetting = new Setting(contentEl).setName("タグ");
       tagSetting.settingEl.addClass("dt-tag-setting");
@@ -765,8 +771,8 @@ export class TaskModal extends Modal {
       if (!extraHost || !toolbar) return detailsBody;
       const host = extraHost.createDiv({ cls: ["dt-m-field", "dt-collapsed"], attr: { "data-field": key } });
       const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": label } });
-      setIcon(b.createSpan("dt-m-tool-icon"), iconName(icon));
-      b.createSpan({ cls: "dt-m-tool-label", text: label });
+      tip(b, label);
+      setIcon(b, iconName(icon));
       toolIcons.set(key, b);
       const setOpen = (open: boolean) => {
         host.toggleClass("dt-collapsed", !open);
@@ -912,12 +918,16 @@ export class TaskModal extends Modal {
             .onClick(() => void this.submit())
         );
       }
-    } else if (toolbar && this.opts.showActual) {
-      // 実績のアイコンは値の有無で色を変える（入力は日時の欄の中）
-      const paintActual = () => paintTool("actual", (this.parseActual() ?? []).length > 0);
-      contentEl.addEventListener("input", paintActual);
-      contentEl.addEventListener("change", paintActual);
-      paintActual();
+    } else if (toolbar) {
+      // 保存の状態はツールバーの右端に小さく（TickTick には無いが、失敗したときに気づけるように）
+      if (this.autosaveOn) this.autosaveStatusEl = toolbar.createDiv("dt-m-status");
+      if (this.opts.showActual) {
+        // 実績のアイコンは値の有無で色を変える（入力は日時の欄の中）
+        const paintActual = () => paintTool("actual", (this.parseActual() ?? []).length > 0);
+        contentEl.addEventListener("input", paintActual);
+        contentEl.addEventListener("change", paintActual);
+        paintActual();
+      }
     }
 
     if (this.autosaveOn) {
@@ -1146,15 +1156,15 @@ export class TaskModal extends Modal {
     this.scheduleAutosave(); // 候補はダイアログの外に出るので明示的に
   }
 
-  /** モバイル: プロジェクトのチップ（タップで選択シートを開く） */
-  private buildProjectChip(chipsEl: HTMLElement): void {
-    const chip = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-project"], attr: { type: "button" } });
+  /** モバイル: 上部バー左のプロジェクト名（TickTick のリスト名の位置。タップで選択シートを開く） */
+  private buildProjectChip(host: HTMLElement): void {
+    const chip = host.createEl("button", { cls: "dt-m-project-btn", attr: { type: "button" } });
     chip.setAttr("title", "タップでプロジェクトを選びます（入力で絞り込み・新規作成もできます）。");
-    const icon = chip.createSpan("dt-m-chip-icon");
-    setIcon(icon, "folder");
-    const text = chip.createSpan("dt-m-chip-text");
+    const text = chip.createSpan("dt-m-project-text");
+    const chevron = chip.createSpan("dt-m-project-chevron");
+    setIcon(chevron, "chevrons-up-down");
     const paint = () => {
-      text.setText(this.project ? this.projectLabel(this.project) : "プロジェクト");
+      text.setText(this.project ? this.projectLabel(this.project) : "プロジェクトなし");
       chip.toggleClass("is-set", !!this.project);
     };
     this.onProjectChanged = paint;
@@ -1190,20 +1200,20 @@ export class TaskModal extends Modal {
     };
   }
 
-  /** モバイル: 「誰の予定か」のチップ（タップで選択シートを開く） */
-  private buildOwnerChip(chipsEl: HTMLElement, owners: NonNullable<TaskModalOptions["owners"]>): void {
-    const chip = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-owner"], attr: { type: "button" } });
+  /** モバイル: 「誰の予定か」（日時の下の小さな行。タップで選択シートを開く） */
+  private buildOwnerChip(host: HTMLElement, owners: NonNullable<TaskModalOptions["owners"]>): void {
+    const chip = host.createEl("button", { cls: "dt-m-owner-btn", attr: { type: "button" } });
     chip.setAttr(
       "title",
       this.opts.mode === "edit" ? "変えると、その人のノートへブロックごと移ります。" : "自分以外を選ぶと、その人の予定として登録します。"
     );
     const dot = chip.createSpan("dt-owner-dot");
-    const text = chip.createSpan("dt-m-chip-text");
+    const text = chip.createSpan("dt-m-owner-text");
     const paint = () => {
       const o = owners.find((x) => (x.id ?? null) === (this.owner ?? null));
       dot.style.background = o?.color || "transparent";
       dot.toggleClass("is-self", !o?.color);
-      text.setText(o?.name ?? "自分");
+      text.setText((o?.name ?? "自分") + " の予定");
       chip.toggleClass("is-set", !!this.owner);
     };
     paint();
@@ -1303,7 +1313,8 @@ export class TaskModal extends Modal {
 
     const addRow = wrap.createDiv("dt-step-add");
     const plus = addRow.createSpan("dt-step-add-icon");
-    setIcon(plus, "plus");
+    // モバイルは TickTick と同じく空のチェック枠を並べる
+    setIcon(plus, Platform.isMobile ? iconName("square") : "plus");
     const addInput = addRow.createEl("input", { type: "text", attr: { placeholder: "ステップを追加…" } });
     this.stepAddInput = addInput;
     const commitAdd = () => {
