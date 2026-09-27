@@ -295,7 +295,11 @@ export class TaskModal extends Modal {
     let ownerHost: HTMLElement | null = null;
     if (mobile) {
       this.modalEl.addClass("dt-modal-mobile");
+      this.containerEl.addClass("dt-modal-container-mobile"); // 暗幕とカードの位置の指定用（:has に頼らない）
       this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
+      // Obsidian 本体が付ける大きな × は取り除く（⋮ の「閉じる」・外側のタップ・戻るボタンで閉じられる）。
+      // CSS の指定は本体側の詳細度に負けることがあるので、要素ごと消す
+      this.containerEl.querySelectorAll(".modal-close-button").forEach((el) => el.remove());
       const top = contentEl.createDiv("dt-m-top");
       chipsEl = top.createDiv("dt-m-top-left"); // プロジェクト名（TickTick のリスト名の位置）
       if (!this.opts.projects) {

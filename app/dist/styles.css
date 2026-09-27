@@ -2019,17 +2019,42 @@ body.is-mobile .modal-container:has(.dt-modal-mobile) .modal-close-button {
 .modal.dt-modal.dt-modal-mobile .modal-content > :not(:first-child) {
   border-top: none;
 }
-/* シート: 後ろの画面を濃く暗くし、シートは少し明るい面として浮かせる */
+/* カード: モーダルではなくトーストのように、画面の端から浮いた丸いカードとして出す。
+   後ろの画面は暗くし、カードはダークテーマではひと段階明るいグレーにして境目を分かりやすくする */
+body.is-mobile .dt-modal-container-mobile .modal-bg,
 body.is-mobile .modal-container:has(.dt-modal-mobile) .modal-bg {
   background-color: #000;
-  opacity: 0.7 !important;
+  opacity: 0.6 !important;
 }
 body.is-mobile .modal.dt-modal.dt-modal-mobile {
+  top: auto;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: 80vh;
+  max-height: 80dvh;
+  margin: 0;
+  border: none;
+  border-radius: 18px;
   background: var(--background-primary);
-  border-top: 1px solid var(--background-modifier-border-hover);
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
-  padding-left: 20px;
-  padding-right: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  padding: 0 20px;
+}
+body.theme-dark.is-mobile .modal.dt-modal.dt-modal-mobile {
+  background: var(--color-base-25, #2a2a2a);
+}
+body.theme-dark.is-mobile .modal.dt-modal.dt-modal-mobile .dt-m-top,
+body.theme-dark.is-mobile .modal.dt-modal.dt-modal-mobile .dt-m-toolbar {
+  background: var(--color-base-25, #2a2a2a);
+}
+/* カードの中で開く面（日時の欄・タグの選択・詳細）は、さらにひと段階明るく */
+body.theme-dark .dt-modal-mobile .dt-m-sched-body,
+body.theme-dark .dt-modal-mobile .dt-m-tag-panel,
+body.theme-dark .dt-modal-mobile .dt-m-field {
+  background: var(--color-base-35, #3f3f3f);
 }
 body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   padding: 0;
@@ -3838,18 +3863,26 @@ body.is-phone .dt-day-header-date.is-clickable {
 
 /* ---------- モバイルのポップアップ（ボトムシート） ----------
    Obsidian 本体のモバイルのモーダルは画面の上端近くまで伸びるので、
-   TickTick の詳細シートのように下から出して高さを画面の 78% までに留め、
+   トーストのように画面の端から浮いた丸いカードとして下に出し、高さを画面の 78% までに留めて
    上に元の画面が少し見えるようにする（このプラグインのダイアログだけ） */
 body.is-mobile .modal.dt-modal {
   top: auto;
-  bottom: 0;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  width: auto;
+  max-width: none;
   height: auto;
   max-height: 78vh;
   max-height: 78dvh;
-  border-radius: 16px 16px 0 0;
+  border-radius: 18px;
   display: flex;
   flex-direction: column;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+/* ダークテーマでは後ろの画面と区別がつくよう、ひと段階明るいグレーの面にする（選択シート・確認も同じ） */
+body.theme-dark.is-mobile .modal.dt-modal {
+  background: var(--color-base-25, #2a2a2a);
 }
 body.is-mobile .modal.dt-modal .modal-content {
   flex: 1 1 auto;
