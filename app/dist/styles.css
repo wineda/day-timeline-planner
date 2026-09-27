@@ -2001,33 +2001,58 @@
   min-width: 0;
 }
 
-/* ---------- モバイルの編集ダイアログ（TickTick の詳細シートと同じ構成） ----------
-   上部バー（プロジェクト名 ⌄ … 追加 / ⋮）→ 大きなチェック + 日時（アクセント色の文字）→ 大きなタイトル
-   → ステップのチェックリスト → メモ → タグの丸い札 → 使用頻度の低い欄 → アイコンだけのツールバー。
-   枠線は使わず、白い文字と余白で区切る（ダークテーマで枠線が背景に溶けるため）。
-   （.dt-modal-mobile は modal.ts が Platform.isMobile のときに付ける） */
-.dt-modal-mobile .dt-m-hidden-title {
+/* ---------- 編集ダイアログ（PC・モバイル共通。TickTick の詳細画面と同じ構成） ----------
+   上部バー（プロジェクト名 ⌄ … 追加 / ⋮ / PC は ×）→ 大きなチェック + 日時（アクセント色の文字）→ 実績/予定
+   → 大きなタイトル → 説明 → ステップのチェックリスト → 結果・ふりかえりなど → タグの丸い札 → アイコンだけのツールバー。
+   枠線は使わず、文字と余白で区切る（ダークテーマで枠線が背景に溶けるため）。
+   （.dt-modal-compact は modal.ts のタスクダイアログが常に付ける。.dt-modal-mobile はモバイルのときだけ） */
+.dt-modal-compact .dt-m-hidden-title {
   display: none;
+}
+/* PC: 幅 560px のカード。内容ぶんの高さで、長ければ中がスクロールする */
+body:not(.is-mobile) .modal.dt-modal.dt-modal-compact {
+  width: 560px;
+  max-width: 92vw;
+  max-height: 88vh;
+  padding: 16px 22px 12px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+}
+body:not(.is-mobile) .modal.dt-modal.dt-modal-compact .modal-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-normal);
+}
+/* ダークテーマではカードをひと段階明るいグレーにして、後ろの画面と区別する（PC も同じ） */
+body.theme-dark .modal.dt-modal.dt-modal-compact,
+body.theme-dark .modal.dt-modal.dt-modal-compact .dt-m-top,
+body.theme-dark .modal.dt-modal.dt-modal-compact .dt-m-toolbar {
+  background: var(--color-base-25, #2a2a2a);
 }
 /* Obsidian 本体がモバイルのモーダルに付ける大きな × は出さない（⋮ の「閉じる」か外側のタップで閉じる）。
    モバイルではこのボタンが .modal の外（.modal-container 直下）に置かれることがあるので両方に効かせる */
-.dt-modal-mobile .modal-close-button,
+.dt-modal-compact .modal-close-button,
 .dt-modal-container-mobile .modal-close-button,
-body.is-mobile .modal-container:has(.dt-modal-mobile) .modal-close-button {
+body.is-mobile .modal-container:has(.dt-modal-compact) .modal-close-button {
   display: none !important;
 }
 /* 入れ物ごとの区切り線は出さない（デスクトップの設定行の区切りは使わない） */
-.modal.dt-modal.dt-modal-mobile .modal-content > :not(:first-child) {
+.modal.dt-modal.dt-modal-compact .modal-content > :not(:first-child) {
   border-top: none;
 }
 /* カード: モーダルではなくトーストのように、画面の端から浮いた丸いカードとして出す。
    後ろの画面は暗くし、カードはダークテーマではひと段階明るいグレーにして境目を分かりやすくする */
 body.is-mobile .dt-modal-container-mobile .modal-bg,
-body.is-mobile .modal-container:has(.dt-modal-mobile) .modal-bg {
+body.is-mobile .modal-container:has(.dt-modal-compact) .modal-bg {
   background-color: #000;
   opacity: 0.6 !important;
 }
-body.is-mobile .modal.dt-modal.dt-modal-mobile {
+body.is-mobile .modal.dt-modal.dt-modal-compact {
   top: auto;
   left: 8px;
   right: 8px;
@@ -2044,19 +2069,12 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
   padding: 0 20px;
 }
-body.theme-dark.is-mobile .modal.dt-modal.dt-modal-mobile {
-  background: var(--color-base-25, #2a2a2a);
-}
-body.theme-dark.is-mobile .modal.dt-modal.dt-modal-mobile .dt-m-top,
-body.theme-dark.is-mobile .modal.dt-modal.dt-modal-mobile .dt-m-toolbar {
-  background: var(--color-base-25, #2a2a2a);
-}
 /* カードの中で開く面（日時の欄・タグの選択・詳細）は、さらにひと段階明るく */
-body.theme-dark .dt-modal-mobile .dt-m-sched-body,
-body.theme-dark .dt-modal-mobile .dt-m-tag-panel {
+body.theme-dark .dt-modal-compact .dt-m-sched-body,
+body.theme-dark .dt-modal-compact .dt-m-tag-panel {
   background: var(--color-base-35, #3f3f3f);
 }
-body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
+body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -2064,7 +2082,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 
 /* 上部バー: 左にプロジェクト名（リスト名の位置）、右に 追加 / ⋮ */
-.dt-modal-mobile .dt-m-top {
+.dt-modal-compact .dt-m-top {
   position: sticky;
   top: 0;
   z-index: 2;
@@ -2075,18 +2093,18 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   margin: 0 !important;
   background: var(--background-primary);
 }
-.dt-modal-mobile .dt-m-top-left {
+.dt-modal-compact .dt-m-top-left {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
 }
-.dt-modal-mobile .dt-m-top-title {
+.dt-modal-compact .dt-m-top-title {
   font-size: var(--font-ui-medium);
   font-weight: 700;
   color: var(--text-normal);
 }
-.dt-modal-mobile button.dt-m-project-btn {
+.dt-modal-compact button.dt-m-project-btn {
   min-height: 0;
   max-width: 100%;
   height: 32px;
@@ -2101,33 +2119,47 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-weight: 700;
   color: var(--text-normal);
 }
-.dt-modal-mobile button.dt-m-project-btn:not(.is-set) {
+.dt-modal-compact button.dt-m-project-btn:not(.is-set) {
   color: var(--text-muted);
   font-weight: 600;
 }
-.dt-modal-mobile .dt-m-project-text {
+.dt-modal-compact .dt-m-project-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dt-modal-mobile .dt-m-project-chevron {
+.dt-modal-compact .dt-m-project-chevron {
   display: flex;
   align-items: center;
   color: var(--text-normal);
   flex: 0 0 auto;
 }
-.dt-modal-mobile .dt-m-project-chevron svg {
+.dt-modal-compact .dt-m-project-chevron svg {
   width: 14px;
   height: 14px;
 }
-.dt-modal-mobile .dt-m-top-right {
+/* PC: 保存の状態を上部バーの中央に */
+.dt-modal-compact .dt-m-top-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-modal-compact .dt-m-top-status.dt-autosave-error {
+  color: var(--text-error);
+}
+.dt-modal-compact .dt-m-top-right {
   display: flex;
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
 }
-.dt-modal-mobile button.dt-m-top-btn {
+.dt-modal-compact button.dt-m-top-btn {
   min-height: 0;
   height: 36px;
   min-width: 36px;
@@ -2140,11 +2172,11 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   align-items: center;
   justify-content: center;
 }
-.dt-modal-mobile button.dt-m-top-btn svg {
+.dt-modal-compact button.dt-m-top-btn svg {
   width: 20px;
   height: 20px;
 }
-.dt-modal-mobile button.dt-m-top-cta {
+.dt-modal-compact button.dt-m-top-cta {
   min-height: 0;
   height: 30px;
   padding: 0 14px;
@@ -2154,14 +2186,14 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 
 /* 大きなチェック + 日時（アクセント色の文字。タップで欄を開閉） */
-.dt-modal-mobile .dt-m-date-row {
+.dt-modal-compact .dt-m-date-row {
   display: flex;
   align-items: flex-start;
   gap: 14px;
   padding: 4px 0 8px;
   margin: 0 !important;
 }
-.dt-modal-mobile button.dt-m-done {
+.dt-modal-compact button.dt-m-done {
   flex: 0 0 auto;
   width: 22px;
   height: 22px;
@@ -2177,23 +2209,23 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   justify-content: center;
   color: transparent; /* 未完了はチェックを見せない */
 }
-.dt-modal-mobile button.dt-m-done svg {
+.dt-modal-compact button.dt-m-done svg {
   width: 14px;
   height: 14px;
 }
-.dt-modal-mobile button.dt-m-done.is-done {
+.dt-modal-compact button.dt-m-done.is-done {
   background: var(--interactive-accent);
   border-color: var(--interactive-accent);
   color: var(--text-on-accent);
 }
-.dt-modal-mobile .dt-m-date-col {
+.dt-modal-compact .dt-m-date-col {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.dt-modal-mobile button.dt-m-date-btn {
+.dt-modal-compact button.dt-m-date-btn {
   min-height: 0;
   height: auto;
   padding: 4px 0;
@@ -2205,16 +2237,16 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-size: var(--font-ui-small);
   color: var(--text-accent);
 }
-.dt-modal-mobile button.dt-m-date-btn:not(.is-set) {
+.dt-modal-compact button.dt-m-date-btn:not(.is-set) {
   color: var(--text-muted);
 }
-.dt-modal-mobile button.dt-m-date-btn.is-error {
+.dt-modal-compact button.dt-m-date-btn.is-error {
   color: var(--text-error);
 }
-.dt-modal-mobile .dt-m-date-sub:empty {
+.dt-modal-compact .dt-m-date-sub:empty {
   display: none;
 }
-.dt-modal-mobile button.dt-m-owner-btn {
+.dt-modal-compact button.dt-m-owner-btn {
   min-height: 0;
   height: auto;
   padding: 0;
@@ -2227,13 +2259,13 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
-.dt-modal-mobile button.dt-m-owner-btn .dt-owner-dot {
+.dt-modal-compact button.dt-m-owner-btn .dt-owner-dot {
   width: 10px;
   height: 10px;
   margin: 0;
 }
 /* ステップの進捗（日時の行の右端） */
-.dt-modal-mobile .dt-m-progress {
+.dt-modal-compact .dt-m-progress {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2242,20 +2274,20 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-size: var(--font-ui-smaller);
   color: var(--text-normal);
 }
-.dt-modal-mobile .dt-m-progress.is-hidden {
+.dt-modal-compact .dt-m-progress.is-hidden {
   display: none;
 }
-.dt-modal-mobile .dt-m-progress-icon {
+.dt-modal-compact .dt-m-progress-icon {
   display: flex;
   align-items: center;
   color: var(--text-muted);
 }
-.dt-modal-mobile .dt-m-progress-icon svg {
+.dt-modal-compact .dt-m-progress-icon svg {
   width: 16px;
   height: 16px;
 }
 /* 実績 / 予定 の行（TickTick の 0m / 15m と同じ。タップで実績の入力へ） */
-.dt-modal-mobile button.dt-m-duration {
+.dt-modal-compact button.dt-m-duration {
   min-height: 0;
   height: auto;
   width: 100%;
@@ -2271,45 +2303,45 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-size: var(--font-ui-small);
   color: var(--text-muted);
 }
-.dt-modal-mobile button.dt-m-duration.is-set {
+.dt-modal-compact button.dt-m-duration.is-set {
   color: var(--text-normal);
 }
-.dt-modal-mobile button.dt-m-duration.is-error {
+.dt-modal-compact button.dt-m-duration.is-error {
   color: var(--text-error);
 }
-.dt-modal-mobile .dt-m-duration-icon {
+.dt-modal-compact .dt-m-duration-icon {
   display: flex;
   align-items: center;
   color: var(--text-normal);
 }
-.dt-modal-mobile .dt-m-duration-icon svg {
+.dt-modal-compact .dt-m-duration-icon svg {
   width: 18px;
   height: 18px;
 }
 
 /* 日時の欄（開いたとき）とタグの選択: 少し明るい面にまとめる（枠線なし） */
-.dt-modal-mobile .dt-m-sched-body,
-.dt-modal-mobile .dt-m-tag-panel {
+.dt-modal-compact .dt-m-sched-body,
+.dt-modal-compact .dt-m-tag-panel {
   background: var(--background-secondary);
   border-radius: var(--radius-m);
   padding: 4px 12px;
   margin: 0 0 10px !important;
 }
-.dt-modal-mobile .dt-m-tag-panel {
+.dt-modal-compact .dt-m-tag-panel {
   padding: 10px 12px;
 }
-.dt-modal-mobile .dt-m-sched-body .setting-item-name {
+.dt-modal-compact .dt-m-sched-body .setting-item-name {
   color: var(--text-normal);
 }
 /* ワンタップの候補（今日・明日・30分・1時間 …） */
-.dt-modal-mobile .dt-m-quick {
+.dt-modal-compact .dt-m-quick {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   width: 100%;
   padding: 2px 0 6px;
 }
-.dt-modal-mobile button.dt-m-quick-btn {
+.dt-modal-compact button.dt-m-quick-btn {
   min-height: 0;
   height: 28px;
   padding: 0 12px;
@@ -2320,22 +2352,22 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   box-shadow: none;
   color: var(--text-normal);
 }
-.dt-modal-mobile button.dt-m-quick-btn:active {
+.dt-modal-compact button.dt-m-quick-btn:active {
   background: var(--background-modifier-active-hover);
 }
 
 /* 大きなタイトル（ラベルなし・枠なし） */
-.dt-modal-mobile .dt-m-title-row {
+.dt-modal-compact .dt-m-title-row {
   margin: 0 !important;
 }
-.dt-modal-mobile .dt-m-title-row .dt-title-setting {
+.dt-modal-compact .dt-m-title-row .dt-title-setting {
   border: none;
   padding: 2px 0 6px;
 }
-.dt-modal-mobile .dt-title-setting .setting-item-info {
+.dt-modal-compact .dt-title-setting .setting-item-info {
   display: none;
 }
-.dt-modal-mobile .dt-title-setting input.dt-title-input {
+.dt-modal-compact .dt-title-setting input.dt-title-input {
   font-size: 1.15em;
   font-weight: 700;
   color: var(--text-normal);
@@ -2345,34 +2377,34 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   padding-left: 0;
   padding-right: 0;
 }
-.dt-modal-mobile .modal-content.is-done input.dt-title-input {
+.dt-modal-compact .modal-content.is-done input.dt-title-input {
   color: var(--text-muted);
   text-decoration: line-through;
 }
 /* プレースホルダーはダークでも読める濃さに（既定の --text-faint は背景に溶ける） */
-.dt-modal-mobile input::placeholder,
-.dt-modal-mobile textarea::placeholder {
+.dt-modal-compact input::placeholder,
+.dt-modal-compact textarea::placeholder {
   color: var(--text-muted);
   opacity: 1;
 }
 
 /* ステップ: タイトル直下のチェックリスト（見出し・進捗バー・つまみは出さない） */
-.dt-modal-mobile .dt-m-steps {
+.dt-modal-compact .dt-m-steps {
   margin: 0 !important;
 }
-.dt-modal-mobile .dt-m-steps .dt-steps {
+.dt-modal-compact .dt-m-steps .dt-steps {
   margin: 0;
 }
-.dt-modal-mobile .dt-m-steps .dt-steps-head,
-.dt-modal-mobile .dt-m-steps .dt-steps-progress {
+.dt-modal-compact .dt-m-steps .dt-steps-head,
+.dt-modal-compact .dt-m-steps .dt-steps-progress {
   display: none;
 }
-.dt-modal-mobile .dt-m-steps .dt-steps-list {
+.dt-modal-compact .dt-m-steps .dt-steps-list {
   gap: 0;
 }
 /* 行は箱にせず、TickTick と同じく薄い区切り線だけ */
-.dt-modal-mobile .dt-m-steps .dt-step,
-.dt-modal-mobile .dt-m-steps .dt-step-add {
+.dt-modal-compact .dt-m-steps .dt-step,
+.dt-modal-compact .dt-m-steps .dt-step-add {
   min-height: 38px;
   padding: 2px 0;
   margin: 0;
@@ -2382,16 +2414,16 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   border-bottom: 1px solid var(--background-modifier-border);
   border-radius: 0;
 }
-.dt-modal-mobile .dt-m-steps .dt-step.is-dragging {
+.dt-modal-compact .dt-m-steps .dt-step.is-dragging {
   opacity: 0.5;
   background: var(--background-modifier-hover);
 }
-.dt-modal-mobile .dt-m-steps .dt-step-placeholder {
+.dt-modal-compact .dt-m-steps .dt-step-placeholder {
   border: 1.5px dashed var(--interactive-accent);
   border-radius: var(--radius-s);
 }
 /* 並べ替えのつまみは右端（TickTick の ≡ の位置）。× はその行を触っているときだけ */
-.dt-modal-mobile .dt-m-steps .dt-step-grip {
+.dt-modal-compact .dt-m-steps .dt-step-grip {
   order: 3;
   width: 32px;
   height: 32px;
@@ -2401,15 +2433,15 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   color: var(--text-muted);
   touch-action: none;
 }
-.dt-modal-mobile .dt-m-steps .dt-step-grip svg {
+.dt-modal-compact .dt-m-steps .dt-step-grip svg {
   width: 18px;
   height: 18px;
 }
-.dt-modal-mobile .dt-m-steps .dt-step-delete {
+.dt-modal-compact .dt-m-steps .dt-step-delete {
   order: 2;
 }
-.dt-modal-mobile .dt-m-steps .dt-step-check,
-.dt-modal-mobile .dt-m-steps .dt-step-add-icon {
+.dt-modal-compact .dt-m-steps .dt-step-check,
+.dt-modal-compact .dt-m-steps .dt-step-add-icon {
   width: 24px;
   height: 24px;
   display: flex;
@@ -2417,17 +2449,17 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   justify-content: center;
   color: var(--text-muted);
 }
-.dt-modal-mobile .dt-m-steps .dt-step-check svg,
-.dt-modal-mobile .dt-m-steps .dt-step-add-icon svg {
+.dt-modal-compact .dt-m-steps .dt-step-check svg,
+.dt-modal-compact .dt-m-steps .dt-step-add-icon svg {
   width: 18px;
   height: 18px;
 }
 /* 完了したステップは TickTick と同じく灰色に */
-.dt-modal-mobile .dt-m-steps .dt-step.is-done .dt-step-check {
+.dt-modal-compact .dt-m-steps .dt-step.is-done .dt-step-check {
   color: var(--text-faint);
 }
-.dt-modal-mobile .dt-m-steps .dt-step-text,
-.dt-modal-mobile .dt-m-steps .dt-step-add input {
+.dt-modal-compact .dt-m-steps .dt-step-text,
+.dt-modal-compact .dt-m-steps .dt-step-add input {
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   background: transparent !important;
@@ -2435,10 +2467,10 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   box-shadow: none !important;
   padding-left: 0;
 }
-.dt-modal-mobile .dt-m-steps .dt-step.is-done .dt-step-text {
+.dt-modal-compact .dt-m-steps .dt-step.is-done .dt-step-text {
   color: var(--text-muted);
 }
-.dt-modal-mobile .dt-m-steps .dt-step-delete {
+.dt-modal-compact .dt-m-steps .dt-step-delete {
   opacity: 0;
   width: 28px;
   height: 28px;
@@ -2447,22 +2479,22 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   justify-content: center;
   color: var(--text-muted);
 }
-.dt-modal-mobile .dt-m-steps .dt-step:focus-within .dt-step-delete {
+.dt-modal-compact .dt-m-steps .dt-step:focus-within .dt-step-delete {
   opacity: 1;
 }
 
 /* メモ: ラベル無し・枠なしの本文 */
-.dt-modal-mobile .dt-m-memo {
+.dt-modal-compact .dt-m-memo {
   margin: 0 !important;
 }
-.dt-modal-mobile .dt-m-memo .setting-item {
+.dt-modal-compact .dt-m-memo .setting-item {
   border: none;
   padding: 2px 0 6px;
 }
-.dt-modal-mobile .dt-m-memo .setting-item-info {
+.dt-modal-compact .dt-m-memo .setting-item-info {
   display: none;
 }
-.dt-modal-mobile .dt-m-memo .dt-details-field {
+.dt-modal-compact .dt-m-memo .dt-details-field {
   background: transparent;
   border-color: transparent;
   padding-left: 0;
@@ -2471,19 +2503,19 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   font-size: var(--font-ui-small);
   color: var(--text-normal);
 }
-.dt-modal-mobile .dt-m-memo .dt-details-field.is-active {
+.dt-modal-compact .dt-m-memo .dt-details-field.is-active {
   border-color: transparent;
 }
 
 /* タグの丸い札（選んでいるときだけ。TickTick の灰色の札と同じ） */
-.dt-modal-mobile .dt-m-tag-row {
+.dt-modal-compact .dt-m-tag-row {
   margin: 0 !important;
   padding: 2px 0 8px;
 }
-.dt-modal-mobile .dt-m-tag-row:has(.is-hidden) {
+.dt-modal-compact .dt-m-tag-row:has(.is-hidden) {
   padding: 0;
 }
-.dt-modal-mobile button.dt-m-tag-pill {
+.dt-modal-compact button.dt-m-tag-pill {
   min-height: 0;
   height: 26px;
   padding: 0 12px 0 10px;
@@ -2497,23 +2529,23 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   color: var(--text-normal);
   background: var(--background-modifier-hover);
 }
-.dt-modal-mobile .dt-m-tag-dot {
+.dt-modal-compact .dt-m-tag-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex: 0 0 auto;
 }
-.dt-modal-mobile button.dt-m-tag-pill.is-hidden {
+.dt-modal-compact button.dt-m-tag-pill.is-hidden {
   display: none;
 }
 
 /* 使用頻度の低い欄（ツールバーのアイコンで開く）: 本文の流れの中に、枠なしで置く。
    複数行（結果・ふりかえり）は「小さな見出し + 右に薄いヒント」の下に本文、
    1 行（チケット・リマインド）は見出しと入力を 1 行に並べる。行の間は薄い区切り線だけ */
-.dt-modal-mobile .dt-m-extra {
+.dt-modal-compact .dt-m-extra {
   margin: 0 !important;
 }
-.dt-modal-mobile .dt-m-field {
+.dt-modal-compact .dt-m-field {
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--background-modifier-border);
@@ -2521,25 +2553,25 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   padding: 6px 0 4px;
   margin: 0;
 }
-.dt-modal-mobile .dt-m-field .setting-item {
+.dt-modal-compact .dt-m-field .setting-item {
   border: none;
   padding: 0;
   margin: 0;
 }
-.dt-modal-mobile .dt-m-field-head {
+.dt-modal-compact .dt-m-field-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
   padding: 2px 0;
 }
-.dt-modal-mobile .dt-m-field-label {
+.dt-modal-compact .dt-m-field-label {
   flex: 0 0 auto;
   font-size: var(--font-ui-smaller);
   font-weight: 600;
   color: var(--text-muted);
 }
-.dt-modal-mobile .dt-m-field-hint {
+.dt-modal-compact .dt-m-field-hint {
   flex: 1 1 auto;
   min-width: 0;
   font-size: var(--font-ui-smaller);
@@ -2548,18 +2580,18 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dt-modal-mobile .dt-m-field-hint.is-hidden {
+.dt-modal-compact .dt-m-field-hint.is-hidden {
   display: none;
 }
 /* 複数行の欄: 見出しは自前の行に出すので、設定行のラベルは隠す。本文は枠なし・内容ぶんの高さ */
-.dt-modal-mobile .dt-m-field:not(.is-inline) .setting-item-info {
+.dt-modal-compact .dt-m-field:not(.is-inline) .setting-item-info {
   display: none;
 }
-.dt-modal-mobile .dt-m-field:not(.is-inline) .setting-item-control {
+.dt-modal-compact .dt-m-field:not(.is-inline) .setting-item-control {
   width: 100%;
 }
-.dt-modal-mobile .dt-m-field .dt-retro-field,
-.dt-modal-mobile .dt-m-field .dt-retro-field.is-active {
+.dt-modal-compact .dt-m-field .dt-retro-field,
+.dt-modal-compact .dt-m-field .dt-retro-field.is-active {
   background: transparent;
   border: none;
   box-shadow: none;
@@ -2572,33 +2604,33 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   transition: none;
 }
 /* 1 行の欄: 見出し（左）と入力（右）を 1 行に */
-.dt-modal-mobile .dt-m-field.is-inline .setting-item {
+.dt-modal-compact .dt-m-field.is-inline .setting-item {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 10px;
   min-height: 36px;
 }
-.dt-modal-mobile .dt-m-field.is-inline .setting-item-info {
+.dt-modal-compact .dt-m-field.is-inline .setting-item-info {
   display: block;
   flex: 0 0 auto;
 }
-.dt-modal-mobile .dt-m-field.is-inline .setting-item-name {
+.dt-modal-compact .dt-m-field.is-inline .setting-item-name {
   font-size: var(--font-ui-smaller);
   font-weight: 600;
   color: var(--text-muted);
 }
-.dt-modal-mobile .dt-m-field.is-inline .setting-item-description {
+.dt-modal-compact .dt-m-field.is-inline .setting-item-description {
   font-size: var(--font-ui-smaller);
 }
-.dt-modal-mobile .dt-m-field.is-inline .setting-item-control {
+.dt-modal-compact .dt-m-field.is-inline .setting-item-control {
   flex: 1 1 auto;
   min-width: 0;
   justify-content: flex-end;
   gap: 6px;
 }
-.dt-modal-mobile .dt-m-field.is-inline .setting-item-control input,
-.dt-modal-mobile .dt-m-field.is-inline .setting-item-control select {
+.dt-modal-compact .dt-m-field.is-inline .setting-item-control input,
+.dt-modal-compact .dt-m-field.is-inline .setting-item-control select {
   width: auto;
   min-width: 0;
   flex: 1 1 0;
@@ -2608,14 +2640,20 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   box-shadow: none;
 }
 /* 欄の中の入力・文字も一段小さく */
-.dt-modal-mobile .dt-m-sched-body input,
-.dt-modal-mobile .dt-m-sched-body .setting-item-name,
-.dt-modal-mobile .dt-m-sched-body .setting-item-description {
+.dt-modal-compact .dt-m-sched-body .setting-item {
+  border: none;
+}
+.dt-modal-compact .dt-m-sched-body .setting-item-control {
+  flex-wrap: wrap;
+}
+.dt-modal-compact .dt-m-sched-body input,
+.dt-modal-compact .dt-m-sched-body .setting-item-name,
+.dt-modal-compact .dt-m-sched-body .setting-item-description {
   font-size: var(--font-ui-small);
 }
 
 /* 下部ツールバー: アイコンだけを左に並べる（TickTick と同じ）。右端に保存の状態 */
-.dt-modal-mobile .dt-m-toolbar {
+.dt-modal-compact .dt-m-toolbar {
   position: sticky;
   bottom: 0;
   z-index: 2;
@@ -2626,10 +2664,10 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   padding: 8px 0 4px;
   background: var(--background-primary);
 }
-.dt-modal-mobile .dt-m-toolbar:empty {
+.dt-modal-compact .dt-m-toolbar:empty {
   display: none;
 }
-.dt-modal-mobile button.dt-m-tool {
+.dt-modal-compact button.dt-m-tool {
   min-height: 0;
   width: 44px;
   height: 40px;
@@ -2643,29 +2681,36 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   justify-content: center;
   border-radius: var(--radius-s);
 }
-.dt-modal-mobile button.dt-m-tool svg {
+.dt-modal-compact button.dt-m-tool svg {
   width: 21px;
   height: 21px;
 }
-.dt-modal-mobile button.dt-m-tool.is-set {
+.dt-modal-compact button.dt-m-tool.is-set {
   color: var(--text-accent);
 }
-.dt-modal-mobile button.dt-m-tool.is-open {
+.dt-modal-compact button.dt-m-tool.is-open {
   background: var(--background-modifier-hover);
 }
-/* 保存の状態は失敗したときだけ出す（TickTick には無い） */
-.dt-modal-mobile .dt-m-status {
+/* PC: キーの案内（ツールバーの右端） */
+.dt-modal-compact .dt-m-keyhint {
+  margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+/* モバイル: 保存の状態は失敗したときだけ出す（TickTick には無い） */
+.dt-modal-compact .dt-m-status {
   display: none;
   margin-left: auto;
   font-size: 10px;
   white-space: nowrap;
 }
-.dt-modal-mobile .dt-m-status.dt-autosave-error {
+.dt-modal-compact .dt-m-status.dt-autosave-error {
   display: block;
   color: var(--text-error);
 }
 /* 行間は少し詰める */
-.dt-modal-mobile .setting-item {
+.dt-modal-compact .setting-item {
   padding: 6px 0;
 }
 

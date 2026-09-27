@@ -1,5 +1,4 @@
 import {
-  AbstractInputSuggest,
   App,
   Menu,
   Modal,
@@ -8,7 +7,6 @@ import {
   Setting,
   moment,
   prepareSimpleSearch,
-  renderMatches,
   setIcon,
   type SearchMatches,
 } from "obsidian";
@@ -88,50 +86,12 @@ type ProjectChoice =
   | { kind: "none" }
   | { kind: "create"; name: string };
 
-/** 「プロジェクト」欄の候補ポップアップ（入力に合わせて絞り込む） */
-class ProjectSuggest extends AbstractInputSuggest<ProjectChoice> {
-  constructor(
-    app: App,
-    inputEl: HTMLInputElement,
-    private source: (query: string) => ProjectChoice[],
-    private onChoose: (c: ProjectChoice) => void
-  ) {
-    super(app, inputEl);
-    this.limit = 0; // 多くても全部出す（絞り込みで減らす前提）
-  }
-
-  protected getSuggestions(query: string): ProjectChoice[] {
-    return this.source(query);
-  }
-
-  renderSuggestion(c: ProjectChoice, el: HTMLElement): void {
-    el.addClass("dt-project-suggestion");
-    if (c.kind === "project") {
-      const name = el.createSpan("dt-project-suggestion-name");
-      renderMatches(name, c.label, c.matches);
-      if (c.current) {
-        el.addClass("is-current");
-        setIcon(el.createSpan("dt-project-suggestion-check"), "check");
-      }
-    } else if (c.kind === "none") {
-      el.addClass("is-none");
-      el.setText("なし（プロジェクトから外す）");
-    } else {
-      el.addClass("is-create");
-      el.setText(`＋ 新規作成「${c.name}」`);
-    }
-  }
-
-  selectSuggestion(c: ProjectChoice): void {
-    this.close();
-    this.onChoose(c);
-  }
-}
-
 /**
- * タスクを追加・編集するダイアログ。
+ * タスクを追加・編集するダイアログ（PC・モバイル共通のコンパクトな構成。TickTick の詳細画面と同じ並び）。
+ * 上部バー（プロジェクト名 ⌄ / 追加・⋮）→ 大きなチェック + 日時 → 実績/予定 → タイトル → 説明 → ステップ
+ * → 結果・ふりかえりなど（下のツールバーで開く）→ タグ → ツールバー。
  * 欄はタイトル・日時・実績・プロジェクト・誰の予定か・タグ・ステップ・備考と、
- * 畳んである「詳細」（チケット・リマインド・結果・ふりかえり）だけ。
+ * ツールバーで開く「詳細」（チケット・リマインド・結果・ふりかえり）だけ。
  * ノートにある他のフィールド（原因・判断・残・他者・回答・状態・Owner・期限・完了条件・次アクション）は
  * ここでは触らず、保存してもそのまま残る（手書きか AI が書く欄）
  */
@@ -280,24 +240,27 @@ export class TaskModal extends Modal {
     // → （タグの選択）→ 使用頻度の低い欄（下のツールバーで開く）→ アイコンだけのツールバー。
     // 枠線は使わず、白い文字と余白で区切る（ダークテーマで枠線が背景に溶けるため）。
     // 表示順 = DOM の順なので、入れ物を先に作っておき、各欄はその中へ作る
-    let schedBody: HTMLElement | null = null;
-    let chipsEl: HTMLElement | null = null;
-    let tagPanel: HTMLElement | null = null;
-    let tagRow: HTMLElement | null = null;
-    let titleHost: HTMLElement = contentEl;
-    let stepsHost: HTMLElement = contentEl;
-    let memoHost: HTMLElement = contentEl;
-    let extraHost: HTMLElement | null = null;
-    let toolbar: HTMLElement | null = null;
+    let schedBody!: HTMLElement;
+    let chipsEl!: HTMLElement;
+    let tagPanel!: HTMLElement;
+    let tagRow!: HTMLElement;
+    let titleHost!: HTMLElement;
+    let stepsHost!: HTMLElement;
+    let memoHost!: HTMLElement;
+    let extraHost!: HTMLElement;
+    let toolbar!: HTMLElement;
     /** 下部ツールバーのアイコン（欄のキー → ボタン）。値の有無で色を変える */
     const toolIcons = new Map<string, HTMLElement>();
-    /** モバイル: 「誰の予定か」の行の親（日時の下） */
-    let ownerHost: HTMLElement | null = null;
-    if (mobile) {
-      this.modalEl.addClass("dt-modal-mobile");
-      this.containerEl.addClass("dt-modal-container-mobile"); // 暗幕とカードの位置の指定用（:has に頼らない）
+    /** 「誰の予定か」の行の親（日時の下） */
+    let ownerHost!: HTMLElement;
+    {
+      this.modalEl.addClass("dt-modal-compact");
+      if (mobile) {
+        this.modalEl.addClass("dt-modal-mobile");
+        this.containerEl.addClass("dt-modal-container-mobile"); // 暗幕とカードの位置の指定用（:has に頼らない）
+      }
       this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
-      // Obsidian 本体が付ける大きな × は取り除く（⋮ の「閉じる」・外側のタップ・戻るボタンで閉じられる）。
+      // Obsidian 本体が付ける × は取り除く（PC は上部バーの ×、モバイルは ⋮ の「閉じる」・外側のタップ・戻るボタンで閉じる）。
       // クラス名は本体の版で変わるので、モーダル直下の「内容・見出し以外」の要素を消す。
       // open() の後で足される場合に備えて、描画後にもう一度行う
       const dropCloseButton = () => {
@@ -315,6 +278,8 @@ export class TaskModal extends Modal {
       if (!this.opts.projects) {
         chipsEl.createSpan({ cls: "dt-m-top-title", text: this.opts.mode === "create" ? "タスクを追加" : "タスク" });
       }
+      // PC は保存の状態を上部バーの中央に常時出す（モバイルはツールバーの右端に、失敗したときだけ）
+      if (!mobile && this.autosaveOn) this.autosaveStatusEl = top.createDiv("dt-m-top-status");
       const right = top.createDiv("dt-m-top-right");
       if (this.opts.mode === "create" || !this.autosaveOn) {
         const cta = right.createEl("button", {
@@ -324,7 +289,7 @@ export class TaskModal extends Modal {
         });
         cta.onclick = () => void this.submit();
       }
-      // ⋮ メニュー: ノートで開く・削除・閉じる（× は置かず、TickTick と同じく外側のタップでも閉じる）
+      // ⋮ メニュー: ノートで開く・削除・閉じる（モバイルは × を置かず、TickTick と同じく外側のタップでも閉じる）
       const more = right.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "その他" } });
       setIcon(more, iconName("more-vertical"));
       more.onclick = (e) => {
@@ -362,6 +327,12 @@ export class TaskModal extends Modal {
         );
         menu.showAtMouseEvent(e);
       };
+      if (!mobile) {
+        // PC は戻るボタンが無いので、小さな × を右上に置く（Esc でも閉じる）
+        const closeBtn = right.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "閉じる" } });
+        setIcon(closeBtn, "x");
+        closeBtn.onclick = () => this.close();
+      }
 
       // 大きなチェック + 日時の行
       const dateRow = contentEl.createDiv("dt-m-date-row");
@@ -464,12 +435,12 @@ export class TaskModal extends Modal {
         };
       }
     }
-    /** 日付・時間・実績の欄の親（モバイルでは折りたたみ領域の中に入れる） */
-    const schedParent = schedBody ?? contentEl;
-    /** モバイル: ツールバーのアイコンの「値あり」の色を更新する */
+    /** 日付・時間・実績の欄の親（日時の行のタップで開く折りたたみ領域） */
+    const schedParent = schedBody;
+    /** ツールバーのアイコンの「値あり」の色を更新する */
     const paintTool = (key: string, set: boolean) => toolIcons.get(key)?.toggleClass("is-set", set);
 
-    // ---- タイトル（編集時は「完了」も同じ行に。モバイルの完了は日時の行の大きなチェック）----
+    // ---- タイトル（完了は日時の行の大きなチェック）----
     const titleSetting = new Setting(titleHost).setName("タイトル");
     titleSetting.settingEl.addClass("dt-title-setting");
     titleSetting.addText((t) => {
@@ -486,16 +457,6 @@ export class TaskModal extends Modal {
         }, 0);
       }
     });
-    if (this.opts.mode === "edit" && !mobile) {
-      const doneWrap = titleSetting.controlEl.createDiv("dt-done-inline");
-      doneWrap.createSpan({ cls: "dt-done-inline-label", text: "完了" });
-      tip(doneWrap, "チェックすると完了（[x]）として保存されます。");
-      titleSetting.addToggle((tg) => {
-        tg.setValue(this.done).onChange((v) => (this.done = v));
-        doneWrap.appendChild(tg.toggleEl);
-      });
-    }
-
     // ---- 日付（dateField を渡したときだけ。変えると別の日のノートへ移る）----
     if (this.opts.dateField) {
       const df = this.opts.dateField;
@@ -529,7 +490,7 @@ export class TaskModal extends Modal {
       dateInput.addEventListener("input", onDateInput);
       dateInput.addEventListener("change", onDateInput);
       dateInput.addEventListener("keydown", onKey);
-      if (mobile) {
+      {
         // 「今日」「明日」（日付未定にできるなら「未定」も）のワンタップ
         const quick = dateSetting.settingEl.createDiv("dt-m-quick");
         const setDate = (v: string) => {
@@ -617,8 +578,8 @@ export class TaskModal extends Modal {
     }
     this.hintEl = timeSetting.descEl;
     this.updateHint();
-    if (mobile) {
-      // 所要時間のワンタップ（開始が空なら「いま」を刻みに丸めた時刻から）。OS のピッカーを 2 回開かずに済む
+    {
+      // 所要時間のワンタップ（開始が空なら「いま」を刻みに丸めた時刻から）。ピッカーを 2 回開かずに済む
       const quick = timeSetting.settingEl.createDiv("dt-m-quick");
       const setDuration = (min: number) => {
         let start = parseTimeInput(this.startText);
@@ -684,42 +645,13 @@ export class TaskModal extends Modal {
       this.updateActualDesc();
     }
 
-    // ---- プロジェクト・誰の予定か（1行ずつ。横に並べるとラベル列が潰れる。モバイルはチップ）----
-    if (this.opts.projects) {
-      if (chipsEl) this.buildProjectChip(chipsEl);
-      else this.buildProjectSection(contentEl);
-    }
-    if (this.opts.owners?.length && ownerHost) {
-      this.buildOwnerChip(ownerHost, this.opts.owners);
-    } else if (this.opts.owners?.length) {
-      const owners = this.opts.owners;
-      const ownerSetting = new Setting(contentEl).setName("誰の予定か");
-      ownerSetting.settingEl.addClass("dt-owner-setting");
-      tip(
-        ownerSetting.settingEl,
-        this.opts.mode === "edit"
-          ? "変えると、その人のノートへブロックごと移ります。"
-          : "自分以外を選ぶと、その人の予定として登録します。"
-      );
-      const dot = ownerSetting.controlEl.createSpan("dt-owner-dot");
-      const paintDot = () => {
-        const o = owners.find((x) => (x.id ?? null) === (this.owner ?? null));
-        dot.style.background = o?.color || "transparent";
-        dot.toggleClass("is-self", !o?.color);
-      };
-      ownerSetting.addDropdown((d) => {
-        for (const o of owners) d.addOption(o.id ?? "", o.name);
-        d.setValue(this.owner ?? "").onChange((v) => {
-          this.owner = v || null;
-          paintDot();
-        });
-      });
-      paintDot();
-    }
+    // ---- プロジェクト（上部バー左の名前）・誰の予定か（日時の下の行）----
+    if (this.opts.projects) this.buildProjectChip(chipsEl);
+    if (this.opts.owners?.length) this.buildOwnerChip(ownerHost, this.opts.owners);
 
     // ---- タグ（親タグ → サブタグの2段。書き込むのは最も深い1つ）----
-    if (this.tagChoices.length && tagRow && tagPanel && toolbar) {
-      // モバイル: 選択中のタグを丸い札で出し、札かツールバーのタグアイコンのタップで選択を開閉
+    if (this.tagChoices.length) {
+      // 選択中のタグを丸い札で出し、札かツールバーのタグアイコンのクリックで選択を開閉
       const pill = tagRow.createEl("button", { cls: "dt-m-tag-pill", attr: { type: "button" } });
       tip(pill, "タップでタグの選択を開閉します。");
       const pillDot = pill.createSpan("dt-m-tag-dot");
@@ -751,14 +683,9 @@ export class TaskModal extends Modal {
         this.scheduleAutosave();
       });
       paintPill();
-    } else if (this.tagChoices.length) {
-      const tagSetting = new Setting(contentEl).setName("タグ");
-      tagSetting.settingEl.addClass("dt-tag-setting");
-      tip(tagSetting.settingEl, "選んだタグは見出しの末尾に #タグ として書き込まれます（サブタグを選んだときはサブタグだけ）。");
-      renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags, () => this.scheduleAutosave());
     }
 
-    // ---- ステップ（チェックリスト。モバイルはタイトルの直下）----
+    // ---- ステップ（チェックリスト。説明の直下）----
     this.buildStepsSection(stepsHost);
 
     // ---- 備考（自由な本文）----
@@ -769,47 +696,17 @@ export class TaskModal extends Modal {
       detailSetting.controlEl,
       "dt-details-field",
       2,
-      mobile ? 480 : 320,
-      mobile ? "説明" : "自由なメモ（Markdown）",
+      480,
+      "説明",
       () => this.details,
       (v) => (this.details = v)
     );
 
-    // ---- 詳細（チケット・リマインド・結果・ふりかえり）。値が入っていなければ畳んでおく ----
-    // モバイルでは「詳細」の見出しは出さず、欄ごとに下のツールバーのアイコンで開閉する
-    const detailsWrap = extraHost ?? contentEl.createDiv("dt-details");
-    let detailsBody: HTMLElement;
-    let setDetailsOpen: (open: boolean) => void = () => {};
-    const detailsLabels: string[] = [];
-    let detailsSub: HTMLElement | null = null;
-    if (!extraHost) {
-      const detailsHead = detailsWrap.createEl("button", {
-        cls: "dt-details-toggle",
-        attr: { type: "button", "aria-expanded": "false" },
-      });
-      const detailsChevron = detailsHead.createSpan("dt-details-chevron");
-      detailsHead.createSpan({ text: "詳細" });
-      detailsSub = detailsHead.createSpan("dt-details-sub");
-      const body = detailsWrap.createDiv("dt-details-body");
-      detailsBody = body;
-      setDetailsOpen = (open: boolean) => {
-        body.toggleClass("dt-collapsed", !open);
-        detailsHead.setAttr("aria-expanded", String(open));
-        setIcon(detailsChevron, open ? "chevron-down" : "chevron-right");
-        // 隠れていた textarea は高さが 0 のままなので伸ばし直す
-        if (open) body.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => growTextarea(ta, 220));
-      };
-      detailsHead.onclick = () => setDetailsOpen(body.hasClass("dt-collapsed"));
-    } else {
-      detailsBody = extraHost;
-    }
+    // ---- 詳細（チケット・リマインド・結果・ふりかえり）。欄ごとに下のツールバーのアイコンで開閉する ----
     /**
-     * 「詳細」の欄 1 つ分の親。モバイルでは欄ごとの入れ物（初めは畳む）を作り、
-     * ツールバーにアイコンを足す（タップで開閉。値があればアイコンに色が付く）
-     */
-    /**
-     * モバイルの欄の見た目: 複数行の欄（結果・ふりかえり）は小さな見出し + 右に薄いヒント（入力があれば消える）の下に
-     * 枠なしの本文。1 行の欄（チケット・リマインド）は見出しと入力を 1 行に並べる（inline）
+     * 詳細の欄の見た目: 複数行の欄（結果・ふりかえり）は小さな見出し + 右に薄いヒント（入力があれば消える）の下に
+     * 枠なしの本文。1 行の欄（チケット・リマインド）は見出しと入力を 1 行に並べる（inline）。
+     * 初めは畳んでおき、ツールバーのアイコンで開閉する（値があれば最初から開く）
      */
     const extraField = (
       key: string,
@@ -818,8 +715,6 @@ export class TaskModal extends Modal {
       hasValue: () => boolean,
       style: { inline?: boolean; hint?: string } = {}
     ): HTMLElement => {
-      detailsLabels.push(label);
-      if (!extraHost || !toolbar) return detailsBody;
       const host = extraHost.createDiv({ cls: ["dt-m-field", "dt-collapsed"], attr: { "data-field": key } });
       let hint: HTMLElement | null = null;
       if (style.inline) {
@@ -934,8 +829,8 @@ export class TaskModal extends Modal {
     ).setName("結果");
     tip(resSetting.settingEl, "何がどこまで終わったか。ノートには「- 結果: …」として保存され、日報の元データになります。改行は「 / 」区切りで1行になります。");
     resSetting.settingEl.addClass("dt-retro-setting");
-    // モバイルはヒントを見出しの右に出すので、本文のプレースホルダーは空にする
-    textarea(resSetting.controlEl, "", 1, 220, mobile ? "" : RESULT_HINT, () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
+    // ヒントは見出しの右に出すので、本文のプレースホルダーは空にする
+    textarea(resSetting.controlEl, "", 1, 220, "", () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
 
     const RETRO_HINT = "作業してみてどうだったか・次はどう改善するか";
     if (this.opts.mode === "edit") {
@@ -944,56 +839,17 @@ export class TaskModal extends Modal {
       ).setName("ふりかえり");
       tip(retroSetting.settingEl, "作業してみてどうだったか・次はどう改善するか。ノートには「- ふりかえり: …」として保存されます。");
       retroSetting.settingEl.addClass("dt-retro-setting");
-      textarea(retroSetting.controlEl, "", 1, 220, mobile ? "" : RETRO_HINT, () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
+      textarea(retroSetting.controlEl, "", 1, 220, "", () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
     }
-    detailsSub?.setText(detailsLabels.join("・"));
-    setDetailsOpen(
-      this.ticketId.trim() !== "" || this.result.trim() !== "" || this.retrospective.trim() !== "" || this.reminder !== null
-    );
-
-    if (!mobile) {
-      const buttons = new Setting(contentEl);
-      buttons.settingEl.addClass("dt-modal-buttons");
-      if (this.autosaveOn) this.autosaveStatusEl = buttons.descEl;
-      if (this.opts.mode === "edit" && this.opts.onDelete) {
-        const onDelete = this.opts.onDelete;
-        buttons.addButton((b) =>
-          b
-            .setButtonText("削除")
-            .setWarning()
-            .onClick(async () => {
-              this.close();
-              await onDelete();
-            })
-        );
-      }
-      if (this.opts.mode === "edit" && this.opts.onOpenNote) {
-        const onOpenNote = this.opts.onOpenNote;
-        buttons.addButton((b) =>
-          b
-            .setButtonText("ノートで開く")
-            .setTooltip("このタスクのブロックをノートで開く")
-            .onClick(async () => {
-              this.close();
-              await onOpenNote();
-            })
-        );
-      }
-      if (this.autosaveOn) {
-        // 自動保存なので「保存」ボタンは出さない（閉じるだけでよい）
-        buttons.addButton((b) => b.setButtonText("閉じる").setCta().onClick(() => void this.submit()));
-      } else {
-        buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
-        buttons.addButton((b) =>
-          b
-            .setButtonText(this.opts.mode === "create" ? "追加" : "保存")
-            .setCta()
-            .onClick(() => void this.submit())
-        );
-      }
-    } else if (toolbar) {
-      // 保存の状態はツールバーの右端に小さく（TickTick には無いが、失敗したときに気づけるように）
+    if (mobile) {
+      // 保存の状態はツールバーの右端に小さく（失敗したときだけ見える）
       if (this.autosaveOn) this.autosaveStatusEl = toolbar.createDiv("dt-m-status");
+    } else {
+      // PC はキーの案内をツールバーの右端に
+      toolbar.createDiv({
+        cls: "dt-m-keyhint",
+        text: this.opts.mode === "create" ? "Enter で追加 · Esc でキャンセル" : "Esc で閉じる",
+      });
     }
 
     if (this.autosaveOn) {
@@ -1223,7 +1079,7 @@ export class TaskModal extends Modal {
     this.scheduleAutosave(); // 候補はダイアログの外に出るので明示的に
   }
 
-  /** モバイル: 上部バー左のプロジェクト名（TickTick のリスト名の位置。タップで選択シートを開く） */
+  /** 上部バー左のプロジェクト名（TickTick のリスト名の位置。クリックで選択シートを開く） */
   private buildProjectChip(host: HTMLElement): void {
     const chip = host.createEl("button", { cls: "dt-m-project-btn", attr: { type: "button" } });
     chip.setAttr("title", "タップでプロジェクトを選びます（入力で絞り込み・新規作成もできます）。");
@@ -1267,7 +1123,7 @@ export class TaskModal extends Modal {
     };
   }
 
-  /** モバイル: 「誰の予定か」（日時の下の小さな行。タップで選択シートを開く） */
+  /** 「誰の予定か」（日時の下の小さな行。クリックで選択シートを開く） */
   private buildOwnerChip(host: HTMLElement, owners: NonNullable<TaskModalOptions["owners"]>): void {
     const chip = host.createEl("button", { cls: "dt-m-owner-btn", attr: { type: "button" } });
     chip.setAttr(
@@ -1303,64 +1159,6 @@ export class TaskModal extends Modal {
     };
   }
 
-  /** 「プロジェクト」欄（入力で絞り込んで選択・新規作成・ノートを開く。デスクトップ） */
-  private buildProjectSection(contentEl: HTMLElement): Setting {
-    const setting = new Setting(contentEl).setName("プロジェクト");
-    setting.settingEl.addClass("dt-project-setting");
-    setting.settingEl.setAttr(
-      "title",
-      "入力すると候補を絞り込めます（スペース区切りで複数語）。候補に無い名前は「＋ 新規作成」で作れます。↗ ボタンでプロジェクトノートを開けます。"
-    );
-    const labelOf = (link: string | null) => this.projectLabel(link);
-
-    const input = setting.controlEl.createEl("input", {
-      type: "text",
-      cls: "dt-project-input",
-      attr: { placeholder: "なし（入力して検索）", spellcheck: "false" },
-    });
-    input.value = labelOf(this.project);
-    // 自動保存の見張り（contentEl の input）に打鍵を拾わせない。値は選んだときに変わる
-    input.addEventListener("input", (e) => e.stopPropagation());
-    this.onProjectChanged = () => {
-      input.value = labelOf(this.project);
-      input.blur();
-    };
-
-    new ProjectSuggest(this.app, input, (q) => this.projectChoices(q), (c) => void this.chooseProject(c));
-    // 入力欄に入ったら全選択（そのまま打てば置き換わる）
-    input.addEventListener("focus", () => window.setTimeout(() => input.select(), 0));
-    // フォーカスしたままのクリックでも候補を出し直す（選んだ直後など）
-    input.addEventListener("click", () => input.dispatchEvent(new Event("input")));
-    // 変換確定の Enter で候補を選ばない
-    input.addEventListener("keydown", (e) => {
-      if (e.isComposing) e.stopPropagation();
-    });
-    // 選ばずに離れたら表示を選択中のものに戻す（候補のクリックより後に動くよう少し待つ）
-    input.addEventListener("blur", () => {
-      window.setTimeout(() => {
-        if (activeDocument.activeElement !== input) input.value = labelOf(this.project);
-      }, 200);
-    });
-
-    setting.addExtraButton((b) =>
-      b
-        .setIcon("arrow-up-right")
-        .setTooltip("プロジェクトノートを開く")
-        .onClick(() => {
-          if (!this.project) {
-            new Notice("プロジェクトが選ばれていません");
-            return;
-          }
-          const open = this.opts.onOpenProject;
-          if (!open) return;
-          const link = this.project;
-          this.close(); // 自動保存があれば閉じるときに保存される
-          void open(link);
-        })
-    );
-    return setting;
-  }
-
   // ---------- ステップ ----------
 
   /** 「ステップ」の入力欄（チェック・並べ替え・追加・削除）。折りたたみ用に外枠を返す */
@@ -1380,8 +1178,8 @@ export class TaskModal extends Modal {
 
     const addRow = wrap.createDiv("dt-step-add");
     const plus = addRow.createSpan("dt-step-add-icon");
-    // モバイルは TickTick と同じく空のチェック枠を並べる
-    setIcon(plus, Platform.isMobile ? iconName("square") : "plus");
+    // TickTick と同じく空のチェック枠を並べる
+    setIcon(plus, iconName("square"));
     const addInput = addRow.createEl("input", { type: "text", attr: { placeholder: "ステップを追加…" } });
     this.stepAddInput = addInput;
     const commitAdd = () => {
