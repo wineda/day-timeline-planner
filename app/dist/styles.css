@@ -4057,10 +4057,11 @@ body.is-mobile .modal.dt-modal {
 /* 入力中（キーボードが出ている間）はカードを画面の上寄せにし、高さを画面の半分に収める。
    キーボードの高さが WebView に通知されない端末でも、入力欄が隠れないようにするため */
 body.is-mobile .modal.dt-modal.is-keyboard-focus {
-  top: calc(8px + env(safe-area-inset-top, 0px)) !important;
+  /* ステータスバーに被らないよう、上に余白を取る（safe-area が通知されない端末を考えて固定値も足す） */
+  top: calc(56px + env(safe-area-inset-top, 0px)) !important;
   bottom: auto !important;
-  max-height: 50vh !important;
-  max-height: 50dvh !important;
+  max-height: calc(50vh - 40px) !important;
+  max-height: calc(50dvh - 40px) !important;
 }
 /* ダークテーマでは後ろの画面と区別がつくよう、ひと段階明るいグレーの面にする（選択シート・確認も同じ） */
 body.theme-dark.is-mobile .modal.dt-modal {
