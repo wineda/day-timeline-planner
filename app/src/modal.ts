@@ -370,9 +370,8 @@ export class TaskModal extends Modal {
         if (this.opts.dateField) {
           const d = this.parseDateText();
           if (d) set = true;
-          parts.push(
-            d ? moment(d).format("M月D日(ddd)") : this.opts.dateField.allowEmpty ? "日付未定" : "日付を入力"
-          );
+          // チップに収まるよう短い書式（9/28(月)）
+          parts.push(d ? moment(d).format("M/D(ddd)") : this.opts.dateField.allowEmpty ? "日付未定" : "日付を入力");
         } else if (this.opts.dateLabel) {
           parts.push(this.opts.dateLabel);
           set = true;
@@ -385,7 +384,7 @@ export class TaskModal extends Modal {
         } else if (r.start === null) {
           parts.push("時刻なし");
         } else {
-          parts.push(`${minutesToHHMM(r.start)} - ${minutesToHHMM(r.end as number)}`);
+          parts.push(`${minutesToHHMM(r.start)}-${minutesToHHMM(r.end as number)}`);
           set = true;
         }
         schedText.setText(parts.join(" "));
@@ -396,7 +395,8 @@ export class TaskModal extends Modal {
       // 実績のアイコン（ツールバー）は日時の欄を開いて実績欄へ移動する
       if (this.opts.showActual) {
         const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": "実績" } });
-        setIcon(b, "timer");
+        setIcon(b.createSpan("dt-m-tool-icon"), "timer");
+        b.createSpan({ cls: "dt-m-tool-label", text: "実績" });
         b.onclick = () => {
           toggleSched(true);
           const input = schedBody?.querySelector<HTMLInputElement>(".dt-actual-input");
@@ -765,7 +765,8 @@ export class TaskModal extends Modal {
       if (!extraHost || !toolbar) return detailsBody;
       const host = extraHost.createDiv({ cls: ["dt-m-field", "dt-collapsed"], attr: { "data-field": key } });
       const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": label } });
-      setIcon(b, iconName(icon));
+      setIcon(b.createSpan("dt-m-tool-icon"), iconName(icon));
+      b.createSpan({ cls: "dt-m-tool-label", text: label });
       toolIcons.set(key, b);
       const setOpen = (open: boolean) => {
         host.toggleClass("dt-collapsed", !open);
