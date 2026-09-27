@@ -4054,6 +4054,14 @@ body.is-mobile .modal.dt-modal {
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
 }
+/* 入力中（キーボードが出ている間）はカードを画面の上寄せにし、高さを画面の半分に収める。
+   キーボードの高さが WebView に通知されない端末でも、入力欄が隠れないようにするため */
+body.is-mobile .modal.dt-modal.is-keyboard-focus {
+  top: calc(8px + env(safe-area-inset-top, 0px)) !important;
+  bottom: auto !important;
+  max-height: 50vh !important;
+  max-height: 50dvh !important;
+}
 /* ダークテーマでは後ろの画面と区別がつくよう、ひと段階明るいグレーの面にする（選択シート・確認も同じ） */
 body.theme-dark.is-mobile .modal.dt-modal {
   background: var(--color-base-25, #2a2a2a);
