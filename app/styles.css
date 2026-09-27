@@ -2058,17 +2058,26 @@ body.is-mobile .modal-container:has(.dt-modal-compact) .modal-bg {
   background-color: #000;
   opacity: 0.6 !important;
 }
+/* 幅と位置は本体に任せず固定する。本体は中身がスクロールする高さになるとモーダルのレイアウトを
+   切り替える（左右に本体の余白が付き、幅が内容で決まる）ため、内容の長さで幅が変わっていた */
+body.is-mobile .dt-modal-container-mobile {
+  padding: 0 !important;
+}
 body.is-mobile .modal.dt-modal.dt-modal-compact {
-  top: auto;
-  left: 8px;
-  right: 8px;
-  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-  width: auto;
-  max-width: none;
-  height: auto;
+  position: absolute !important;
+  top: auto !important;
+  left: 8px !important;
+  right: 8px !important;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  width: calc(100% - 16px) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: auto !important;
   max-height: 80vh;
   max-height: 80dvh;
-  margin: 0;
+  margin: 0 !important;
+  transform: none !important;
+  box-sizing: border-box;
   border: none;
   border-radius: 18px;
   background: var(--background-primary);
