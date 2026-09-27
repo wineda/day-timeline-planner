@@ -2073,7 +2073,14 @@ body.is-mobile .modal.dt-modal.dt-modal-compact {
   border-radius: 18px;
   background: var(--background-primary);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-  padding: 4px 20px 0; /* 上は上部バーの余白だけ（本体の大きな上余白は使わない） */
+  /* 本体の余白（上の大きな余白・左右で違う余白）は使わず、左右を同じ 20px にする */
+  padding: 4px 20px 0 !important;
+}
+body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100%;
+  box-sizing: border-box;
 }
 /* カードの中で開く面（日時の欄・タグの選択・詳細）は、さらにひと段階明るく */
 body.theme-dark .dt-modal-compact .dt-m-sched-body,
@@ -2164,6 +2171,7 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
+  margin-right: -8px; /* 右端のアイコンの図が文字の右端に揃うように */
 }
 .dt-modal-compact button.dt-m-top-btn {
   min-height: 0;
@@ -2666,7 +2674,8 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin: auto 0 0 !important;
+  margin: auto 0 0 -11px !important; /* 左端のアイコンの図が文字の左端に揃うように */
+  width: calc(100% + 11px);
   padding: 8px 0 4px;
   background: var(--background-primary);
 }
