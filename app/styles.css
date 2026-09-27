@@ -2001,17 +2001,193 @@
   min-width: 0;
 }
 
-/* ---------- モバイルの編集ダイアログ（TickTick 風のシンプル表示） ----------
-   上段は「丸い完了チェック + 日時サマリー」の1行だけ。日付・時間・実績の入力欄は
-   サマリーのタップで開閉する
+/* ---------- モバイルの編集ダイアログ（TickTick 風の詳細シート） ----------
+   上部バー（× / 状態 / 追加・⋯）→ チップ列（日時・プロジェクト・タグ・誰の予定か）→
+   丸チェック + 大きなタイトル → ステップのチェックリスト → メモ → 使用頻度の低い欄 → 下部ツールバー。
    （.dt-modal-mobile は modal.ts が Platform.isMobile のときに付ける） */
-.dt-modal-mobile .dt-m-head {
+.dt-modal-mobile .dt-m-hidden-title {
+  display: none;
+}
+/* 入れ物ごとの区切り線は出さない（デスクトップの設定行の区切りは使わない） */
+.modal.dt-modal.dt-modal-mobile .modal-content > :not(:first-child) {
+  border-top: none;
+}
+body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
+  padding-top: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dt-modal-mobile .dt-m-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  padding: 6px 0 4px;
+  margin: 0 !important;
+  background: var(--modal-background, var(--background-primary));
+}
+.dt-modal-mobile .dt-m-top-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-modal-mobile .dt-m-top-status.dt-autosave-error {
+  color: var(--text-error);
+}
+.dt-modal-mobile .dt-m-top-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.dt-modal-mobile button.dt-m-top-btn {
+  min-height: 0;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dt-modal-mobile button.dt-m-top-btn svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-modal-mobile button.dt-m-top-cta {
+  min-height: 0;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 16px;
+}
+
+/* チップ列（横にはみ出したら横スクロール） */
+.dt-modal-mobile .dt-m-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  margin: 0 !important;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.dt-modal-mobile .dt-m-chips::-webkit-scrollbar {
+  display: none;
+}
+.dt-modal-mobile button.dt-m-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  min-height: 0;
+  padding: 0 10px;
+  border-radius: 15px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  white-space: nowrap;
+  max-width: 70vw;
+}
+.dt-modal-mobile button.dt-m-chip .dt-m-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-modal-mobile button.dt-m-chip .dt-m-chip-icon {
+  display: flex;
+  align-items: center;
+}
+.dt-modal-mobile button.dt-m-chip .dt-m-chip-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.dt-modal-mobile button.dt-m-chip.is-set {
+  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
+}
+.dt-modal-mobile button.dt-m-chip.is-open {
+  border-color: var(--interactive-accent);
+}
+/* 日時チップは TickTick と同じくアクセント色 */
+.dt-modal-mobile button.dt-m-chip-sched.is-set {
+  color: var(--text-accent);
+}
+.dt-modal-mobile button.dt-m-chip-sched.is-error {
+  color: var(--text-error);
+}
+/* タグチップは選んだタグの色 */
+.dt-modal-mobile button.dt-m-chip-tag.is-set {
+  background: var(--dt-chip-color);
+  border-color: var(--dt-chip-color);
+  color: var(--dt-chip-fg);
+}
+.dt-modal-mobile button.dt-m-chip-owner .dt-owner-dot {
+  width: 10px;
+  height: 10px;
+}
+
+/* チップで開く欄（日付・時間・実績 / タグの選択）はひとつの枠にまとめる */
+.dt-modal-mobile .dt-m-sched-body,
+.dt-modal-mobile .dt-m-tag-panel {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 4px 10px;
+  margin: 0 0 8px !important;
+}
+.dt-modal-mobile .dt-m-tag-panel {
+  padding: 8px 10px;
+}
+/* ワンタップの候補（今日・明日・30分・1時間 …） */
+.dt-modal-mobile .dt-m-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
   padding: 2px 0 4px;
 }
-/* 丸い完了チェック（TickTick のチェック円と同じ役割） */
+.dt-modal-mobile button.dt-m-quick-btn {
+  min-height: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  color: var(--text-muted);
+}
+.dt-modal-mobile button.dt-m-quick-btn:active {
+  background: var(--background-modifier-hover);
+}
+
+/* 丸チェック + タイトル */
+.dt-modal-mobile .dt-m-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 !important;
+}
+.dt-modal-mobile .dt-m-title-row .dt-title-setting {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  padding: 4px 0;
+}
+.dt-modal-mobile .dt-m-title-row.is-done input.dt-title-input {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
 .dt-modal-mobile button.dt-m-done {
   flex: 0 0 auto;
   width: 26px;
@@ -2037,52 +2213,6 @@
   border-color: var(--interactive-accent);
   color: var(--text-on-accent);
 }
-/* 日時サマリー（アクセント色の1行。タップで編集欄を開閉） */
-.dt-modal-mobile button.dt-m-sched {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  padding: 6px 0;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  color: var(--text-accent);
-  font-size: var(--font-ui-medium);
-  cursor: pointer;
-}
-.dt-modal-mobile .dt-m-sched-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dt-modal-mobile button.dt-m-sched.is-error .dt-m-sched-text {
-  color: var(--text-error);
-}
-.dt-modal-mobile .dt-m-sched-chevron {
-  display: flex;
-  align-items: center;
-  color: var(--text-faint);
-}
-.dt-modal-mobile .dt-m-sched-chevron svg {
-  width: 16px;
-  height: 16px;
-  transition: transform 120ms ease;
-}
-.dt-modal-mobile button.dt-m-sched.is-open .dt-m-sched-chevron svg {
-  transform: rotate(180deg);
-}
-/* 開いた日付・時間・実績の欄はひとつの枠にまとめる */
-.dt-modal-mobile .dt-m-sched-body {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  padding: 2px 10px;
-  margin-bottom: 8px;
-}
 /* タイトルはラベルを出さず、大きめの枠なし入力に */
 .dt-modal-mobile .dt-title-setting .setting-item-info {
   display: none;
@@ -2096,24 +2226,226 @@
   padding-left: 0;
   padding-right: 0;
 }
-/* タグもラベルなしでチップだけを並べる */
-.dt-modal-mobile .dt-tag-setting .setting-item-info {
+
+/* ステップ: タイトル直下のチェックリスト（見出し・進捗バー・つまみは出さず、× は常に出す） */
+.dt-modal-mobile .dt-m-steps {
+  margin: 0 !important;
+  padding-left: 36px; /* 丸チェックの幅ぶん、タイトルの文字に揃える */
+}
+.dt-modal-mobile .dt-m-steps .dt-steps {
+  margin: 0;
+}
+.dt-modal-mobile .dt-m-steps .dt-steps-head,
+.dt-modal-mobile .dt-m-steps .dt-steps-progress,
+.dt-modal-mobile .dt-m-steps .dt-step-grip {
   display: none;
+}
+.dt-modal-mobile .dt-m-steps .dt-step {
+  min-height: 36px;
+  padding-left: 0;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-check {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-check svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-text {
+  font-size: var(--font-ui-medium);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-delete {
+  opacity: 0.6;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-add {
+  min-height: 36px;
+  padding-left: 0;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-add input {
+  font-size: var(--font-ui-medium);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+/* 作成時（丸チェック無し）はタイトルの左端に揃える */
+.dt-modal-mobile .dt-m-title-row:not(:has(.dt-m-done)) + .dt-m-steps {
+  padding-left: 0;
+}
+
+/* メモ: ラベル無しの枠なし本文 */
+.dt-modal-mobile .dt-m-memo {
+  margin: 0 !important;
+}
+.dt-modal-mobile .dt-m-memo .setting-item {
+  border: none;
+  padding: 4px 0;
+}
+.dt-modal-mobile .dt-m-memo .setting-item-info {
+  display: none;
+}
+.dt-modal-mobile .dt-m-memo .dt-details-field {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  min-height: 60px;
+}
+.dt-modal-mobile .dt-m-memo .dt-details-field.is-active {
+  border-color: var(--background-modifier-border);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* 使用頻度の低い欄（ツールバーのアイコンで開く）: 小さなラベル + 入力 */
+.dt-modal-mobile .dt-m-extra {
+  margin: 0 !important;
+}
+.dt-modal-mobile .dt-m-field {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 2px 10px;
+  margin: 0 0 8px;
+}
+.dt-modal-mobile .dt-m-field .setting-item {
+  border: none;
+  padding: 6px 0;
+}
+.dt-modal-mobile .dt-m-field .setting-item-info {
+  display: block;
+  flex: 0 0 auto;
+}
+.dt-modal-mobile .dt-m-field .setting-item-name {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+/* 下部ツールバー（シートの下に固定） */
+.dt-modal-mobile .dt-m-toolbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: auto 0 0 !important;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--modal-background, var(--background-primary));
+}
+.dt-modal-mobile .dt-m-toolbar:empty {
+  display: none;
+}
+.dt-modal-mobile button.dt-m-tool {
+  min-height: 0;
+  width: 40px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-s);
+}
+.dt-modal-mobile button.dt-m-tool svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-modal-mobile button.dt-m-tool.is-set {
+  color: var(--text-accent);
+}
+.dt-modal-mobile button.dt-m-tool.is-open {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.dt-modal-mobile button.dt-m-tool.is-open.is-set {
+  color: var(--text-accent);
 }
 /* 行間は少し詰める */
 .dt-modal-mobile .setting-item {
   padding: 6px 0;
 }
 
-/* 「削除」「ノートで開く」のアイコンボタン */
-.dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn {
-  width: auto !important;
-  flex: 0 0 auto !important;
-  padding: 6px 12px;
+/* ---------- 選択シート（モバイルのプロジェクト・誰の予定か） ---------- */
+.dt-choice-modal .dt-choice-search {
+  width: 100%;
+  margin-bottom: 8px;
 }
-.dt-modal-mobile .dt-modal-buttons button.dt-m-icon-btn svg {
-  width: 18px;
-  height: 18px;
+.dt-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.dt-choice-empty {
+  color: var(--text-muted);
+  padding: 8px 4px;
+}
+.dt-modal button.dt-choice {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+}
+.dt-modal button.dt-choice:active {
+  background: var(--background-modifier-hover);
+}
+.dt-modal button.dt-choice.is-current {
+  background: var(--background-modifier-hover);
+}
+.dt-modal button.dt-choice.is-none,
+.dt-modal button.dt-choice.is-create {
+  color: var(--text-muted);
+}
+.dt-modal button.dt-choice.is-create {
+  color: var(--text-accent);
+}
+.dt-modal button.dt-choice .dt-choice-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-modal button.dt-choice .dt-choice-check,
+.dt-modal button.dt-choice .dt-choice-extra-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-accent);
+}
+.dt-modal button.dt-choice .dt-choice-check svg,
+.dt-modal button.dt-choice .dt-choice-extra-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.dt-modal button.dt-choice-extra {
+  margin-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: 0;
 }
 .dt-tag-chips {
   display: flex;
