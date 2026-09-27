@@ -87,26 +87,14 @@ type ProjectChoice =
   | { kind: "create"; name: string };
 
 /**
- * モバイル: ソフトキーボードで隠れる高さを CSS 変数（--dt-keyboard）に入れ続け、
- * 入力欄にフォーカスがある間は is-keyboard-focus を付ける（カードを上寄せにする）。
- * カードは画面の下端に固定しているので、そのままだとキーボードの後ろに隠れる。
- * 戻り値は後片付け（閉じるときに呼ぶ）。visualViewport が無い環境では window の高さで代用する
+ * モバイル: 文字の入力欄にフォーカスがある間は is-keyboard-focus を付ける
+ * （CSS でカードの高さを画面の半分に抑える。キーボードの高さは WebView に通知されないので測らない）。
+ * カードは画面の上を基準に置いてあるので、キーボードが出ても上半分は見える。
+ * 縮めたあと、フォーカスした欄が見える位置までスクロールする。戻り値は後片付け（閉じるときに呼ぶ）
  */
 function trackKeyboard(modal: Modal): () => void {
   if (!Platform.isMobile) return () => {};
-  const vv = window.visualViewport;
   const el = modal.modalEl;
-  const apply = () => {
-    // 「見えている領域の下端」と「モーダルの入れ物（画面いっぱいの固定枠）の下端」の差が、キーボードで隠れる高さ。
-    // ただし端末や設定によってはキーボードが WebView に一切通知されず、この差が 0 のままになる
-    const viewportBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-    const containerBottom = modal.containerEl.getBoundingClientRect().bottom;
-    const covered = Math.max(0, Math.round(containerBottom - viewportBottom));
-    el.style.setProperty("--dt-keyboard", `${covered}px`);
-    el.toggleClass("is-keyboard", covered > 80);
-  };
-  // 高さが通知されない端末のための保険: 入力欄にフォーカスがある間はカードを画面の上寄せにして
-  // 高さを画面の半分に収める（キーボードはおおむね下半分を覆う）。フォーカスが外れれば下へ戻す
   const timers = new Set<number>();
   const schedule = (fn: () => void, delay: number) => {
     const id = window.setTimeout(() => {
@@ -115,42 +103,41 @@ function trackKeyboard(modal: Modal): () => void {
     }, delay);
     timers.add(id);
   };
-  const isTextInput = (t: EventTarget | null) =>
+  const isTextInput = (t: EventTarget | null): t is HTMLElement =>
     t instanceof HTMLTextAreaElement ||
     (t instanceof HTMLInputElement && !["date", "time", "checkbox", "button"].includes(t.type));
   let focused = false;
-  const paintFocus = () => el.toggleClass("is-keyboard-focus", focused);
+  const paint = () => el.toggleClass("is-keyboard-focus", focused);
+  const reveal = (target: HTMLElement) => {
+    // 高さを縮めた後に、入力欄が隠れていれば見える位置まで（カードの中を）スクロールする
+    for (const d of [80, 300]) schedule(() => target.scrollIntoView({ block: "center" }), d);
+  };
   const onFocusIn = (e: FocusEvent) => {
     if (!isTextInput(e.target)) return;
     focused = true;
-    paintFocus();
-    for (const d of [50, 200, 400, 700]) schedule(apply, d);
+    paint();
+    reveal(e.target);
   };
   const onFocusOut = () => {
     // 別の入力欄へ移るときに一瞬戻らないよう、少し待ってから判定する
     schedule(() => {
-      focused = isTextInput(activeDocument.activeElement) && el.contains(activeDocument.activeElement);
-      paintFocus();
-      apply();
+      const active = activeDocument.activeElement;
+      focused = isTextInput(active) && el.contains(active);
+      paint();
     }, 120);
   };
-  vv?.addEventListener("resize", apply);
-  vv?.addEventListener("scroll", apply);
-  window.addEventListener("resize", apply);
   el.addEventListener("focusin", onFocusIn);
   el.addEventListener("focusout", onFocusOut);
-  apply();
   // 開いた直後に自動フォーカスされる場合（作成時のタイトル）も拾う
   schedule(() => {
-    if (isTextInput(activeDocument.activeElement) && el.contains(activeDocument.activeElement)) {
+    const active = activeDocument.activeElement;
+    if (isTextInput(active) && el.contains(active)) {
       focused = true;
-      paintFocus();
+      paint();
+      reveal(active);
     }
   }, 30);
   return () => {
-    vv?.removeEventListener("resize", apply);
-    vv?.removeEventListener("scroll", apply);
-    window.removeEventListener("resize", apply);
     el.removeEventListener("focusin", onFocusIn);
     el.removeEventListener("focusout", onFocusOut);
     for (const id of timers) window.clearTimeout(id);
@@ -331,7 +318,7 @@ export class TaskModal extends Modal {
       if (mobile) {
         this.modalEl.addClass("dt-modal-mobile");
         this.containerEl.addClass("dt-modal-container-mobile"); // 暗幕とカードの位置の指定用（:has に頼らない）
-        this.untrackKeyboard = trackKeyboard(this); // キーボードが出たらそのぶんカードを持ち上げる
+        this.untrackKeyboard = trackKeyboard(this); // 入力中はカードの高さを画面の半分に抑える
       }
       this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
       // Obsidian 本体が付ける × は取り除く（PC は上部バーの ×、モバイルは ⋮ の「閉じる」・外側のタップ・戻るボタンで閉じる）。

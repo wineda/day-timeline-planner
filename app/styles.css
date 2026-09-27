@@ -2065,17 +2065,16 @@ body.is-mobile .dt-modal-container-mobile {
 }
 body.is-mobile .modal.dt-modal.dt-modal-compact {
   position: absolute !important;
-  top: auto !important;
+  top: calc(56px + env(safe-area-inset-top, 0px)) !important; /* ステータスバーの下。上を基準に置く */
+  bottom: auto !important;
   left: 8px !important;
   right: 8px !important;
-  bottom: calc(8px + var(--dt-keyboard, 0px) + env(safe-area-inset-bottom, 0px)) !important;
   width: calc(100% - 16px) !important;
   max-width: none !important;
   min-width: 0 !important;
   height: auto !important;
   max-height: 80vh;
-  /* キーボードが出ているときは、残った高さに収める（中はスクロール） */
-  max-height: min(80dvh, calc(100dvh - var(--dt-keyboard, 0px) - 16px));
+  max-height: min(80dvh, calc(100dvh - 72px));
   margin: 0 !important;
   transform: none !important;
   box-sizing: border-box;
@@ -4036,30 +4035,26 @@ body.is-phone .dt-day-header-date.is-clickable {
 
 /* ---------- モバイルのポップアップ（ボトムシート） ----------
    Obsidian 本体のモバイルのモーダルは画面の上端近くまで伸びるので、
-   トーストのように画面の端から浮いた丸いカードとして下に出し、高さを画面の 78% までに留めて
-   上に元の画面が少し見えるようにする（このプラグインのダイアログだけ） */
+   トーストのように画面の端から浮いた丸いカードとして「上を基準に」出す。
+   キーボードの高さは WebView に通知されず下からの位置を計算できないため、下基準にはしない。
+   高さは画面の 78% までに留める（このプラグインのダイアログだけ） */
 body.is-mobile .modal.dt-modal {
-  top: auto;
+  top: calc(56px + env(safe-area-inset-top, 0px));
+  bottom: auto;
   left: 8px;
   right: 8px;
-  /* --dt-keyboard = ソフトキーボードで隠れる高さ（modal.ts の trackKeyboard が入れる）。そのぶん持ち上げる */
-  bottom: calc(8px + var(--dt-keyboard, 0px) + env(safe-area-inset-bottom, 0px));
   width: auto;
   max-width: none;
   height: auto;
   max-height: 78vh;
-  max-height: min(78dvh, calc(100dvh - var(--dt-keyboard, 0px) - 16px));
+  max-height: min(78dvh, calc(100dvh - 72px));
   border-radius: 18px;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
 }
-/* 入力中（キーボードが出ている間）はカードを画面の上寄せにし、高さを画面の半分に収める。
-   キーボードの高さが WebView に通知されない端末でも、入力欄が隠れないようにするため */
+/* 入力中（キーボードが出ている間）はカードの高さを画面の半分に収める（キーボードはおおむね下半分を覆う） */
 body.is-mobile .modal.dt-modal.is-keyboard-focus {
-  /* ステータスバーに被らないよう、上に余白を取る（safe-area が通知されない端末を考えて固定値も足す） */
-  top: calc(56px + env(safe-area-inset-top, 0px)) !important;
-  bottom: auto !important;
   max-height: calc(50vh - 40px) !important;
   max-height: calc(50dvh - 40px) !important;
 }
