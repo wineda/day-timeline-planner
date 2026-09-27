@@ -405,9 +405,9 @@ export class TaskModal extends Modal {
       titleHost = contentEl.createDiv("dt-m-title-row");
       memoHost = contentEl.createDiv("dt-m-memo"); // TickTick と同じくタイトルの直下に説明
       stepsHost = contentEl.createDiv("dt-m-steps");
+      extraHost = contentEl.createDiv("dt-m-extra"); // 結果・ふりかえりなどは本文の流れの中（ステップの下）
       tagRow = contentEl.createDiv("dt-m-tag-row");
       tagPanel = contentEl.createDiv({ cls: ["dt-m-tag-panel", "dt-collapsed"] });
-      extraHost = contentEl.createDiv("dt-m-extra");
       toolbar = contentEl.createDiv("dt-m-toolbar");
       const toggleSched = (open?: boolean) => {
         const next = open ?? (schedBody?.hasClass("dt-collapsed") ?? false);
@@ -807,14 +807,37 @@ export class TaskModal extends Modal {
      * 「詳細」の欄 1 つ分の親。モバイルでは欄ごとの入れ物（初めは畳む）を作り、
      * ツールバーにアイコンを足す（タップで開閉。値があればアイコンに色が付く）
      */
-    const extraField = (key: string, label: string, icon: string, hasValue: () => boolean): HTMLElement => {
+    /**
+     * モバイルの欄の見た目: 複数行の欄（結果・ふりかえり）は小さな見出し + 右に薄いヒント（入力があれば消える）の下に
+     * 枠なしの本文。1 行の欄（チケット・リマインド）は見出しと入力を 1 行に並べる（inline）
+     */
+    const extraField = (
+      key: string,
+      label: string,
+      icon: string,
+      hasValue: () => boolean,
+      style: { inline?: boolean; hint?: string } = {}
+    ): HTMLElement => {
       detailsLabels.push(label);
       if (!extraHost || !toolbar) return detailsBody;
       const host = extraHost.createDiv({ cls: ["dt-m-field", "dt-collapsed"], attr: { "data-field": key } });
+      let hint: HTMLElement | null = null;
+      if (style.inline) {
+        host.addClass("is-inline");
+      } else {
+        const head = host.createDiv("dt-m-field-head");
+        head.createSpan({ cls: "dt-m-field-label", text: label });
+        if (style.hint) hint = head.createSpan({ cls: "dt-m-field-hint", text: style.hint });
+      }
       const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": label } });
       tip(b, label);
       setIcon(b, iconName(icon));
       toolIcons.set(key, b);
+      const paint = () => {
+        const set = hasValue();
+        paintTool(key, set);
+        hint?.toggleClass("is-hidden", set);
+      };
       const setOpen = (open: boolean) => {
         host.toggleClass("dt-collapsed", !open);
         b.toggleClass("is-open", open);
@@ -830,15 +853,17 @@ export class TaskModal extends Modal {
         host.removeClass("dt-collapsed");
         b.addClass("is-open");
       }
-      host.addEventListener("input", () => paintTool(key, hasValue()));
-      host.addEventListener("change", () => paintTool(key, hasValue()));
-      paintTool(key, hasValue());
+      host.addEventListener("input", paint);
+      host.addEventListener("change", paint);
+      paint();
       return host;
     };
 
     const trackers = this.opts.trackers ?? [];
     if (trackers.length) {
-      const tkSetting = new Setting(extraField("ticket", "チケット", "ticket", () => this.ticketId.trim() !== "")).setName("チケット");
+      const tkSetting = new Setting(
+        extraField("ticket", "チケット", "ticket", () => this.ticketId.trim() !== "", { inline: true })
+      ).setName("チケット");
       tip(tkSetting.settingEl, "管理ツールと番号を選ぶと、ブロックからチケットを開けます。");
       const updateDesc = () => {
         const url = this.ticketId.trim()
@@ -884,7 +909,9 @@ export class TaskModal extends Modal {
 
     if (this.opts.reminderDefault !== undefined) {
       const def = this.opts.reminderDefault;
-      const rmSetting = new Setting(extraField("reminder", "リマインド", "bell", () => this.reminder !== null)).setName("リマインド");
+      const rmSetting = new Setting(
+        extraField("reminder", "リマインド", "bell", () => this.reminder !== null, { inline: true })
+      ).setName("リマインド");
       tip(rmSetting.settingEl, "開始の何分前に通知するか。");
       rmSetting.addDropdown((d) => {
         d.addOption("default", `既定（${def === 0 ? "開始時刻" : `${def}分前`}）`);
@@ -901,18 +928,23 @@ export class TaskModal extends Modal {
       });
     }
 
-    const resSetting = new Setting(extraField("result", "結果", "clipboard-check", () => this.result.trim() !== "")).setName("結果");
+    const RESULT_HINT = "何がどこまで終わったか";
+    const resSetting = new Setting(
+      extraField("result", "結果", "clipboard-check", () => this.result.trim() !== "", { hint: RESULT_HINT })
+    ).setName("結果");
     tip(resSetting.settingEl, "何がどこまで終わったか。ノートには「- 結果: …」として保存され、日報の元データになります。改行は「 / 」区切りで1行になります。");
     resSetting.settingEl.addClass("dt-retro-setting");
-    textarea(resSetting.controlEl, "", 1, 220, "何がどこまで終わったか", () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
+    // モバイルはヒントを見出しの右に出すので、本文のプレースホルダーは空にする
+    textarea(resSetting.controlEl, "", 1, 220, mobile ? "" : RESULT_HINT, () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
 
+    const RETRO_HINT = "作業してみてどうだったか・次はどう改善するか";
     if (this.opts.mode === "edit") {
       const retroSetting = new Setting(
-        extraField("retro", "ふりかえり", "message-square", () => this.retrospective.trim() !== "")
+        extraField("retro", "ふりかえり", "message-square", () => this.retrospective.trim() !== "", { hint: RETRO_HINT })
       ).setName("ふりかえり");
       tip(retroSetting.settingEl, "作業してみてどうだったか・次はどう改善するか。ノートには「- ふりかえり: …」として保存されます。");
       retroSetting.settingEl.addClass("dt-retro-setting");
-      textarea(retroSetting.controlEl, "", 1, 220, "作業してみてどうだったか・次はどう改善するか", () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
+      textarea(retroSetting.controlEl, "", 1, 220, mobile ? "" : RETRO_HINT, () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
     }
     detailsSub?.setText(detailsLabels.join("・"));
     setDetailsOpen(
