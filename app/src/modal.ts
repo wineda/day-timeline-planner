@@ -701,7 +701,7 @@ export class TaskModal extends Modal {
       detailSetting.controlEl,
       "dt-details-field",
       2,
-      480,
+      100000, // 内側ではスクロールさせず、内容ぶんだけ伸ばす（スクロールはカード全体の 1 つだけ）
       "説明",
       () => this.details,
       (v) => (this.details = v)
@@ -742,7 +742,7 @@ export class TaskModal extends Modal {
         host.toggleClass("dt-collapsed", !open);
         b.toggleClass("is-open", open);
         if (open) {
-          host.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => growTextarea(ta, 220));
+          host.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => growTextarea(ta, 100000));
           const focus = host.querySelector<HTMLElement>("input, textarea, select");
           focus?.focus();
           host.scrollIntoView({ block: "nearest" });
@@ -835,7 +835,7 @@ export class TaskModal extends Modal {
     tip(resSetting.settingEl, "何がどこまで終わったか。ノートには「- 結果: …」として保存され、日報の元データになります。改行は「 / 」区切りで1行になります。");
     resSetting.settingEl.addClass("dt-retro-setting");
     // ヒントは見出しの右に出すので、本文のプレースホルダーは空にする
-    textarea(resSetting.controlEl, "", 1, 220, "", () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
+    textarea(resSetting.controlEl, "", 1, 100000, "", () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
 
     const RETRO_HINT = "作業してみてどうだったか・次はどう改善するか";
     if (this.opts.mode === "edit") {
@@ -844,7 +844,7 @@ export class TaskModal extends Modal {
       ).setName("ふりかえり");
       tip(retroSetting.settingEl, "作業してみてどうだったか・次はどう改善するか。ノートには「- ふりかえり: …」として保存されます。");
       retroSetting.settingEl.addClass("dt-retro-setting");
-      textarea(retroSetting.controlEl, "", 1, 220, "", () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
+      textarea(retroSetting.controlEl, "", 1, 100000, "", () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
     }
     if (mobile) {
       // 保存の状態はツールバーの右端に小さく（失敗したときだけ見える）
