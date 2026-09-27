@@ -1,6 +1,7 @@
 import {
   AbstractInputSuggest,
   App,
+  Menu,
   Modal,
   Notice,
   Platform,
@@ -174,10 +175,14 @@ export class TaskModal extends Modal {
   private selectedTags = new Set<string>();
   /** ボタンで選べるタグ（正規化して重複を除いたもの） */
   private tagChoices: TagColor[];
-  /** モバイルの日時サマリー行の表示を更新する（モバイル以外は null） */
+  /** モバイルの日時チップの表示を更新する（モバイル以外は null） */
   private refreshSchedSummary: (() => void) | null = null;
   /** 実績欄の下の注意（合計・重複） */
   private actualDescEl: HTMLElement | null = null;
+  /** このダイアログで作成したプロジェクト（opts.projects には無いので名前をここで覚える） */
+  private createdProjects = new Map<string, string>();
+  /** プロジェクトの選択が変わったときに表示（入力欄・チップ）を更新する */
+  private onProjectChanged: (() => void) | null = null;
 
   constructor(app: App, opts: TaskModalOptions) {
     super(app);
@@ -265,50 +270,112 @@ export class TaskModal extends Modal {
     };
     const mobile = Platform.isMobile;
 
-    // ---- モバイル: TickTick 風のシンプル表示 ----
-    // 上段は「丸い完了チェック + 日時サマリー」の1行だけにし、日付・時間・実績の
-    // 入力欄はサマリーのタップで開閉する
+    // ---- モバイル: TickTick 風の詳細シート ----
+    // 上から「×・状態・追加/⋯」の上部バー → 日時・プロジェクト・タグ・誰の予定かのチップ列
+    // → （チップで開く日付・時間・実績の欄、タグの選択）→ 丸チェック + タイトル → ステップ
+    // → メモ → 使用頻度の低い欄（チケット・リマインド・結果・ふりかえり。下のツールバーで開く）→ ツールバー。
+    // 表示順 = DOM の順なので、入れ物を先に作っておき、各欄はその中へ作る
     let schedBody: HTMLElement | null = null;
+    let chipsEl: HTMLElement | null = null;
+    let tagPanel: HTMLElement | null = null;
+    let titleHost: HTMLElement = contentEl;
+    let stepsHost: HTMLElement = contentEl;
+    let memoHost: HTMLElement = contentEl;
+    let extraHost: HTMLElement | null = null;
+    let toolbar: HTMLElement | null = null;
+    /** 下部ツールバーのアイコン（欄のキー → ボタン）。値の有無で色を変える */
+    const toolIcons = new Map<string, HTMLElement>();
     if (mobile) {
       this.modalEl.addClass("dt-modal-mobile");
-      const head = contentEl.createDiv("dt-m-head");
-      if (this.opts.mode === "edit") {
-        const check = head.createEl("button", {
-          cls: "dt-m-done",
-          attr: { type: "button", role: "checkbox", "aria-label": "完了" },
+      this.titleEl.addClass("dt-m-hidden-title"); // 見出しは上部バーに置き換える
+      const top = contentEl.createDiv("dt-m-top");
+      const closeBtn = top.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "閉じる" } });
+      setIcon(closeBtn, "x");
+      closeBtn.onclick = () => this.close();
+      const status = top.createDiv("dt-m-top-status");
+      status.setText(this.opts.mode === "create" ? "タスクを追加" : "");
+      if (this.autosaveOn) this.autosaveStatusEl = status;
+      const right = top.createDiv("dt-m-top-right");
+      if (this.opts.mode === "create" || !this.autosaveOn) {
+        const cta = right.createEl("button", {
+          cls: "mod-cta dt-m-top-cta",
+          text: this.opts.mode === "create" ? "追加" : "保存",
+          attr: { type: "button" },
         });
-        tip(check, "タップすると完了（[x]）として保存されます。");
-        setIcon(check, "check");
-        const paintDone = () => {
-          check.toggleClass("is-done", this.done);
-          check.setAttr("aria-checked", String(this.done));
-        };
-        paintDone();
-        check.onclick = () => {
-          this.done = !this.done;
-          paintDone();
+        cta.onclick = () => void this.submit();
+        if (this.opts.mode === "edit") {
+          const cancel = right.createEl("button", { cls: "dt-m-top-btn", text: "キャンセル", attr: { type: "button" } });
+          right.prepend(cancel);
+          cancel.onclick = () => this.close();
+        }
+      }
+      if (this.opts.mode === "edit" && (this.opts.onDelete || this.opts.onOpenNote)) {
+        const more = right.createEl("button", { cls: "dt-m-top-btn", attr: { type: "button", "aria-label": "その他" } });
+        setIcon(more, iconName("more-vertical"));
+        more.onclick = (e) => {
+          const menu = new Menu();
+          const onOpenNote = this.opts.onOpenNote;
+          if (onOpenNote) {
+            menu.addItem((it) =>
+              it
+                .setTitle("ノートで開く")
+                .setIcon("file-text")
+                .onClick(async () => {
+                  this.close();
+                  await onOpenNote();
+                })
+            );
+          }
+          const onDelete = this.opts.onDelete;
+          if (onDelete) {
+            menu.addItem((it) =>
+              it
+                .setTitle("削除")
+                .setIcon("trash-2")
+                .setWarning(true)
+                .onClick(async () => {
+                  this.close();
+                  await onDelete();
+                })
+            );
+          }
+          menu.showAtMouseEvent(e);
         };
       }
-      const sched = head.createEl("button", { cls: "dt-m-sched", attr: { type: "button" } });
-      tip(sched, "タップで日付・時間の欄を開閉します。");
-      const schedText = sched.createSpan("dt-m-sched-text");
-      const chevron = sched.createSpan("dt-m-sched-chevron");
-      setIcon(chevron, "chevron-down");
+
+      chipsEl = contentEl.createDiv("dt-m-chips");
       schedBody = contentEl.createDiv({ cls: ["dt-m-sched-body", "dt-collapsed"] });
-      sched.onclick = () => {
-        const open = schedBody?.hasClass("dt-collapsed") ?? false;
-        schedBody?.toggleClass("dt-collapsed", !open);
-        sched.toggleClass("is-open", open);
+      tagPanel = contentEl.createDiv({ cls: ["dt-m-tag-panel", "dt-collapsed"] });
+      titleHost = contentEl.createDiv("dt-m-title-row");
+      stepsHost = contentEl.createDiv("dt-m-steps");
+      memoHost = contentEl.createDiv("dt-m-memo");
+      extraHost = contentEl.createDiv("dt-m-extra");
+      toolbar = contentEl.createDiv("dt-m-toolbar");
+
+      // 日時チップ（タップで日付・時間・実績の欄を開閉）
+      const sched = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-sched"], attr: { type: "button" } });
+      tip(sched, "タップで日付・時間の欄を開閉します。");
+      const schedIcon = sched.createSpan("dt-m-chip-icon");
+      setIcon(schedIcon, "calendar");
+      const schedText = sched.createSpan("dt-m-chip-text");
+      const toggleSched = (open?: boolean) => {
+        const next = open ?? (schedBody?.hasClass("dt-collapsed") ?? false);
+        schedBody?.toggleClass("dt-collapsed", !next);
+        sched.toggleClass("is-open", next);
       };
+      sched.onclick = () => toggleSched();
       this.refreshSchedSummary = () => {
         const parts: string[] = [];
+        let set = false;
         if (this.opts.dateField) {
           const d = this.parseDateText();
+          if (d) set = true;
           parts.push(
             d ? moment(d).format("M月D日(ddd)") : this.opts.dateField.allowEmpty ? "日付未定" : "日付を入力"
           );
         } else if (this.opts.dateLabel) {
           parts.push(this.opts.dateLabel);
+          set = true;
         }
         const r = this.parse();
         let error = false;
@@ -319,17 +386,51 @@ export class TaskModal extends Modal {
           parts.push("時刻なし");
         } else {
           parts.push(`${minutesToHHMM(r.start)} - ${minutesToHHMM(r.end as number)}`);
+          set = true;
         }
         schedText.setText(parts.join(" "));
         sched.toggleClass("is-error", error);
+        sched.toggleClass("is-set", set);
       };
       this.refreshSchedSummary();
+      // 実績のアイコン（ツールバー）は日時の欄を開いて実績欄へ移動する
+      if (this.opts.showActual) {
+        const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": "実績" } });
+        setIcon(b, "timer");
+        b.onclick = () => {
+          toggleSched(true);
+          const input = schedBody?.querySelector<HTMLInputElement>(".dt-actual-input");
+          input?.focus();
+          input?.scrollIntoView({ block: "center" });
+        };
+        toolIcons.set("actual", b);
+      }
     }
     /** 日付・時間・実績の欄の親（モバイルでは折りたたみ領域の中に入れる） */
     const schedParent = schedBody ?? contentEl;
+    /** モバイル: ツールバーのアイコンの「値あり」の色を更新する */
+    const paintTool = (key: string, set: boolean) => toolIcons.get(key)?.toggleClass("is-set", set);
 
-    // ---- タイトル（編集時は「完了」も同じ行に。モバイルの完了は上の丸チェック）----
-    const titleSetting = new Setting(contentEl).setName("タイトル");
+    // ---- タイトル（編集時は「完了」も同じ行に。モバイルは TickTick 風の丸チェックをタイトルの左に）----
+    if (mobile && this.opts.mode === "edit") {
+      const check = titleHost.createEl("button", {
+        cls: "dt-m-done",
+        attr: { type: "button", role: "checkbox", "aria-label": "完了" },
+      });
+      tip(check, "タップすると完了（[x]）として保存されます。");
+      setIcon(check, "check");
+      const paintDone = () => {
+        check.toggleClass("is-done", this.done);
+        check.setAttr("aria-checked", String(this.done));
+        titleHost.toggleClass("is-done", this.done);
+      };
+      paintDone();
+      check.onclick = () => {
+        this.done = !this.done;
+        paintDone();
+      };
+    }
+    const titleSetting = new Setting(titleHost).setName("タイトル");
     titleSetting.settingEl.addClass("dt-title-setting");
     titleSetting.addText((t) => {
       t.setPlaceholder("タスクの名前")
@@ -388,6 +489,22 @@ export class TaskModal extends Modal {
       dateInput.addEventListener("input", onDateInput);
       dateInput.addEventListener("change", onDateInput);
       dateInput.addEventListener("keydown", onKey);
+      if (mobile) {
+        // 「今日」「明日」（日付未定にできるなら「未定」も）のワンタップ
+        const quick = dateSetting.settingEl.createDiv("dt-m-quick");
+        const setDate = (v: string) => {
+          dateInput.value = v;
+          this.dateText = v;
+          updateDateHint();
+        };
+        const mk = (label: string, value: () => string) => {
+          const b = quick.createEl("button", { cls: "dt-m-quick-btn", text: label, attr: { type: "button" } });
+          b.onclick = () => setDate(value());
+        };
+        mk("今日", () => moment().format("YYYY-MM-DD"));
+        mk("明日", () => moment().add(1, "day").format("YYYY-MM-DD"));
+        if (df.allowEmpty) mk("未定", () => "");
+      }
       if (df.allowEmpty) {
         dateSetting.addExtraButton((b) =>
           b
@@ -417,6 +534,8 @@ export class TaskModal extends Modal {
     }
 
     const timeSetting = new Setting(schedParent).setName("時間");
+    let startInput: HTMLInputElement | null = null;
+    let endInput: HTMLInputElement | null = null;
     timeSetting.addText((t) => {
       t.setPlaceholder("09:00")
         .setValue(this.startText)
@@ -428,6 +547,7 @@ export class TaskModal extends Modal {
       setupTimeInput(t.inputEl);
       if (listId) t.inputEl.setAttr("list", listId);
       t.inputEl.addEventListener("keydown", onKey);
+      startInput = t.inputEl;
     });
     timeSetting.controlEl.createSpan({ text: "〜", cls: "dt-modal-tilde" });
     timeSetting.addText((t) => {
@@ -441,23 +561,53 @@ export class TaskModal extends Modal {
       setupTimeInput(t.inputEl);
       if (listId) t.inputEl.setAttr("list", listId);
       t.inputEl.addEventListener("keydown", onKey);
+      endInput = t.inputEl;
     });
+    const clearTimes = () => {
+      this.startText = "";
+      this.endText = "";
+      if (startInput) startInput.value = "";
+      if (endInput) endInput.value = "";
+      this.updateHint();
+    };
     if (this.opts.allowUnscheduled) {
       timeSetting.addExtraButton((b) =>
-        b
-          .setIcon("timer-off")
-          .setTooltip("時刻を外して「未スケジュール」にする")
-          .onClick(() => {
-            this.startText = "";
-            this.endText = "";
-            const inputs = timeSetting.controlEl.querySelectorAll("input");
-            inputs.forEach((i) => ((i as HTMLInputElement).value = ""));
-            this.updateHint();
-          })
+        b.setIcon("timer-off").setTooltip("時刻を外して「未スケジュール」にする").onClick(clearTimes)
       );
     }
     this.hintEl = timeSetting.descEl;
     this.updateHint();
+    if (mobile) {
+      // 所要時間のワンタップ（開始が空なら「いま」を刻みに丸めた時刻から）。OS のピッカーを 2 回開かずに済む
+      const quick = timeSetting.settingEl.createDiv("dt-m-quick");
+      const setDuration = (min: number) => {
+        let start = parseTimeInput(this.startText);
+        if (start === null) {
+          const snap = Math.max(this.opts.snapMinutes, 5);
+          const now = new Date();
+          start = Math.min(1440 - min, Math.ceil((now.getHours() * 60 + now.getMinutes()) / snap) * snap);
+        }
+        const end = Math.min(1440, start + min);
+        this.startText = minutesToHHMM(start);
+        this.endText = minutesToHHMM(end);
+        if (startInput) startInput.value = this.startText;
+        if (endInput) endInput.value = this.endText;
+        this.updateHint();
+      };
+      for (const [label, min] of [
+        ["30分", 30],
+        ["1時間", 60],
+        ["2時間", 120],
+      ] as const) {
+        const b = quick.createEl("button", { cls: "dt-m-quick-btn", text: label, attr: { type: "button" } });
+        tip(b, "開始時刻からこの長さにします（開始が空ならいまの時刻から）");
+        b.onclick = () => setDuration(min);
+      }
+      if (this.opts.allowUnscheduled) {
+        const b = quick.createEl("button", { cls: "dt-m-quick-btn", text: "時刻なし", attr: { type: "button" } });
+        b.onclick = clearTimes;
+      }
+    }
 
     if (this.opts.showActual) {
       const actSetting = new Setting(schedParent).setName("実績");
@@ -494,9 +644,14 @@ export class TaskModal extends Modal {
       this.updateActualDesc();
     }
 
-    // ---- プロジェクト・誰の予定か（1行ずつ。横に並べるとラベル列が潰れる）----
-    if (this.opts.projects) this.buildProjectSection(contentEl);
-    if (this.opts.owners?.length) {
+    // ---- プロジェクト・誰の予定か（1行ずつ。横に並べるとラベル列が潰れる。モバイルはチップ）----
+    if (this.opts.projects) {
+      if (chipsEl) this.buildProjectChip(chipsEl);
+      else this.buildProjectSection(contentEl);
+    }
+    if (this.opts.owners?.length && chipsEl) {
+      this.buildOwnerChip(chipsEl, this.opts.owners);
+    } else if (this.opts.owners?.length) {
       const owners = this.opts.owners;
       const ownerSetting = new Setting(contentEl).setName("誰の予定か");
       ownerSetting.settingEl.addClass("dt-owner-setting");
@@ -523,46 +678,119 @@ export class TaskModal extends Modal {
     }
 
     // ---- タグ（親タグ → サブタグの2段。書き込むのは最も深い1つ）----
-    if (this.tagChoices.length) {
+    if (this.tagChoices.length && chipsEl && tagPanel) {
+      // モバイル: チップに選択中のタグを出し、タップで選択パネルを開閉
+      const chip = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-tag"], attr: { type: "button" } });
+      tip(chip, "タップでタグの選択を開閉します。");
+      const icon = chip.createSpan("dt-m-chip-icon");
+      setIcon(icon, "tag");
+      const text = chip.createSpan("dt-m-chip-text");
+      const panel = tagPanel;
+      const paintChip = () => {
+        const cur = deepestTag(this.selectedTags);
+        const def = this.tagChoices.find((c) => c.tag === cur) ?? this.tagChoices.find((c) => c.tag === cur.split("/")[0]);
+        text.setText(cur ? "#" + cur : "タグ");
+        chip.toggleClass("is-set", !!cur);
+        chip.style.setProperty("--dt-chip-color", cur && def ? def.color : "");
+        chip.style.setProperty("--dt-chip-fg", cur && def ? contrastTextColor(def.color) || "#fff" : "");
+      };
+      chip.onclick = () => {
+        const open = panel.hasClass("dt-collapsed");
+        panel.toggleClass("dt-collapsed", !open);
+        chip.toggleClass("is-open", open);
+      };
+      renderTagChips(panel, this.tagChoices, this.selectedTags, () => {
+        paintChip();
+        this.scheduleAutosave();
+      });
+      paintChip();
+    } else if (this.tagChoices.length) {
       const tagSetting = new Setting(contentEl).setName("タグ");
       tagSetting.settingEl.addClass("dt-tag-setting");
       tip(tagSetting.settingEl, "選んだタグは見出しの末尾に #タグ として書き込まれます（サブタグを選んだときはサブタグだけ）。");
       renderTagChips(tagSetting.controlEl, this.tagChoices, this.selectedTags, () => this.scheduleAutosave());
     }
 
-    // ---- ステップ（チェックリスト）----
-    this.buildStepsSection(contentEl);
+    // ---- ステップ（チェックリスト。モバイルはタイトルの直下）----
+    this.buildStepsSection(stepsHost);
 
     // ---- 備考（自由な本文）----
-    const detailSetting = new Setting(contentEl).setName("備考");
+    const detailSetting = new Setting(memoHost).setName("備考");
     tip(detailSetting.settingEl, "自由なメモ（Markdown）。ノートのブロック本文と相互に反映されます。");
     detailSetting.settingEl.addClass("dt-retro-setting");
-    textarea(detailSetting.controlEl, "dt-details-field", 2, 320, "自由なメモ（Markdown）", () => this.details, (v) => (this.details = v));
+    textarea(
+      detailSetting.controlEl,
+      "dt-details-field",
+      2,
+      mobile ? 480 : 320,
+      mobile ? "メモ" : "自由なメモ（Markdown）",
+      () => this.details,
+      (v) => (this.details = v)
+    );
 
     // ---- 詳細（チケット・リマインド・結果・ふりかえり）。値が入っていなければ畳んでおく ----
-    const detailsWrap = contentEl.createDiv("dt-details");
-    const detailsHead = detailsWrap.createEl("button", {
-      cls: "dt-details-toggle",
-      attr: { type: "button", "aria-expanded": "false" },
-    });
-    const detailsChevron = detailsHead.createSpan("dt-details-chevron");
-    detailsHead.createSpan({ text: "詳細" });
-    const detailsSub = detailsHead.createSpan("dt-details-sub");
-    const detailsBody = detailsWrap.createDiv("dt-details-body");
+    // モバイルでは「詳細」の見出しは出さず、欄ごとに下のツールバーのアイコンで開閉する
+    const detailsWrap = extraHost ?? contentEl.createDiv("dt-details");
+    let detailsBody: HTMLElement;
+    let setDetailsOpen: (open: boolean) => void = () => {};
     const detailsLabels: string[] = [];
-    const setDetailsOpen = (open: boolean) => {
-      detailsBody.toggleClass("dt-collapsed", !open);
-      detailsHead.setAttr("aria-expanded", String(open));
-      setIcon(detailsChevron, open ? "chevron-down" : "chevron-right");
-      // 隠れていた textarea は高さが 0 のままなので伸ばし直す
-      if (open) detailsBody.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => growTextarea(ta, 220));
+    let detailsSub: HTMLElement | null = null;
+    if (!extraHost) {
+      const detailsHead = detailsWrap.createEl("button", {
+        cls: "dt-details-toggle",
+        attr: { type: "button", "aria-expanded": "false" },
+      });
+      const detailsChevron = detailsHead.createSpan("dt-details-chevron");
+      detailsHead.createSpan({ text: "詳細" });
+      detailsSub = detailsHead.createSpan("dt-details-sub");
+      const body = detailsWrap.createDiv("dt-details-body");
+      detailsBody = body;
+      setDetailsOpen = (open: boolean) => {
+        body.toggleClass("dt-collapsed", !open);
+        detailsHead.setAttr("aria-expanded", String(open));
+        setIcon(detailsChevron, open ? "chevron-down" : "chevron-right");
+        // 隠れていた textarea は高さが 0 のままなので伸ばし直す
+        if (open) body.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => growTextarea(ta, 220));
+      };
+      detailsHead.onclick = () => setDetailsOpen(body.hasClass("dt-collapsed"));
+    } else {
+      detailsBody = extraHost;
+    }
+    /**
+     * 「詳細」の欄 1 つ分の親。モバイルでは欄ごとの入れ物（初めは畳む）を作り、
+     * ツールバーにアイコンを足す（タップで開閉。値があればアイコンに色が付く）
+     */
+    const extraField = (key: string, label: string, icon: string, hasValue: () => boolean): HTMLElement => {
+      detailsLabels.push(label);
+      if (!extraHost || !toolbar) return detailsBody;
+      const host = extraHost.createDiv({ cls: ["dt-m-field", "dt-collapsed"], attr: { "data-field": key } });
+      const b = toolbar.createEl("button", { cls: "dt-m-tool", attr: { type: "button", "aria-label": label } });
+      setIcon(b, iconName(icon));
+      toolIcons.set(key, b);
+      const setOpen = (open: boolean) => {
+        host.toggleClass("dt-collapsed", !open);
+        b.toggleClass("is-open", open);
+        if (open) {
+          host.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => growTextarea(ta, 220));
+          const focus = host.querySelector<HTMLElement>("input, textarea, select");
+          focus?.focus();
+          host.scrollIntoView({ block: "nearest" });
+        }
+      };
+      b.onclick = () => setOpen(host.hasClass("dt-collapsed"));
+      if (hasValue()) {
+        host.removeClass("dt-collapsed");
+        b.addClass("is-open");
+      }
+      host.addEventListener("input", () => paintTool(key, hasValue()));
+      host.addEventListener("change", () => paintTool(key, hasValue()));
+      paintTool(key, hasValue());
+      return host;
     };
-    detailsHead.onclick = () => setDetailsOpen(detailsBody.hasClass("dt-collapsed"));
 
     const trackers = this.opts.trackers ?? [];
     if (trackers.length) {
-      detailsLabels.push("チケット");
-      const tkSetting = new Setting(detailsBody).setName("チケット");
+      const tkSetting = new Setting(extraField("ticket", "チケット", "ticket", () => this.ticketId.trim() !== "")).setName("チケット");
       tip(tkSetting.settingEl, "管理ツールと番号を選ぶと、ブロックからチケットを開けます。");
       const updateDesc = () => {
         const url = this.ticketId.trim()
@@ -607,9 +835,8 @@ export class TaskModal extends Modal {
     }
 
     if (this.opts.reminderDefault !== undefined) {
-      detailsLabels.push("リマインド");
       const def = this.opts.reminderDefault;
-      const rmSetting = new Setting(detailsBody).setName("リマインド");
+      const rmSetting = new Setting(extraField("reminder", "リマインド", "bell", () => this.reminder !== null)).setName("リマインド");
       tip(rmSetting.settingEl, "開始の何分前に通知するか。");
       rmSetting.addDropdown((d) => {
         d.addOption("default", `既定（${def === 0 ? "開始時刻" : `${def}分前`}）`);
@@ -626,71 +853,70 @@ export class TaskModal extends Modal {
       });
     }
 
-    detailsLabels.push("結果");
-    const resSetting = new Setting(detailsBody).setName("結果");
+    const resSetting = new Setting(extraField("result", "結果", "clipboard-check", () => this.result.trim() !== "")).setName("結果");
     tip(resSetting.settingEl, "何がどこまで終わったか。ノートには「- 結果: …」として保存され、日報の元データになります。改行は「 / 」区切りで1行になります。");
     resSetting.settingEl.addClass("dt-retro-setting");
     textarea(resSetting.controlEl, "", 1, 220, "何がどこまで終わったか", () => this.result.replace(/ \/ /g, "\n"), (v) => (this.result = v));
 
     if (this.opts.mode === "edit") {
-      detailsLabels.push("ふりかえり");
-      const retroSetting = new Setting(detailsBody).setName("ふりかえり");
+      const retroSetting = new Setting(
+        extraField("retro", "ふりかえり", "message-square", () => this.retrospective.trim() !== "")
+      ).setName("ふりかえり");
       tip(retroSetting.settingEl, "作業してみてどうだったか・次はどう改善するか。ノートには「- ふりかえり: …」として保存されます。");
       retroSetting.settingEl.addClass("dt-retro-setting");
       textarea(retroSetting.controlEl, "", 1, 220, "作業してみてどうだったか・次はどう改善するか", () => this.retrospective.replace(/ \/ /g, "\n"), (v) => (this.retrospective = v));
     }
-    detailsSub.setText(detailsLabels.join("・"));
+    detailsSub?.setText(detailsLabels.join("・"));
     setDetailsOpen(
       this.ticketId.trim() !== "" || this.result.trim() !== "" || this.retrospective.trim() !== "" || this.reminder !== null
     );
 
-    const buttons = new Setting(contentEl);
-    buttons.settingEl.addClass("dt-modal-buttons");
-    if (this.autosaveOn) this.autosaveStatusEl = buttons.descEl;
-    // モバイルは「削除」「ノートで開く」をアイコンボタンにして1行に収める
-    if (this.opts.mode === "edit" && this.opts.onDelete) {
-      const onDelete = this.opts.onDelete;
-      buttons.addButton((b) => {
-        if (mobile) {
-          b.setIcon("trash-2").setTooltip("削除");
-          b.buttonEl.addClass("dt-m-icon-btn");
-          b.buttonEl.setAttr("aria-label", "削除");
-        } else {
-          b.setButtonText("削除");
-        }
-        b.setWarning().onClick(async () => {
-          this.close();
-          await onDelete();
-        });
-      });
-    }
-    if (this.opts.mode === "edit" && this.opts.onOpenNote) {
-      const onOpenNote = this.opts.onOpenNote;
-      buttons.addButton((b) => {
-        if (mobile) {
-          b.setIcon("file-text");
-          b.buttonEl.addClass("dt-m-icon-btn");
-          b.buttonEl.setAttr("aria-label", "ノートで開く");
-        } else {
-          b.setButtonText("ノートで開く");
-        }
-        b.setTooltip("このタスクのブロックをノートで開く").onClick(async () => {
-          this.close();
-          await onOpenNote();
-        });
-      });
-    }
-    if (this.autosaveOn) {
-      // 自動保存なので「保存」ボタンは出さない（閉じるだけでよい）
-      buttons.addButton((b) => b.setButtonText("閉じる").setCta().onClick(() => void this.submit()));
-    } else {
-      buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
-      buttons.addButton((b) =>
-        b
-          .setButtonText(this.opts.mode === "create" ? "追加" : "保存")
-          .setCta()
-          .onClick(() => void this.submit())
-      );
+    if (!mobile) {
+      const buttons = new Setting(contentEl);
+      buttons.settingEl.addClass("dt-modal-buttons");
+      if (this.autosaveOn) this.autosaveStatusEl = buttons.descEl;
+      if (this.opts.mode === "edit" && this.opts.onDelete) {
+        const onDelete = this.opts.onDelete;
+        buttons.addButton((b) =>
+          b
+            .setButtonText("削除")
+            .setWarning()
+            .onClick(async () => {
+              this.close();
+              await onDelete();
+            })
+        );
+      }
+      if (this.opts.mode === "edit" && this.opts.onOpenNote) {
+        const onOpenNote = this.opts.onOpenNote;
+        buttons.addButton((b) =>
+          b
+            .setButtonText("ノートで開く")
+            .setTooltip("このタスクのブロックをノートで開く")
+            .onClick(async () => {
+              this.close();
+              await onOpenNote();
+            })
+        );
+      }
+      if (this.autosaveOn) {
+        // 自動保存なので「保存」ボタンは出さない（閉じるだけでよい）
+        buttons.addButton((b) => b.setButtonText("閉じる").setCta().onClick(() => void this.submit()));
+      } else {
+        buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
+        buttons.addButton((b) =>
+          b
+            .setButtonText(this.opts.mode === "create" ? "追加" : "保存")
+            .setCta()
+            .onClick(() => void this.submit())
+        );
+      }
+    } else if (toolbar && this.opts.showActual) {
+      // 実績のアイコンは値の有無で色を変える（入力は日時の欄の中）
+      const paintActual = () => paintTool("actual", (this.parseActual() ?? []).length > 0);
+      contentEl.addEventListener("input", paintActual);
+      contentEl.addEventListener("change", paintActual);
+      paintActual();
     }
 
     if (this.autosaveOn) {
@@ -859,24 +1085,155 @@ export class TaskModal extends Modal {
 
   // ---------- プロジェクト ----------
 
-  /** 「プロジェクト」欄（入力で絞り込んで選択・新規作成・ノートを開く） */
-  private buildProjectSection(contentEl: HTMLElement): Setting {
+  /** プロジェクトの表示名（完了済みは「（完了）」付き。このダイアログで作ったものは覚えた名前） */
+  private projectLabel(link: string | null): string {
+    if (!link) return "";
+    const p = (this.opts.projects ?? []).find((x) => x.linktext === link);
+    if (p) return p.done ? p.name + "（完了）" : p.name;
+    return this.createdProjects.get(link) ?? projectDisplayName(link);
+  }
+
+  /** 「プロジェクト」の候補（入力欄のポップアップとモバイルの選択シートで共通） */
+  private projectChoices(query: string): ProjectChoice[] {
     const projects = this.opts.projects ?? [];
+    const q = query.trim();
+    // 選択中の名前がそのまま入っている間は絞り込まない（全候補を出す）
+    const filtering = q !== "" && q !== this.projectLabel(this.project);
+    const match = filtering ? prepareSimpleSearch(q) : null;
+    const out: ProjectChoice[] = [];
+    const current = this.project;
+    if (current && !filtering) {
+      out.push({ kind: "project", linktext: current, label: this.projectLabel(current), matches: null, current: true });
+    }
+    for (const p of projects) {
+      if (!filtering && p.linktext === current) continue;
+      // 完了済のプロジェクトは選択肢に出さない（既に選ばれているものは表示を保つ）
+      if (p.done && p.linktext !== current) continue;
+      const label = this.projectLabel(p.linktext);
+      const r = match ? match(label) : null;
+      if (match && !r) continue;
+      out.push({ kind: "project", linktext: p.linktext, label, matches: r?.matches ?? null, current: p.linktext === current });
+    }
+    if (filtering) {
+      for (const [link, name] of this.createdProjects) {
+        if (projects.some((p) => p.linktext === link)) continue;
+        const r = match?.(name);
+        if (r) out.push({ kind: "project", linktext: link, label: name, matches: r.matches, current: link === current });
+      }
+    }
+    if (!filtering && current) out.push({ kind: "none" });
+    const exact = projects.some((p) => p.name === q) || Array.from(this.createdProjects.values()).includes(q);
+    if (filtering && !exact && this.opts.onCreateProject) out.push({ kind: "create", name: q });
+    return out;
+  }
+
+  /** 候補を選んだときの処理（新規作成も含む）。表示の更新は onProjectChanged に任せる */
+  private async chooseProject(c: ProjectChoice): Promise<void> {
+    if (c.kind === "create") {
+      const link = await this.opts.onCreateProject?.(c.name);
+      if (!link) {
+        new Notice("プロジェクトを作成できませんでした");
+        this.onProjectChanged?.();
+        return;
+      }
+      this.createdProjects.set(link, projectDisplayName(link));
+      this.project = link;
+    } else {
+      this.project = c.kind === "project" ? c.linktext : null;
+    }
+    this.onProjectChanged?.();
+    this.scheduleAutosave(); // 候補はダイアログの外に出るので明示的に
+  }
+
+  /** モバイル: プロジェクトのチップ（タップで選択シートを開く） */
+  private buildProjectChip(chipsEl: HTMLElement): void {
+    const chip = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-project"], attr: { type: "button" } });
+    chip.setAttr("title", "タップでプロジェクトを選びます（入力で絞り込み・新規作成もできます）。");
+    const icon = chip.createSpan("dt-m-chip-icon");
+    setIcon(icon, "folder");
+    const text = chip.createSpan("dt-m-chip-text");
+    const paint = () => {
+      text.setText(this.project ? this.projectLabel(this.project) : "プロジェクト");
+      chip.toggleClass("is-set", !!this.project);
+    };
+    this.onProjectChanged = paint;
+    paint();
+    chip.onclick = () => {
+      new ChoiceModal(this.app, {
+        title: "プロジェクト",
+        search: true,
+        placeholder: "入力して絞り込み（候補に無い名前は新規作成）",
+        items: (q) =>
+          this.projectChoices(q).map((c) =>
+            c.kind === "project"
+              ? { key: c.linktext, label: c.label, current: c.current, data: c }
+              : c.kind === "none"
+                ? { key: "", label: "なし（プロジェクトから外す）", kind: "none", data: c }
+                : { key: "\u0000create", label: `＋ 新規作成「${c.name}」`, kind: "create", data: c }
+          ),
+        onChoose: (item) => void this.chooseProject(item.data as ProjectChoice),
+        extra: this.project && this.opts.onOpenProject
+          ? {
+              label: "プロジェクトノートを開く",
+              icon: "arrow-up-right",
+              onClick: () => {
+                const open = this.opts.onOpenProject;
+                const link = this.project;
+                if (!open || !link) return;
+                this.close(); // 自動保存があれば閉じるときに保存される
+                void open(link);
+              },
+            }
+          : undefined,
+      }).open();
+    };
+  }
+
+  /** モバイル: 「誰の予定か」のチップ（タップで選択シートを開く） */
+  private buildOwnerChip(chipsEl: HTMLElement, owners: NonNullable<TaskModalOptions["owners"]>): void {
+    const chip = chipsEl.createEl("button", { cls: ["dt-m-chip", "dt-m-chip-owner"], attr: { type: "button" } });
+    chip.setAttr(
+      "title",
+      this.opts.mode === "edit" ? "変えると、その人のノートへブロックごと移ります。" : "自分以外を選ぶと、その人の予定として登録します。"
+    );
+    const dot = chip.createSpan("dt-owner-dot");
+    const text = chip.createSpan("dt-m-chip-text");
+    const paint = () => {
+      const o = owners.find((x) => (x.id ?? null) === (this.owner ?? null));
+      dot.style.background = o?.color || "transparent";
+      dot.toggleClass("is-self", !o?.color);
+      text.setText(o?.name ?? "自分");
+      chip.toggleClass("is-set", !!this.owner);
+    };
+    paint();
+    chip.onclick = () => {
+      new ChoiceModal(this.app, {
+        title: "誰の予定か",
+        items: () =>
+          owners.map((o) => ({
+            key: o.id ?? "",
+            label: o.name,
+            current: (o.id ?? null) === (this.owner ?? null),
+            color: o.color || null,
+          })),
+        onChoose: (item) => {
+          this.owner = item.key || null;
+          paint();
+          this.scheduleAutosave();
+        },
+      }).open();
+    };
+  }
+
+  /** 「プロジェクト」欄（入力で絞り込んで選択・新規作成・ノートを開く。デスクトップ） */
+  private buildProjectSection(contentEl: HTMLElement): Setting {
     const setting = new Setting(contentEl).setName("プロジェクト");
     setting.settingEl.addClass("dt-project-setting");
     setting.settingEl.setAttr(
       "title",
       "入力すると候補を絞り込めます（スペース区切りで複数語）。候補に無い名前は「＋ 新規作成」で作れます。↗ ボタンでプロジェクトノートを開けます。"
     );
-
-    /** 作成したプロジェクト（opts.projects には無いので名前をここで覚える） */
-    const created = new Map<string, string>();
-    const labelOf = (link: string | null): string => {
-      if (!link) return "";
-      const p = projects.find((x) => x.linktext === link);
-      if (p) return p.done ? p.name + "（完了）" : p.name;
-      return created.get(link) ?? projectDisplayName(link);
-    };
+    const labelOf = (link: string | null) => this.projectLabel(link);
 
     const input = setting.controlEl.createEl("input", {
       type: "text",
@@ -886,58 +1243,12 @@ export class TaskModal extends Modal {
     input.value = labelOf(this.project);
     // 自動保存の見張り（contentEl の input）に打鍵を拾わせない。値は選んだときに変わる
     input.addEventListener("input", (e) => e.stopPropagation());
-
-    const choose = async (c: ProjectChoice) => {
-      if (c.kind === "create") {
-        const link = await this.opts.onCreateProject?.(c.name);
-        if (!link) {
-          new Notice("プロジェクトを作成できませんでした");
-          input.value = labelOf(this.project);
-          return;
-        }
-        created.set(link, projectDisplayName(link));
-        this.project = link;
-      } else {
-        this.project = c.kind === "project" ? c.linktext : null;
-      }
+    this.onProjectChanged = () => {
       input.value = labelOf(this.project);
       input.blur();
-      this.scheduleAutosave(); // 候補はダイアログの外に出るので明示的に
     };
 
-    const suggestions = (query: string): ProjectChoice[] => {
-      const q = query.trim();
-      // 選択中の名前がそのまま入っている間は絞り込まない（全候補を出す）
-      const filtering = q !== "" && q !== labelOf(this.project);
-      const match = filtering ? prepareSimpleSearch(q) : null;
-      const out: ProjectChoice[] = [];
-      const current = this.project;
-      if (current && !filtering) {
-        out.push({ kind: "project", linktext: current, label: labelOf(current), matches: null, current: true });
-      }
-      for (const p of projects) {
-        if (!filtering && p.linktext === current) continue;
-        // 完了済のプロジェクトは選択肢に出さない（既に選ばれているものは表示を保つ）
-        if (p.done && p.linktext !== current) continue;
-        const label = labelOf(p.linktext);
-        const r = match ? match(label) : null;
-        if (match && !r) continue;
-        out.push({ kind: "project", linktext: p.linktext, label, matches: r?.matches ?? null, current: p.linktext === current });
-      }
-      if (filtering) {
-        for (const [link, name] of created) {
-          if (projects.some((p) => p.linktext === link)) continue;
-          const r = match?.(name);
-          if (r) out.push({ kind: "project", linktext: link, label: name, matches: r.matches, current: link === current });
-        }
-      }
-      if (!filtering && current) out.push({ kind: "none" });
-      const exact = projects.some((p) => p.name === q) || Array.from(created.values()).includes(q);
-      if (filtering && !exact && this.opts.onCreateProject) out.push({ kind: "create", name: q });
-      return out;
-    };
-
-    new ProjectSuggest(this.app, input, suggestions, (c) => void choose(c));
+    new ProjectSuggest(this.app, input, (q) => this.projectChoices(q), (c) => void this.chooseProject(c));
     // 入力欄に入ったら全選択（そのまま打てば置き換わる）
     input.addEventListener("focus", () => window.setTimeout(() => input.select(), 0));
     // フォーカスしたままのクリックでも候補を出し直す（選んだ直後など）
@@ -1413,6 +1724,115 @@ export function joinTitleAndTags(title: string, choices: TagColor[], selected: S
 }
 
 /** 削除の確認（本文があるタスク用） */
+/** 選択シートの 1 件 */
+export interface ChoiceItem {
+  key: string;
+  label: string;
+  current?: boolean;
+  /** 色の丸を付ける（メンバーの色など） */
+  color?: string | null;
+  /** 見た目の種類（none = 「なし」、create = 「新規作成」） */
+  kind?: "item" | "none" | "create";
+  /** 呼び出し側が使う任意の値 */
+  data?: unknown;
+}
+
+export interface ChoiceModalOptions {
+  title: string;
+  /** 検索欄を出す（items は入力のたびに呼ばれる） */
+  search?: boolean;
+  placeholder?: string;
+  items: (query: string) => ChoiceItem[];
+  onChoose: (item: ChoiceItem) => void;
+  /** 一覧の下に出す補助の操作（「プロジェクトノートを開く」など） */
+  extra?: { label: string; icon: string; onClick: () => void };
+}
+
+/**
+ * モバイル向けの選択シート（プロジェクト・誰の予定か）。
+ * 入力欄に候補がぶら下がるポップアップは指では選びにくいので、
+ * 一覧を大きなボタンで出し、タップで決めて閉じる
+ */
+export class ChoiceModal extends Modal {
+  constructor(
+    app: App,
+    private opts: ChoiceModalOptions
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("dt-modal");
+    this.modalEl.addClass("dt-choice-modal");
+    this.titleEl.setText(this.opts.title);
+    const { contentEl } = this;
+    let query = "";
+    const list = contentEl.createDiv("dt-choice-list");
+    const render = () => {
+      list.empty();
+      const items = this.opts.items(query);
+      if (!items.length) {
+        list.createDiv({ cls: "dt-choice-empty", text: "候補がありません" });
+        return;
+      }
+      for (const item of items) {
+        const b = list.createEl("button", { cls: "dt-choice", attr: { type: "button" } });
+        if (item.kind === "none") b.addClass("is-none");
+        if (item.kind === "create") b.addClass("is-create");
+        if (item.current) b.addClass("is-current");
+        if (item.color) {
+          const dot = b.createSpan("dt-owner-dot");
+          dot.style.background = item.color;
+        }
+        b.createSpan({ cls: "dt-choice-label", text: item.label });
+        if (item.current) setIcon(b.createSpan("dt-choice-check"), "check");
+        b.onclick = () => {
+          this.close();
+          this.opts.onChoose(item);
+        };
+      }
+    };
+    if (this.opts.search) {
+      const input = contentEl.createEl("input", {
+        type: "text",
+        cls: "dt-choice-search",
+        attr: { placeholder: this.opts.placeholder ?? "入力して絞り込み", spellcheck: "false" },
+      });
+      contentEl.prepend(input);
+      input.addEventListener("input", () => {
+        query = input.value;
+        render();
+      });
+      input.addEventListener("keydown", (e: KeyboardEvent) => {
+        // Enter で先頭の候補を選ぶ（変換確定の Enter は無視）
+        if (e.key === "Enter" && !e.isComposing) {
+          e.preventDefault();
+          const first = this.opts.items(query)[0];
+          if (first) {
+            this.close();
+            this.opts.onChoose(first);
+          }
+        }
+      });
+    }
+    render();
+    const extra = this.opts.extra;
+    if (extra) {
+      const b = contentEl.createEl("button", { cls: ["dt-choice", "dt-choice-extra"], attr: { type: "button" } });
+      setIcon(b.createSpan("dt-choice-extra-icon"), extra.icon);
+      b.createSpan({ cls: "dt-choice-label", text: extra.label });
+      b.onclick = () => {
+        this.close();
+        extra.onClick();
+      };
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export class ConfirmModal extends Modal {
   constructor(
     app: App,
