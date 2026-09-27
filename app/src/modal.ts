@@ -266,7 +266,12 @@ export class TaskModal extends Modal {
       const dropCloseButton = () => {
         this.containerEl.querySelectorAll(".modal-close-button").forEach((el) => el.remove());
         for (const el of Array.from(this.modalEl.children)) {
-          if (el === this.contentEl || el === this.titleEl || el.contains(this.titleEl)) continue;
+          if (el === this.contentEl) continue;
+          // 見出しを包む領域（.modal-header）は、見出しを隠しても高さが残ってカードの上に空白を作るので、領域ごと隠す
+          if (el === this.titleEl || el.contains(this.titleEl)) {
+            el.addClass("dt-m-hidden-title");
+            continue;
+          }
           el.remove();
         }
       };

@@ -2007,7 +2007,13 @@
    枠線は使わず、文字と余白で区切る（ダークテーマで枠線が背景に溶けるため）。
    （.dt-modal-compact は modal.ts のタスクダイアログが常に付ける。.dt-modal-mobile はモバイルのときだけ） */
 .dt-modal-compact .dt-m-hidden-title {
-  display: none;
+  display: none !important;
+}
+/* 本体の見出し領域が残っても高さを持たせない（上の空白の原因） */
+.dt-modal-compact .modal-header {
+  padding: 0;
+  margin: 0;
+  min-height: 0;
 }
 /* PC: 幅 560px のカード。内容ぶんの高さで、長ければ中がスクロールする */
 body:not(.is-mobile) .modal.dt-modal.dt-modal-compact {
@@ -2067,7 +2073,7 @@ body.is-mobile .modal.dt-modal.dt-modal-compact {
   border-radius: 18px;
   background: var(--background-primary);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-  padding: 0 20px;
+  padding: 4px 20px 0; /* 上は上部バーの余白だけ（本体の大きな上余白は使わない） */
 }
 /* カードの中で開く面（日時の欄・タグの選択・詳細）は、さらにひと段階明るく */
 body.theme-dark .dt-modal-compact .dt-m-sched-body,
