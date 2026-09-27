@@ -2009,9 +2009,11 @@
 .dt-modal-mobile .dt-m-hidden-title {
   display: none;
 }
-/* Obsidian 本体がモバイルのモーダルに付ける大きな × は出さない（⋮ の「閉じる」か外側のタップで閉じる） */
-.dt-modal-mobile .modal-close-button {
-  display: none;
+/* Obsidian 本体がモバイルのモーダルに付ける大きな × は出さない（⋮ の「閉じる」か外側のタップで閉じる）。
+   モバイルではこのボタンが .modal の外（.modal-container 直下）に置かれることがあるので両方に効かせる */
+.dt-modal-mobile .modal-close-button,
+body.is-mobile .modal-container:has(.dt-modal-mobile) .modal-close-button {
+  display: none !important;
 }
 /* 入れ物ごとの区切り線は出さない（デスクトップの設定行の区切りは使わない） */
 .modal.dt-modal.dt-modal-mobile .modal-content > :not(:first-child) {
@@ -2204,6 +2206,60 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   height: 10px;
   margin: 0;
 }
+/* ステップの進捗（日時の行の右端） */
+.dt-modal-mobile .dt-m-progress {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+.dt-modal-mobile .dt-m-progress.is-hidden {
+  display: none;
+}
+.dt-modal-mobile .dt-m-progress-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+.dt-modal-mobile .dt-m-progress-icon svg {
+  width: 18px;
+  height: 18px;
+}
+/* 実績 / 予定 の行（TickTick の 0m / 15m と同じ。タップで実績の入力へ） */
+.dt-modal-mobile button.dt-m-duration {
+  min-height: 0;
+  height: auto;
+  width: 100%;
+  padding: 6px 0 10px;
+  margin: 0 !important;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  font-size: var(--font-ui-medium);
+  color: var(--text-muted);
+}
+.dt-modal-mobile button.dt-m-duration.is-set {
+  color: var(--text-normal);
+}
+.dt-modal-mobile button.dt-m-duration.is-error {
+  color: var(--text-error);
+}
+.dt-modal-mobile .dt-m-duration-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-normal);
+}
+.dt-modal-mobile .dt-m-duration-icon svg {
+  width: 22px;
+  height: 22px;
+}
 
 /* 日時の欄（開いたとき）とタグの選択: 少し明るい面にまとめる（枠線なし） */
 .dt-modal-mobile .dt-m-sched-body,
@@ -2254,7 +2310,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   display: none;
 }
 .dt-modal-mobile .dt-title-setting input.dt-title-input {
-  font-size: 1.45em;
+  font-size: 1.35em;
   font-weight: 700;
   color: var(--text-normal);
   background: transparent !important;
@@ -2282,15 +2338,49 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   margin: 0;
 }
 .dt-modal-mobile .dt-m-steps .dt-steps-head,
-.dt-modal-mobile .dt-m-steps .dt-steps-progress,
-.dt-modal-mobile .dt-m-steps .dt-step-grip {
+.dt-modal-mobile .dt-m-steps .dt-steps-progress {
   display: none;
 }
+.dt-modal-mobile .dt-m-steps .dt-steps-list {
+  gap: 0;
+}
+/* 行は箱にせず、TickTick と同じく薄い区切り線だけ */
 .dt-modal-mobile .dt-m-steps .dt-step,
 .dt-modal-mobile .dt-m-steps .dt-step-add {
-  min-height: 38px;
-  padding-left: 0;
-  gap: 10px;
+  min-height: 44px;
+  padding: 4px 0;
+  margin: 0;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+}
+.dt-modal-mobile .dt-m-steps .dt-step.is-dragging {
+  opacity: 0.5;
+  background: var(--background-modifier-hover);
+}
+.dt-modal-mobile .dt-m-steps .dt-step-placeholder {
+  border: 1.5px dashed var(--interactive-accent);
+  border-radius: var(--radius-s);
+}
+/* 並べ替えのつまみは右端（TickTick の ≡ の位置）。× はその行を触っているときだけ */
+.dt-modal-mobile .dt-m-steps .dt-step-grip {
+  order: 3;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  touch-action: none;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-grip svg {
+  width: 20px;
+  height: 20px;
+}
+.dt-modal-mobile .dt-m-steps .dt-step-delete {
+  order: 2;
 }
 .dt-modal-mobile .dt-m-steps .dt-step-check,
 .dt-modal-mobile .dt-m-steps .dt-step-add-icon {
@@ -2303,11 +2393,12 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 }
 .dt-modal-mobile .dt-m-steps .dt-step-check svg,
 .dt-modal-mobile .dt-m-steps .dt-step-add-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
 }
+/* 完了したステップは TickTick と同じく灰色に */
 .dt-modal-mobile .dt-m-steps .dt-step.is-done .dt-step-check {
-  color: var(--text-accent);
+  color: var(--text-faint);
 }
 .dt-modal-mobile .dt-m-steps .dt-step-text,
 .dt-modal-mobile .dt-m-steps .dt-step-add input {
@@ -2322,13 +2413,16 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   color: var(--text-muted);
 }
 .dt-modal-mobile .dt-m-steps .dt-step-delete {
-  opacity: 1;
+  opacity: 0;
   width: 28px;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
+}
+.dt-modal-mobile .dt-m-steps .dt-step:focus-within .dt-step-delete {
+  opacity: 1;
 }
 
 /* メモ: ラベル無し・枠なしの本文 */
@@ -2347,7 +2441,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   border-color: transparent;
   padding-left: 0;
   padding-right: 0;
-  min-height: 48px;
+  min-height: 40px;
   color: var(--text-normal);
 }
 .dt-modal-mobile .dt-m-memo .dt-details-field.is-active {
@@ -2408,7 +2502,7 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 18px;
   margin: auto 0 0 !important;
   padding: 10px 0 6px;
   background: var(--background-primary);
@@ -2440,13 +2534,15 @@ body.is-mobile .modal.dt-modal.dt-modal-mobile .modal-content {
 .dt-modal-mobile button.dt-m-tool.is-open {
   background: var(--background-modifier-hover);
 }
+/* 保存の状態は失敗したときだけ出す（TickTick には無い） */
 .dt-modal-mobile .dt-m-status {
+  display: none;
   margin-left: auto;
   font-size: 10px;
-  color: var(--text-muted);
   white-space: nowrap;
 }
 .dt-modal-mobile .dt-m-status.dt-autosave-error {
+  display: block;
   color: var(--text-error);
 }
 /* 行間は少し詰める */
