@@ -690,7 +690,7 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-/* プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行） */
+/* プロジェクト自身の期日（frontmatter の due）・チケット（ノートの「- チケット: 」行） */
 .dt-project-due,
 .dt-project-ticket {
   flex: 0 0 auto;
@@ -701,20 +701,6 @@
   padding: 0 4px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  line-height: 1.5;
-}
-/* 未着手のプロジェクト（frontmatter の started が true でない）: 名前を薄くしてラベルを付ける */
-.dt-project-row.is-not-started .dt-project-name {
-  color: var(--text-muted);
-}
-.dt-project-not-started {
-  flex: 0 0 auto;
-  font-size: 0.72em;
-  color: var(--text-faint);
-  border: 1px dashed var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  padding: 0 4px;
-  white-space: nowrap;
   line-height: 1.5;
 }
 /* 期日を過ぎたプロジェクト */
@@ -1629,18 +1615,6 @@
 .dt-event.is-short .dt-event-carry,
 .dt-event.is-tiny .dt-event-carry {
   display: none;
-}
-
-/* 編集ダイアログの「＋ 新規作成…」の入力欄 */
-.dt-modal .dt-prompt-input {
-  width: 100%;
-}
-.dt-modal .dt-project-new {
-  display: none;
-  width: 200px;
-}
-.dt-modal .dt-project-new.is-visible {
-  display: inline-block;
 }
 
 .dt-event-resize {
@@ -2808,12 +2782,8 @@ body.is-mobile .modal.dt-modal.dt-modal-compact .modal-content {
 .dt-modal button.dt-choice.is-current {
   background: var(--background-modifier-hover);
 }
-.dt-modal button.dt-choice.is-none,
-.dt-modal button.dt-choice.is-create {
+.dt-modal button.dt-choice.is-none {
   color: var(--text-muted);
-}
-.dt-modal button.dt-choice.is-create {
-  color: var(--text-accent);
 }
 .dt-modal button.dt-choice .dt-choice-label {
   flex: 1 1 auto;

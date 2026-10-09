@@ -57,7 +57,7 @@ export interface FieldDef {
  * フィールドの追加・ラベルの変更・メタ行の文法の変更など、**ノートの読み書きの約束が変わったときだけ**上げる
  * （プラグインのバージョンとは別。UI だけの変更では上げない）
  */
-export const FORMAT_VERSION = "2.1";
+export const FORMAT_VERSION = "3.0";
 
 /** 状態の値の種類。中断だけは「中断(理由)」のように理由を付けられる */
 export const STATUS_KINDS = ["未着手", "進行中", "中断", "回答待ち", "期限未定"] as const;

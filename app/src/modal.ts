@@ -46,8 +46,6 @@ export interface TaskModalOptions {
   showActual?: boolean;
   /** プロジェクト（大きなタスク）の選択肢。渡すと欄を出す */
   projects?: ProjectRef[];
-  /** 新しいプロジェクトノートを作る。作れたらリンク先を返す */
-  onCreateProject?: (name: string) => Promise<string | null>;
   /** プロジェクトノートを開く（ダイアログは閉じてから呼ばれる） */
   onOpenProject?: (linktext: string) => void | Promise<void>;
   /** チケット管理ツール（登録があれば「詳細」にチケット欄を出す） */
@@ -80,11 +78,10 @@ export interface OtherActual {
 /** 実績の重複とみなす最小の分数（これ以下の重なりは注意しない） */
 const OVERLAP_MIN = 15;
 
-/** 「プロジェクト」欄の候補 1 件 */
+/** 「プロジェクト」欄の候補 1 件（既存のノートから選ぶか、外すか。新規作成は Bases などで行う） */
 type ProjectChoice =
   | { kind: "project"; linktext: string; label: string; matches: SearchMatches | null; current: boolean }
-  | { kind: "none" }
-  | { kind: "create"; name: string };
+  | { kind: "none" };
 
 /**
  * モバイル: 文字の入力欄にフォーカスがある間は is-keyboard-focus を付ける
@@ -197,8 +194,6 @@ export class TaskModal extends Modal {
   private refreshSchedSummary: (() => void) | null = null;
   /** 実績欄の下の注意（合計・重複） */
   private actualDescEl: HTMLElement | null = null;
-  /** このダイアログで作成したプロジェクト（opts.projects には無いので名前をここで覚える） */
-  private createdProjects = new Map<string, string>();
   /** プロジェクトの選択が変わったときに表示（入力欄・チップ）を更新する */
   private onProjectChanged: (() => void) | null = null;
   /** モバイル: 日時の行の右に出すステップの進捗（33% など）。無ければ null */
@@ -1087,12 +1082,12 @@ export class TaskModal extends Modal {
 
   // ---------- プロジェクト ----------
 
-  /** プロジェクトの表示名（完了済みは「（完了）」付き。このダイアログで作ったものは覚えた名前） */
+  /** プロジェクトの表示名（完了済みは「（完了）」付き。一覧に無いリンクはファイル名） */
   private projectLabel(link: string | null): string {
     if (!link) return "";
     const p = (this.opts.projects ?? []).find((x) => x.linktext === link);
     if (p) return p.done ? p.name + "（完了）" : p.name;
-    return this.createdProjects.get(link) ?? projectDisplayName(link);
+    return projectDisplayName(link);
   }
 
   /** 「プロジェクト」の候補（入力欄のポップアップとモバイルの選択シートで共通） */
@@ -1116,33 +1111,13 @@ export class TaskModal extends Modal {
       if (match && !r) continue;
       out.push({ kind: "project", linktext: p.linktext, label, matches: r?.matches ?? null, current: p.linktext === current });
     }
-    if (filtering) {
-      for (const [link, name] of this.createdProjects) {
-        if (projects.some((p) => p.linktext === link)) continue;
-        const r = match?.(name);
-        if (r) out.push({ kind: "project", linktext: link, label: name, matches: r.matches, current: link === current });
-      }
-    }
     if (!filtering && current) out.push({ kind: "none" });
-    const exact = projects.some((p) => p.name === q) || Array.from(this.createdProjects.values()).includes(q);
-    if (filtering && !exact && this.opts.onCreateProject) out.push({ kind: "create", name: q });
     return out;
   }
 
-  /** 候補を選んだときの処理（新規作成も含む）。表示の更新は onProjectChanged に任せる */
-  private async chooseProject(c: ProjectChoice): Promise<void> {
-    if (c.kind === "create") {
-      const link = await this.opts.onCreateProject?.(c.name);
-      if (!link) {
-        new Notice("プロジェクトを作成できませんでした");
-        this.onProjectChanged?.();
-        return;
-      }
-      this.createdProjects.set(link, projectDisplayName(link));
-      this.project = link;
-    } else {
-      this.project = c.kind === "project" ? c.linktext : null;
-    }
+  /** 候補を選んだときの処理。表示の更新は onProjectChanged に任せる */
+  private chooseProject(c: ProjectChoice): void {
+    this.project = c.kind === "project" ? c.linktext : null;
     this.onProjectChanged?.();
     this.scheduleAutosave(); // 候補はダイアログの外に出るので明示的に
   }
@@ -1150,7 +1125,7 @@ export class TaskModal extends Modal {
   /** 上部バー左のプロジェクト名（TickTick のリスト名の位置。クリックで選択シートを開く） */
   private buildProjectChip(host: HTMLElement): void {
     const chip = host.createEl("button", { cls: "dt-m-project-btn", attr: { type: "button" } });
-    chip.setAttr("title", "タップでプロジェクトを選びます（入力で絞り込み・新規作成もできます）。");
+    chip.setAttr("title", "タップでプロジェクトを選びます（入力で絞り込めます。ノートの作成は Bases などで）。");
     const text = chip.createSpan("dt-m-project-text");
     const chevron = chip.createSpan("dt-m-project-chevron");
     setIcon(chevron, "chevrons-up-down");
@@ -1164,16 +1139,14 @@ export class TaskModal extends Modal {
       new ChoiceModal(this.app, {
         title: "プロジェクト",
         search: true,
-        placeholder: "入力して絞り込み（候補に無い名前は新規作成）",
+        placeholder: "入力して絞り込み",
         items: (q) =>
           this.projectChoices(q).map((c) =>
             c.kind === "project"
               ? { key: c.linktext, label: c.label, current: c.current, data: c }
-              : c.kind === "none"
-                ? { key: "", label: "なし（プロジェクトから外す）", kind: "none", data: c }
-                : { key: "\u0000create", label: `＋ 新規作成「${c.name}」`, kind: "create", data: c }
+              : { key: "", label: "なし（プロジェクトから外す）", kind: "none", data: c }
           ),
-        onChoose: (item) => void this.chooseProject(item.data as ProjectChoice),
+        onChoose: (item) => this.chooseProject(item.data as ProjectChoice),
         extra: this.project && this.opts.onOpenProject
           ? {
               label: "プロジェクトノートを開く",
@@ -1683,8 +1656,8 @@ export interface ChoiceItem {
   current?: boolean;
   /** 色の丸を付ける（メンバーの色など） */
   color?: string | null;
-  /** 見た目の種類（none = 「なし」、create = 「新規作成」） */
-  kind?: "item" | "none" | "create";
+  /** 見た目の種類（none = 「なし」） */
+  kind?: "item" | "none";
   /** 呼び出し側が使う任意の値 */
   data?: unknown;
 }
@@ -1733,7 +1706,6 @@ export class ChoiceModal extends Modal {
       for (const item of items) {
         const b = list.createEl("button", { cls: "dt-choice", attr: { type: "button" } });
         if (item.kind === "none") b.addClass("is-none");
-        if (item.kind === "create") b.addClass("is-create");
         if (item.current) b.addClass("is-current");
         if (item.color) {
           const dot = b.createSpan("dt-owner-dot");
@@ -1816,163 +1788,6 @@ export class ConfirmModal extends Modal {
           await this.onConfirm();
         })
     );
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-export interface PromptOptions {
-  title: string;
-  placeholder?: string;
-  /** 決定ボタンのラベル */
-  cta: string;
-  initial?: string;
-  /** 空欄のままでは呼ばれない（trim 済みの値を渡す） */
-  onSubmit: (value: string) => void | Promise<void>;
-}
-
-/** 1行テキストの入力ダイアログ（プロジェクトのグループ名など） */
-export class PromptModal extends Modal {
-  constructor(
-    app: App,
-    private opts: PromptOptions
-  ) {
-    super(app);
-  }
-
-  onOpen(): void {
-    this.modalEl.addClass("dt-modal");
-    this.titleEl.setText(this.opts.title);
-    const input = this.contentEl.createEl("input", {
-      type: "text",
-      cls: "dt-prompt-input",
-      attr: { placeholder: this.opts.placeholder ?? "" },
-    });
-    input.value = this.opts.initial ?? "";
-    const submit = () => {
-      const v = input.value.trim();
-      if (!v) return;
-      this.close();
-      void this.opts.onSubmit(v);
-    };
-    input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.isComposing) return;
-      if (e.key === "Enter") {
-        e.preventDefault();
-        submit();
-      }
-    });
-    const buttons = new Setting(this.contentEl);
-    buttons.settingEl.addClass("dt-modal-buttons");
-    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
-    buttons.addButton((b) => b.setButtonText(this.opts.cta).setCta().onClick(submit));
-    window.setTimeout(() => input.focus(), 0);
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-export interface ProjectCreateOptions {
-  /** グループの選択肢（設定の並び順 + 使用中のもの） */
-  groups: string[];
-  /** 最初から選んでおくグループ（null / 無指定 = なし） */
-  initialGroup?: string | null;
-  /** 使うテンプレートのパス（表示用）。null = 最小の雛形で作る */
-  templatePath?: string | null;
-  /** 空欄のままでは呼ばれない（trim 済みの名前と、選んだグループを渡す） */
-  onSubmit: (name: string, group: string | null) => void | Promise<void>;
-}
-
-/** 新しいプロジェクトを作るダイアログ（パネルの＋ボタン・コマンドから） */
-export class ProjectCreateModal extends Modal {
-  private name = "";
-  private group: string | null;
-
-  constructor(
-    app: App,
-    private opts: ProjectCreateOptions
-  ) {
-    super(app);
-    this.group = opts.initialGroup ?? null;
-  }
-
-  onOpen(): void {
-    this.modalEl.addClass("dt-modal");
-    this.titleEl.setText("新しいプロジェクト");
-
-    const submit = () => {
-      const name = this.name.trim();
-      if (!name) {
-        new Notice("プロジェクト名を入力してください");
-        return;
-      }
-      this.close();
-      void this.opts.onSubmit(name, this.group?.trim() || null);
-    };
-
-    const nameSetting = new Setting(this.contentEl).setName("名前");
-    nameSetting.setDesc(
-      this.opts.templatePath
-        ? `テンプレート「${this.opts.templatePath}」から作成します。`
-        : "最小の雛形で作成します（設定「プロジェクトのテンプレート」でテンプレートを指定できます）。"
-    );
-    const nameInput = nameSetting.controlEl.createEl("input", {
-      type: "text",
-      cls: "dt-prompt-input",
-      attr: { placeholder: "例: 環境構築" },
-    });
-    nameInput.addEventListener("input", () => (this.name = nameInput.value));
-    nameInput.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !e.isComposing) {
-        e.preventDefault();
-        submit();
-      }
-    });
-
-    // グループ: 既存の一覧から選ぶか、「＋ 新しいグループ…」でその場で入力する
-    const groupSetting = new Setting(this.contentEl).setName("グループ");
-    groupSetting.settingEl.setAttr("title", "プロジェクトノートの frontmatter（group）に保存されます");
-    const newGroupInput = groupSetting.controlEl.createEl("input", {
-      type: "text",
-      cls: "dt-project-new",
-      attr: { placeholder: "新しいグループ名" },
-    });
-    newGroupInput.addEventListener("input", () => (this.group = newGroupInput.value));
-    newGroupInput.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !e.isComposing) {
-        e.preventDefault();
-        submit();
-      }
-    });
-    groupSetting.addDropdown((d) => {
-      d.addOption("", "なし");
-      const groups = [...new Set(this.opts.groups.map((g) => g.trim()).filter(Boolean))];
-      for (const g of groups) d.addOption(g, g);
-      if (this.group && !groups.includes(this.group)) d.addOption(this.group, this.group);
-      d.addOption("__new__", "＋ 新しいグループ…");
-      d.setValue(this.group ?? "");
-      d.onChange((v) => {
-        if (v === "__new__") {
-          this.group = newGroupInput.value;
-          newGroupInput.addClass("is-visible");
-          newGroupInput.focus();
-          return;
-        }
-        newGroupInput.removeClass("is-visible");
-        this.group = v || null;
-      });
-    });
-    groupSetting.controlEl.appendChild(newGroupInput);
-
-    const buttons = new Setting(this.contentEl);
-    buttons.settingEl.addClass("dt-modal-buttons");
-    buttons.addButton((b) => b.setButtonText("キャンセル").onClick(() => this.close()));
-    buttons.addButton((b) => b.setButtonText("作成").setCta().onClick(submit));
-    window.setTimeout(() => nameInput.focus(), 0);
   }
 
   onClose(): void {

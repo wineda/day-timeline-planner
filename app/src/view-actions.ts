@@ -472,7 +472,6 @@ export class ActionsMixin {
     if (!projects) return {};
     return {
       projects: projects.list(),
-      onCreateProject: (name: string) => projects.create(name),
       onOpenProject: (link: string) => this.plugin.openProject(link),
     };
   }
@@ -526,43 +525,7 @@ export class ActionsMixin {
       new Notice("タスクを保存できませんでした: " + String(e));
     }
     await this.reload();
-    if (updated) {
-      if (auto) new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
-      // 「未完了 → 完了」でプロジェクトの子が全部完了したら、プロジェクトの完了を提案
-      if (data.done && !wasDone) {
-        void this.maybeSuggestProjectDone(data.project !== undefined ? data.project : task.project);
-      }
-    }
-  }
-
-  /** プロジェクトの子タスクがすべて完了したら、プロジェクト自身の完了を提案する */
-  async maybeSuggestProjectDone(this: DayTimelineView, link: string | null | undefined): Promise<void> {
-    const projects = this.plugin.projects;
-    if (!link || !projects) return;
-    try {
-      const children = await this.plugin.collectProjectChildren(link);
-      // 持ち越し済み [>] のブロックは「閉じた記録」なので、完了扱いで数える
-      if (!children.length || !children.every((c) => c.task.done || c.task.forwarded)) return;
-      // ノートが見つからない（null）ときも提案しない
-      const done = await projects.isDone(link);
-      if (done !== false) return; // 既に完了、または frontmatter を書ける相手が無い
-      new ConfirmModal(
-        this.app,
-        `プロジェクト「${projectDisplayName(link)}」のタスクがすべて完了しました。プロジェクトも完了にしますか？`,
-        "完了にする",
-        async () => {
-          const ok = await projects.setDone(link, true);
-          if (ok) {
-            await this.plugin.updateProjectNote(link);
-            new Notice(`プロジェクト「${projectDisplayName(link)}」を完了にしました`);
-          } else {
-            new Notice("プロジェクトノートを更新できませんでした");
-          }
-        }
-      ).open();
-    } catch (e) {
-      console.error(e);
-    }
+    if (updated && auto) new Notice(`実績 ${formatActualRanges(auto)} を記録しました（編集ダイアログで直せます）`);
   }
 
   /**

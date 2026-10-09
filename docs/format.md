@@ -1,6 +1,6 @@
 ---
-format_version: "2.1"
-plugin_version: "2.128.10"
+format_version: "3.0"
+plugin_version: "3.0.0"
 generated_by: Day Timeline Planner
 ---
 
@@ -124,19 +124,18 @@ Day Timeline Planner（Obsidian プラグイン）がタスクを保存すると
 
 ## プロジェクトノートの frontmatter
 
-プロジェクトの完了は **frontmatter の `done`** が正（Bases など本文を読めない機能からも扱えるように）。本文先頭の `- [ ] ^id` は ID としてだけ使い、チェックの有無は完了判定に使わない。進捗はプラグインがタスク表（`<!-- dt-project-tasks -->` の中）を更新するたびに書き直す。
+プロジェクトノート（`Timeline/Projects/` 直下の `.md`）の状態・期間・所属は **人が書く**（Bases の表、Task Manager Bases View のカンバン / タイムライン）。プラグインはこれらを読むだけで、書くのはタスク表（`<!-- dt-project-tasks -->` の中）を更新するときの進捗の集計値 `tasks_total` `tasks_done` `last_done` `next_task` だけ。property ごとに書き手は 1 つ。frontmatter に `status` だけが入った空のノート（Bases の「New item」で作ったもの）も正常なプロジェクトノートで、本文先頭の ID 行は要らない。
 
-| property | 内容 |
-|---|---|
-| `done` | 完了なら `true`（YAML の真偽値。文字列にしない）。`false` / 未設定は進行中 |
-| `completed` | 完了にした日（`YYYY-MM-DD`）。進行中に戻すと消える |
-| `started` | 着手済みなら `true`（真偽値）。子タスクが完了した・実績が付いた・タスク表に ✅ があるときにプラグインが `true` にする。`false` に戻すのは人だけ。状態は `done` → `started` の順に見て 完了 / 着手 / 未着手 |
-| `group` | グループ名（パネルの区切り） |
-| `tasks_total` / `tasks_done` | タスク表の件数と完了数（数値。プラグインが書く） |
-| `last_done` | 最後に完了したタスク（`YYYY-MM-DD タスク名`。無ければキーごと無い） |
-| `next_task` | 未完了で日付がいちばん近いタスク（`YYYY-MM-DD タスク名`。日付未定だけなら `未定 タスク名`） |
-| `due` | 期日（`YYYY-MM-DD`）。本文の `- 期日:` 行から写す |
-| `next` | 人が手で書く「次にやること」。プラグインは触らない |
+| property | 型 | 書き手 | 意味 |
+|---|---|---|---|
+| `status` | 文字列。`未着手` / `着手` / `完了`（カンバンの列名と同じ。将来増えることがある） | 人 | **状態の正**。プラグインは `完了`（前後の空白を除いて比較）だけを完了とみなし、他の値・未設定は進行中として扱う |
+| `start` | `YYYY-MM-DD` | 人 | 開始日 |
+| `due` | `YYYY-MM-DD` | 人 | 期日（パネルに出す。本文の `- 期日:` 行は読まない） |
+| `group` | 文字列 | 人 | グループ（パネルの区切り） |
+| `tasks_total` / `tasks_done` | 数値 | プラグイン | タスク表の件数と完了数（✅。持ち越し先で完了した ✅▶ も含む） |
+| `last_done` | `YYYY-MM-DD タスク名` | プラグイン | 最後に完了したタスク（無ければキーごと無い） |
+| `next_task` | `YYYY-MM-DD タスク名` | プラグイン | 未完了で日付がいちばん近いタスク（日付未定だけなら `未定 タスク名`） |
+| `next` | 文字列 | 人 | 手で書く「次にやること」。プラグインは触らない |
 
 ## 読むときの約束（AI 向け）
 

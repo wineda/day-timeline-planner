@@ -180,35 +180,7 @@ abstract class NoteStore {
 // 新形式: 1タスク = 1ブロック（見出し + メタ行 + 本文）
 // ---------------------------------------------------------------------------
 
-/** タスクを書き込んだ後に知らせる内容（プロジェクトの着手判定に使う） */
-export interface TaskWriteInfo {
-  /** 保存後のプロジェクトのリンク先（無ければ null） */
-  project: string | null;
-  /** 保存後に完了（[x]）か */
-  done: boolean;
-  /** 保存後に実績（空でない値）が付いているか */
-  hasActual: boolean;
-}
-
 export class BlockTaskStore extends NoteStore {
-  /**
-   * タスクの作成・更新が成功したあとに呼ぶ（プラグインが設定する。プロジェクトの `started` を立てるため）。
-   * 移動・削除・持ち越し先の作成では呼ばない
-   */
-  onTaskWritten: ((info: TaskWriteInfo) => void) | null = null;
-
-  /** 保存後の状態を onTaskWritten に知らせる（成功したときだけ） */
-  private notifyWritten(ok: boolean, project: string | null, done: boolean, actual: ActualRange[]): boolean {
-    if (ok && this.onTaskWritten) {
-      try {
-        this.onTaskWritten({ project, done, hasActual: actual.length > 0 });
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return ok;
-  }
-
   private options(): InsertOptions {
     const s = this.getSettings();
     const legacyText = parseHeadingSetting(s.heading).text;
@@ -279,8 +251,7 @@ export class BlockTaskStore extends NoteStore {
   }
 
   async create(date: Date, draft: TaskDraft): Promise<boolean> {
-    const ok = await this.process(date, (c) => insertTask(c, this.prepareDraft(draft), this.options()));
-    return this.notifyWritten(ok, draft.project ?? null, !!draft.done && !draft.forward, draft.actual ?? []);
+    return this.process(date, (c) => insertTask(c, this.prepareDraft(draft), this.options()));
   }
 
   /** ブロックID を指定してタスクを作る（定期タスクが後から追跡できるように） */
@@ -312,13 +283,7 @@ export class BlockTaskStore extends NoteStore {
   }
 
   async update(date: Date, task: Task, draft: TaskDraft): Promise<boolean> {
-    const ok = await this.process(date, (c) => updateTask(c, this.refOf(task), draft, this.options()));
-    return this.notifyWritten(
-      ok,
-      draft.project !== undefined ? draft.project : task.project,
-      !!draft.done && !draft.forward,
-      draft.actual !== undefined ? draft.actual : task.actual
-    );
+    return this.process(date, (c) => updateTask(c, this.refOf(task), draft, this.options()));
   }
 
   async remove(date: Date, task: Task): Promise<boolean> {
