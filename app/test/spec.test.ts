@@ -101,6 +101,18 @@ describe("仕様書の生成（spec.ts）", () => {
     expect(renderFormatSpec({ ...ctx, generatedAt: "2026-09-15 10:00" })).toContain("generated_at: 2026-09-15 10:00");
   });
 
+  it("プロジェクトノートの frontmatter: status が状態の正で、プラグインが書くのは進捗だけ。旧キーは載せない", () => {
+    const md = renderFormatSpec({ ...defaultSpecContext("x"), folder: "Work", projectsFolder: "Projects" });
+    const section = md.slice(md.indexOf("## プロジェクトノートの frontmatter"), md.indexOf("## 読むときの約束"));
+    expect(section).toContain("`Projects/` 直下の `.md`");
+    expect(section).toContain("| `status` |");
+    expect(section).toContain("| `start` |");
+    expect(section).toContain("| `due` |");
+    expect(section).toContain("| `tasks_total` / `tasks_done` |");
+    expect(section).toContain("`tasks_total` `tasks_done` `last_done` `next_task` だけ");
+    for (const old of ["`done`", "`started`", "`completed`", "- 期日:` 行から写す"]) expect(section).not.toContain(old);
+  });
+
   it("チケット管理ツールの先頭を、実例ブロックとメタ行の説明の両方に使う", () => {
     const md = renderFormatSpec({ ...defaultSpecContext("x"), trackers: ["gitea", "redmine"] });
     expect(md).toContain("- [x] 10:00 - 11:00 🎫gitea#65130 🔔10 ^dtp-k3f9a2");
