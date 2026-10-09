@@ -14,7 +14,7 @@ export interface ProjectRef {
   linktext: string;
   /** 表示名（ファイル名） */
   name: string;
-  /** ノート自身が完了か（frontmatter の `done: true`。選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
+  /** ノート自身が完了か（frontmatter の `status: 完了`。選択肢の絞り込み用。書き込み直後は少し遅れることがある） */
   done?: boolean;
   /** グループ名（frontmatter の group。無ければ null） */
   group?: string | null;
@@ -180,12 +180,15 @@ export function extractProjectFields(content: string): ProjectFields {
 /** プロジェクトノートの frontmatter でグループ名を持つキー */
 const GROUP_KEY = "group";
 
-// ---------- frontmatter（完了・進捗） ----------
-// プロジェクトの完了は frontmatter の `done`（真偽値）が正。Obsidian の Bases など、本文を読めない
-// 機能からも完了を扱えるようにするため。プラグインは完了を読むだけで、書くのは人（Bases など）
+// ---------- frontmatter（状態・進捗） ----------
+// プロジェクトの状態は frontmatter の `status`（文字列。Bases のカンバンの列名と同じ）が正。
+// 書くのは人（Bases / Task Manager Bases View）で、プラグインは読むだけ。
+// 完了 = `status: 完了`。それ以外の値や未設定は進行中として扱う（着手 / 未着手 の区別はしない）
 
-/** 完了（true / false）。人が書く */
-export const DONE_KEY = "done";
+/** 状態のキー。人が書く */
+export const STATUS_KEY = "status";
+/** 完了を表す `status` の値 */
+export const STATUS_DONE = "完了";
 /** タスク表の進捗（タスク表を更新するたびに書く）。プラグインがプロジェクトノートに書くのはこれだけ */
 export const PROGRESS_KEYS = {
   total: "tasks_total",
@@ -194,9 +197,22 @@ export const PROGRESS_KEYS = {
   nextTask: "next_task",
 } as const;
 
-/** frontmatter の値が「完了」か（YAML の真偽値 true だけを完了とみなす。文字列 "true" は不可） */
-export function isDoneValue(v: unknown): boolean {
-  return v === true;
+/**
+ * frontmatter の値を比較用の文字列にする（純関数）。前後の空白と、囲んでいる引用符（`"完了"`）を除く。
+ * 配列なら先頭、文字列でなければ null。空も null
+ */
+export function normalizeStatus(v: unknown): string | null {
+  if (Array.isArray(v)) v = v[0];
+  if (typeof v !== "string") return null;
+  let t = v.trim();
+  const quoted = /^(["'])(.*)\1$/.exec(t);
+  if (quoted) t = quoted[2].trim();
+  return t || null;
+}
+
+/** frontmatter の `status` の値が「完了」か（空白と引用符を除いて比べる。別の値・未設定は進行中） */
+export function isStatusDone(v: unknown): boolean {
+  return normalizeStatus(v) === STATUS_DONE;
 }
 
 /** ノート先頭の frontmatter ブロックの行範囲（開始行と終了行）。無ければ null */
@@ -223,12 +239,12 @@ export function frontmatterValueOf(content: string, key: string): string | null 
 }
 
 /**
- * ノートの内容から frontmatter の `done` を読む（純関数）。
- * `done: true` なら true、それ以外（false・未設定・frontmatter なし）は false。
+ * ノートの内容から frontmatter の `status` が「完了」かを読む（純関数）。
+ * `status: 完了` なら true、それ以外（別の値・未設定・frontmatter なし）は false。
  * メタデータキャッシュの更新を待たずに、書き込み直後のノートでも同じ判定ができるようにするためのもの
  */
 export function readFrontmatterDone(content: string): boolean {
-  return frontmatterValueOf(content, DONE_KEY)?.toLowerCase() === "true";
+  return isStatusDone(frontmatterValueOf(content, STATUS_KEY));
 }
 
 /** タスク表の進捗（frontmatter に書く値）。last_done / next_task は無ければ null（キーを削除する） */
@@ -364,7 +380,7 @@ export interface ProjectSummary {
   planMin: number;
   actMin: number;
   doneCount: number;
-  /** プロジェクト自身（frontmatter の `done`）が完了か。完了済はパネルに出さない */
+  /** プロジェクト自身（frontmatter の `status: 完了`）が完了か。完了済はパネルに出さない */
   done?: boolean;
   /** プロジェクト自身の期日・チケット・ドキュメント（ノートから読む） */
   fields?: ProjectFields;
@@ -548,7 +564,7 @@ export class ProjectStore {
         out.push({
           linktext: f.path.replace(/\.md$/, ""),
           name: f.basename,
-          done: isDoneValue(this.frontmatterOf(f)[DONE_KEY]),
+          done: isStatusDone(this.frontmatterOf(f)[STATUS_KEY]),
           group: normalizeGroup(this.frontmatterOf(f)[GROUP_KEY]),
         });
       }
@@ -588,7 +604,7 @@ export class ProjectStore {
   /**
    * タスク表の進捗（tasks_total / tasks_done / last_done / next_task）を frontmatter に書く。
    * タスク表（dt-project-tasks）を更新するタイミングで呼ぶ。値が同じならノートを書き換えない。
-   * 状態（done など）や `next`（人が手で書く「次にやること」）など他の property には触らない
+   * 状態（status・start・due・group）や `next`（人が手で書く「次にやること」）など他の property には触らない
    */
   async writeProgress(linktext: string, progress: ProjectProgress): Promise<boolean> {
     const file = this.resolveFile(linktext);

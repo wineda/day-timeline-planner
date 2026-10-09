@@ -874,7 +874,7 @@ export class DayTimelineView extends ItemView {
       this.reloadDebounced();
       return;
     }
-    // プロジェクトノートの変更もパネルに反映する（frontmatter の group・done の手書き編集や Bases からの変更など。状態は人が書く）
+    // プロジェクトノートの変更もパネルに反映する（frontmatter の group・status の手書き編集や Bases からの変更など。状態は人が書く）
     const projects = this.plugin.projects;
     if (projects && this.plugin.settings.showProjects && path.startsWith(projects.folder() + "/")) {
       this.reloadDebounced();

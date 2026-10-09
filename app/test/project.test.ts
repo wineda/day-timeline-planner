@@ -1,6 +1,6 @@
 /**
- * プロジェクトノートの frontmatter（完了 done の読み取り / 進捗の書き込み）。
- * 完了の正は frontmatter の `done: true`（人が書く）。プラグインが書くのはタスク表の進捗だけ
+ * プロジェクトノートの frontmatter（状態 status の読み取り / 進捗の書き込み）。
+ * 状態の正は frontmatter の `status`（人が書く。完了 = `status: 完了`）。プラグインが書くのはタスク表の進捗だけ
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { TFile, TFolder, type App } from "obsidian";
@@ -11,6 +11,8 @@ import {
   ProjectStore,
   buildProgress,
   frontmatterValueOf,
+  isStatusDone,
+  normalizeStatus,
   plainTaskTitle,
   readFrontmatterDone,
   upsertTaskListSection,
@@ -19,24 +21,35 @@ import {
 
 // ---------- 純関数 ----------
 
-describe("frontmatter の done を読む", () => {
-  it("done: true だけを完了とみなす", () => {
-    expect(readFrontmatterDone("---\ndone: true\n---\n# A\n")).toBe(true);
-    expect(readFrontmatterDone("---\ngroup: 仕事\ndone: True\n---\n")).toBe(true);
-    expect(readFrontmatterDone("---\ndone: false\n---\n")).toBe(false);
-    expect(readFrontmatterDone("---\ndone: yes\n---\n")).toBe(false);
+describe("frontmatter の status から完了を読む", () => {
+  it("status: 完了 だけを完了とみなす（空白・引用符は除いて比べる）", () => {
+    expect(isStatusDone("完了")).toBe(true);
+    expect(isStatusDone(" 完了 ")).toBe(true);
+    expect(isStatusDone('"完了"')).toBe(true);
+    expect(isStatusDone(["完了"])).toBe(true);
+    expect(isStatusDone("着手")).toBe(false);
+    expect(isStatusDone("未着手")).toBe(false);
+    expect(isStatusDone("done")).toBe(false);
+    expect(isStatusDone(true)).toBe(false);
+    expect(isStatusDone(undefined)).toBe(false);
+    expect(normalizeStatus(" 着手 ")).toBe("着手");
+    expect(normalizeStatus("")).toBeNull();
+    expect(normalizeStatus(3)).toBeNull();
+  });
+
+  it("ノートの内容から読む（別の値・未設定・frontmatter の外は進行中）", () => {
+    expect(readFrontmatterDone("---\nstatus: 完了\n---\n# A\n")).toBe(true);
+    expect(readFrontmatterDone("---\ngroup: 仕事\nstatus: '完了'\n---\n")).toBe(true);
+    expect(readFrontmatterDone("---\nstatus: 着手\n---\n")).toBe(false);
+    expect(readFrontmatterDone("---\ndone: true\n---\n")).toBe(false); // 旧キーは読まない
     expect(readFrontmatterDone("---\ngroup: 仕事\n---\n")).toBe(false);
+    expect(readFrontmatterDone("# A\nstatus: 完了\n")).toBe(false);
     expect(readFrontmatterDone("# A\n- [x] ^dtp-1\n")).toBe(false);
   });
 
-  it("frontmatter の外の done: は読まない", () => {
-    expect(readFrontmatterDone("# A\ndone: true\n")).toBe(false);
-    expect(readFrontmatterDone("---\ngroup: x\n---\ndone: true\n")).toBe(false);
-  });
-
   it("frontmatterValueOf は 1 行の値を返し、無ければ null", () => {
-    const c = "---\nstatus: done\ntasks_total: 3\n---\n";
-    expect(frontmatterValueOf(c, "status")).toBe("done");
+    const c = "---\nstatus: 完了\ntasks_total: 3\n---\n";
+    expect(frontmatterValueOf(c, "status")).toBe("完了");
     expect(frontmatterValueOf(c, "tasks_total")).toBe("3");
     expect(frontmatterValueOf(c, "done")).toBeNull();
     expect(frontmatterValueOf("# no fm\n", "status")).toBeNull();
@@ -209,28 +222,31 @@ describe("ProjectStore と frontmatter", () => {
     store = new ProjectStore(projectApp(vault, FOLDER), () => settings);
   });
 
-  it("一覧の完了は frontmatter の done で決まり、先頭のチェックは見ない", async () => {
-    vault.files.set(`${FOLDER}/A.md`, "---\ndone: true\n---\n# A\n- [ ] ^dtp-a\n");
+  it("一覧の完了は frontmatter の status で決まり、先頭のチェックや旧キー done は見ない", async () => {
+    vault.files.set(`${FOLDER}/A.md`, "---\nstatus: 完了\n---\n# A\n- [ ] ^dtp-a\n");
     vault.files.set(`${FOLDER}/B.md`, "# B\n- [x] ^dtp-b\n");
-    vault.files.set(`${FOLDER}/C.md`, "---\ndone: false\ngroup: 仕事\n---\n# C\n- [x] ^dtp-c\n");
+    vault.files.set(`${FOLDER}/C.md`, "---\nstatus: 着手\ngroup: 仕事\n---\n# C\n- [x] ^dtp-c\n");
+    vault.files.set(`${FOLDER}/D.md`, "---\ndone: true\nstatus: 未着手\n---\n");
     const list = store.list();
     expect(list.map((r) => [r.name, r.done, r.group ?? null])).toEqual([
       ["A", true, null],
       ["B", false, null],
       ["C", false, "仕事"],
+      ["D", false, null],
     ]);
     expect((await store.selfState(`${FOLDER}/A`))?.done).toBe(true);
     expect((await store.selfState(`${FOLDER}/C`))?.done).toBe(false);
+    expect((await store.selfState(`${FOLDER}/D`))?.done).toBe(false);
     expect(await store.selfState(`${FOLDER}/なし`)).toBeNull();
   });
 
   it("進捗を frontmatter に書く（状態・next には触らず、無い値のキーは消す）", async () => {
     const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ndone: false\nnext: 設計を見直す\nlast_done: 2026-08-01 古い\n---\n# A\n- 期日: 2026/09/30\n");
+    vault.files.set(path, "---\nstatus: 着手\nnext: 設計を見直す\nlast_done: 2026-08-01 古い\n---\n# A\n- 期日: 2026/09/30\n");
     const progress = buildProgress([child("準備", "2026-09-01", { done: true }), child("本番", "2026-09-03")]);
     expect(await store.writeProgress(`${FOLDER}/A`, progress)).toBe(true);
     expect(parseFm(vault.files.get(path)!).fm).toEqual({
-      done: false,
+      status: "着手",
       next: "設計を見直す",
       last_done: "2026-09-01 準備",
       tasks_total: 2,
@@ -246,21 +262,23 @@ describe("ProjectStore と frontmatter", () => {
     // タスクが無くなれば last_done / next_task は消える
     await store.writeProgress(`${FOLDER}/A`, buildProgress([]));
     expect(parseFm(vault.files.get(path)!).fm).toEqual({
-      done: false,
+      status: "着手",
       next: "設計を見直す",
       tasks_total: 0,
       tasks_done: 0,
     });
   });
 
-  it("完了したタスクがあっても、進捗の書き込みで状態（done など）は変わらない", async () => {
+  it("完了したタスクがあっても、進捗の書き込みで状態（status・start・due・group）は変わらない", async () => {
     const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ndone: false\ngroup: 仕事\n---\n# A\n");
+    vault.files.set(path, "---\nstatus: 未着手\nstart: 2026-09-01\ndue: 2026-09-30\ngroup: 仕事\n---\n# A\n");
     await store.writeProgress(`${FOLDER}/A`, buildProgress([child("準備", "2026-09-01", { done: true })]));
     const { fm } = parseFm(vault.files.get(path)!);
-    expect(fm.done).toBe(false);
+    expect(fm.status).toBe("未着手");
+    expect(fm.start).toBe("2026-09-01");
+    expect(fm.due).toBe("2026-09-30");
     expect(fm.group).toBe("仕事");
-    expect(Object.keys(fm).sort()).toEqual(["done", "group", "last_done", "tasks_done", "tasks_total"]);
+    expect(Object.keys(fm).sort()).toEqual(["due", "group", "last_done", "start", "status", "tasks_done", "tasks_total"]);
     expect(await store.writeProgress(`${FOLDER}/なし`, buildProgress([]))).toBe(false);
   });
 });

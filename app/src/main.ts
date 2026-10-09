@@ -718,7 +718,7 @@ export default class DayTimelinePlugin extends Plugin {
 
   /**
    * タスク表（dt-project-tasks）を差し替え、同じノートの frontmatter に進捗
-   * （tasks_total / tasks_done / last_done / next_task）を書く。状態（done など）には触らない
+   * （tasks_total / tasks_done / last_done / next_task）を書く。状態（status など）には触らない
    */
   private async writeProjectNote(file: TFile, children: ProjectChild[]): Promise<void> {
     const section = buildTaskListSection(children);
