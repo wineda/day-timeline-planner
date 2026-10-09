@@ -241,8 +241,6 @@ export interface DayTimelineSettings {
   autoRecordActual: boolean;
   /** プロジェクト（大きなタスク）ノートを置くフォルダ。空欄 = <フォルダ>/Projects */
   projectsFolder: string;
-  /** プロジェクトを新規作成するときのテンプレートのパス（任意。空欄 = 最小の雛形） */
-  projectTemplatePath: string;
   /** 実績の計測中のタスク（無ければ null） */
   tracking: TrackingState | null;
   /** スナップ間隔（分） */
@@ -338,7 +336,6 @@ export const DEFAULT_SETTINGS: DayTimelineSettings = {
   hourHeight: 60,
   autoRecordActual: true,
   projectsFolder: "",
-  projectTemplatePath: "",
   tracking: null,
   snapMinutes: 15,
   defaultDurationMinutes: 30,
@@ -476,7 +473,8 @@ export function migrateSettings(loaded: Partial<DayTimelineSettings>): DayTimeli
   if (typeof s.defaultGroupIcon !== "string") s.defaultGroupIcon = DEFAULT_SETTINGS.defaultGroupIcon;
   // v2.43.0 でプロジェクト行のアイコンは廃止（行が見にくくなるため）。保存済みの値は落とす
   delete (s as unknown as Record<string, unknown>).defaultProjectIcon;
-  if (typeof s.projectTemplatePath !== "string") s.projectTemplatePath = "";
+  // v3.0.0 でプロジェクトノートの作成（テンプレート）はプラグインから外した。保存済みの値は落とす
+  delete (s as unknown as Record<string, unknown>).projectTemplatePath;
   if (typeof s.sidebarTasksCollapsed !== "boolean") s.sidebarTasksCollapsed = false;
   if (typeof s.sidebarProjectsCollapsed !== "boolean") s.sidebarProjectsCollapsed = false;
   if (s.projectsFilter !== "today") s.projectsFilter = "all";
@@ -813,7 +811,10 @@ export class DayTimelineSettingTab extends PluginSettingTab {
     {
       new Setting(containerEl)
         .setName("プロジェクトのフォルダ")
-        .setDesc("プロジェクト（大きなタスク）のノートを置く場所。空欄なら「<フォルダ>/Projects」。")
+        .setDesc(
+          "プロジェクト（大きなタスク）のノートを置く場所。空欄なら「<フォルダ>/Projects」。" +
+            "この直下の .md がすべてプロジェクトです。ノートの作成や状態の変更は Bases などで行い、プラグインはタスク表と進捗だけを書きます。"
+        )
         .addText((t) =>
           t
             .setPlaceholder((s.folder ? s.folder + "/" : "") + "Projects")
@@ -822,41 +823,6 @@ export class DayTimelineSettingTab extends PluginSettingTab {
               s.projectsFolder = v.trim();
               await save();
             })
-        );
-
-      new Setting(containerEl)
-        .setName("プロジェクトのテンプレート")
-        .setDesc(
-          "プロジェクトを新規作成するときに使うテンプレートファイル（任意。空欄なら最小の雛形）。" +
-            "{{name}} はプロジェクト名、{{date}}・{{time}}・{{group}} も置き換えます。" +
-            "「- 期日: 」「- チケット: 」「- ドキュメント: [[リンク]]」の行を書いておくと、プロジェクトパネルに表示されます。" +
-            "「テンプレートを作成」で、このパス（空欄なら Templates/Project）にサンプルを作って開きます。"
-        )
-        .addText((t) =>
-          t
-            .setPlaceholder("例: Templates/Project")
-            .setValue(s.projectTemplatePath)
-            .onChange(async (v) => {
-              s.projectTemplatePath = v.trim();
-              await save();
-            })
-        )
-        .addButton((b) =>
-          b.setButtonText("テンプレートを作成").onClick(async () => {
-            if (!s.projectTemplatePath.trim()) {
-              s.projectTemplatePath = "Templates/Project";
-              await save();
-              this.display();
-            }
-            const projects = this.plugin.projects;
-            if (!projects) return;
-            const file = await projects.ensureTemplate();
-            if (!file) {
-              new Notice("テンプレートを作成できませんでした");
-              return;
-            }
-            await this.app.workspace.getLeaf("tab").openFile(file);
-          })
         );
 
       new Setting(containerEl)

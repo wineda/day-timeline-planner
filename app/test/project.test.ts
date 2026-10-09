@@ -1,6 +1,6 @@
 /**
- * プロジェクトノートの frontmatter（完了 done / 完了日 completed / 進捗）の読み書き。
- * 完了の正は frontmatter の `done: true`。本文先頭のチェック（`- [x] ^id`）は ID としてだけ使い、完了判定には使わない
+ * プロジェクトノートの frontmatter（完了 done の読み取り / 進捗の書き込み）。
+ * 完了の正は frontmatter の `done: true`（人が書く）。プラグインが書くのはタスク表の進捗だけ
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { TFile, TFolder, type App } from "obsidian";
@@ -10,14 +10,12 @@ import type { Task } from "../src/model";
 import {
   ProjectStore,
   buildProgress,
-  countTaskTableDone,
-  ensureFrontmatterDone,
   frontmatterValueOf,
   plainTaskTitle,
   readFrontmatterDone,
+  upsertTaskListSection,
   type ProjectChild,
 } from "../src/project";
-import { BlockTaskStore, type TaskWriteInfo } from "../src/store";
 
 // ---------- 純関数 ----------
 
@@ -42,37 +40,6 @@ describe("frontmatter の done を読む", () => {
     expect(frontmatterValueOf(c, "tasks_total")).toBe("3");
     expect(frontmatterValueOf(c, "done")).toBeNull();
     expect(frontmatterValueOf("# no fm\n", "status")).toBeNull();
-  });
-});
-
-describe("新規作成時の done: false / started: false", () => {
-  it("frontmatter が無ければ先頭に作る", () => {
-    expect(ensureFrontmatterDone("# A\n- [ ] ^dtp-1\n")).toBe(
-      "---\ndone: false\nstarted: false\n---\n# A\n- [ ] ^dtp-1\n"
-    );
-  });
-
-  it("frontmatter があれば末尾に足す（group と同じ場所）", () => {
-    expect(ensureFrontmatterDone("---\ngroup: 仕事\n---\n# A\n")).toBe(
-      "---\ngroup: 仕事\ndone: false\nstarted: false\n---\n# A\n"
-    );
-  });
-
-  it("既にあるキーは変えず、無いキーだけ足す", () => {
-    expect(ensureFrontmatterDone("---\ndone: true\nstarted: true\n---\n# A\n")).toBe(
-      "---\ndone: true\nstarted: true\n---\n# A\n"
-    );
-    expect(ensureFrontmatterDone("---\ndone: true\n---\n# A\n")).toBe("---\ndone: true\nstarted: false\n---\n# A\n");
-  });
-});
-
-describe("タスク表の ✅ の数", () => {
-  const table = (rows: string[]) =>
-    ["# A", "<!-- dt-project-tasks:start -->", "## タスク", "", "| 完了 | 日付 | タスク | 予定 | 実績 |", "| :-: | --- | --- | ---: | ---: |", ...rows, "<!-- dt-project-tasks:end -->", ""].join("\n");
-  it("✅ と ✅▶ の行を数える（表の外や ⬜ は数えない）", () => {
-    expect(countTaskTableDone(table(["| ✅ | 9/1 (火) | a | – | – |", "| ✅▶ | 9/2 (水) | b | – | – |", "| ⬜ | 9/3 (木) | c | – | – |", "| ▶ | 9/4 (金) | d | – | – |"]))).toBe(2);
-    expect(countTaskTableDone(table([]))).toBe(0);
-    expect(countTaskTableDone("# A\n| ✅ | 表の外 |\n")).toBe(0);
   });
 });
 
@@ -245,102 +212,23 @@ describe("ProjectStore と frontmatter", () => {
   it("一覧の完了は frontmatter の done で決まり、先頭のチェックは見ない", async () => {
     vault.files.set(`${FOLDER}/A.md`, "---\ndone: true\n---\n# A\n- [ ] ^dtp-a\n");
     vault.files.set(`${FOLDER}/B.md`, "# B\n- [x] ^dtp-b\n");
-    vault.files.set(`${FOLDER}/C.md`, "---\ndone: false\nstarted: true\ngroup: 仕事\n---\n# C\n- [x] ^dtp-c\n");
+    vault.files.set(`${FOLDER}/C.md`, "---\ndone: false\ngroup: 仕事\n---\n# C\n- [x] ^dtp-c\n");
     const list = store.list();
-    expect(list.map((r) => [r.name, r.done, r.started, r.group ?? null])).toEqual([
-      ["A", true, false, null],
-      ["B", false, false, null],
-      ["C", false, true, "仕事"],
+    expect(list.map((r) => [r.name, r.done, r.group ?? null])).toEqual([
+      ["A", true, null],
+      ["B", false, null],
+      ["C", false, "仕事"],
     ]);
-    expect((await store.selfState(`${FOLDER}/C`))?.started).toBe(true);
-    expect(await store.isStarted(`${FOLDER}/B`)).toBe(false);
-    expect(await store.isDone(`${FOLDER}/A`)).toBe(true);
-    expect(await store.isDone(`${FOLDER}/B`)).toBe(false);
+    expect((await store.selfState(`${FOLDER}/A`))?.done).toBe(true);
     expect((await store.selfState(`${FOLDER}/C`))?.done).toBe(false);
-    expect(await store.isDone(`${FOLDER}/なし`)).toBeNull();
+    expect(await store.selfState(`${FOLDER}/なし`)).toBeNull();
   });
 
-  it("完了にすると done: true と completed（今日）が入り、本文と他の property は変わらない", async () => {
-    const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ngroup: 仕事\nstarted: false\n---\n# A\n- [ ] ^dtp-a\n\n## メモ\n");
-    expect(await store.setDone(`${FOLDER}/A`, true)).toBe(true);
-    const { fm, body } = parseFm(vault.files.get(path)!);
-    expect(fm.group).toBe("仕事");
-    expect(fm.started).toBe(false); // 完了が優先されるので started は変えない
-    expect(fm.done).toBe(true);
-    expect(fm.completed).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(body).toBe("# A\n- [ ] ^dtp-a\n\n## メモ\n");
-    expect(store.list()[0].done).toBe(true);
-  });
-
-  it("未完了に戻すと done: false になり completed が消える", async () => {
-    const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ndone: true\ncompleted: 2026-09-01\n---\n# A\n- [x] ^dtp-a\n");
-    expect(await store.setDone(`${FOLDER}/A`, false)).toBe(true);
-    const { fm, body } = parseFm(vault.files.get(path)!);
-    expect(fm).toEqual({ done: false });
-    expect(body).toBe("# A\n- [x] ^dtp-a\n"); // 本文のチェックには触らない
-  });
-
-  it("値が同じなら書かない", async () => {
-    const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ndone: true\ncompleted: 2026-09-01\n---\n# A\n");
-    await store.setDone(`${FOLDER}/A`, true);
-    vault.files.set(`${FOLDER}/B.md`, "---\ndone: false\n---\n# B\n");
-    await store.setDone(`${FOLDER}/B`, false);
-    expect(vault.ops.filter((o) => o.startsWith("process"))).toEqual([]);
-    expect(vault.files.get(path)).toBe("---\ndone: true\ncompleted: 2026-09-01\n---\n# A\n");
-  });
-
-  it("新規作成したノートには done: false が入る", async () => {
-    const link = await store.create("新規");
-    expect(link).toBe(`${FOLDER}/新規`);
-    const content = vault.files.get(`${FOLDER}/新規.md`)!;
-    expect(content.startsWith("---\ndone: false\nstarted: false\n---\n# 新規\n- [ ] ^")).toBe(true);
-    expect(store.list()[0].done).toBe(false);
-    expect(store.list()[0].started).toBe(false);
-  });
-
-  it("移行コマンド: 先頭チェックか status: done なら done: true、それ以外は false。status は消す", async () => {
-    vault.files.set(`${FOLDER}/チェック済.md`, "---\ngroup: 仕事\n---\n# チェック済\n- [x] ^dtp-a\n");
-    vault.files.set(`${FOLDER}/status.md`, "---\nstatus: done\n---\n# status\n- [ ] ^dtp-b\n");
-    vault.files.set(`${FOLDER}/進行中.md`, "# 進行中\n- [ ] ^dtp-c\n");
-    vault.files.set(`${FOLDER}/手書き.md`, "---\nstatus: wip\n---\n# 手書き\n\n- [x] 買い物\n");
-    vault.files.set(`${FOLDER}/済み.md`, "---\ndone: true\n---\n# 済み\n- [ ] ^dtp-e\n");
-    vault.files.set(`${FOLDER}/済みstatus付き.md`, "---\ndone: false\nstatus: done\n---\n# x\n");
-    // タスク表に ✅ があれば started: true。既に started があるノートには書かない
-    const TABLE = "<!-- dt-project-tasks:start -->\n| ✅ | 9/1 (火) | a | – | – |\n<!-- dt-project-tasks:end -->\n";
-    vault.files.set(`${FOLDER}/着手済.md`, "---\ndone: false\n---\n# 着手済\n- [ ] ^dtp-f\n" + TABLE);
-    vault.files.set(`${FOLDER}/着手あり.md`, "---\ndone: false\nstarted: false\n---\n# 着手あり\n" + TABLE);
-    const r = await store.migrateDoneToFrontmatter();
-    expect(r).toEqual({ done: 2, notDone: 2, unchanged: 4, statusRemoved: 3, started: 7 });
-    expect(vault.files.get(`${FOLDER}/チェック済.md`)).toBe(
-      "---\ngroup: 仕事\ndone: true\nstarted: false\n---\n# チェック済\n- [x] ^dtp-a\n"
-    );
-    expect(vault.files.get(`${FOLDER}/status.md`)).toBe("---\ndone: true\nstarted: false\n---\n# status\n- [ ] ^dtp-b\n");
-    expect(vault.files.get(`${FOLDER}/進行中.md`)).toBe("---\ndone: false\nstarted: false\n---\n# 進行中\n- [ ] ^dtp-c\n");
-    // ID 無しの手書きチェックはメタ行ではない
-    expect(vault.files.get(`${FOLDER}/手書き.md`)).toBe("---\ndone: false\nstarted: false\n---\n# 手書き\n\n- [x] 買い物\n");
-    expect(vault.files.get(`${FOLDER}/済み.md`)).toBe("---\ndone: true\nstarted: false\n---\n# 済み\n- [ ] ^dtp-e\n");
-    expect(vault.files.get(`${FOLDER}/済みstatus付き.md`)).toBe("---\ndone: false\nstarted: false\n---\n# x\n");
-    expect(vault.files.get(`${FOLDER}/着手済.md`)).toBe("---\ndone: false\nstarted: true\n---\n# 着手済\n- [ ] ^dtp-f\n" + TABLE);
-    expect(vault.files.get(`${FOLDER}/着手あり.md`)).toBe("---\ndone: false\nstarted: false\n---\n# 着手あり\n" + TABLE);
-    // 2 回目は何も変わらない
-    expect(await store.migrateDoneToFrontmatter()).toEqual({
-      done: 0,
-      notDone: 0,
-      unchanged: 8,
-      statusRemoved: 0,
-      started: 0,
-    });
-  });
-
-  it("進捗を frontmatter に書く（next には触らず、無い値のキーは消す）", async () => {
+  it("進捗を frontmatter に書く（状態・next には触らず、無い値のキーは消す）", async () => {
     const path = `${FOLDER}/A.md`;
     vault.files.set(path, "---\ndone: false\nnext: 設計を見直す\nlast_done: 2026-08-01 古い\n---\n# A\n- 期日: 2026/09/30\n");
     const progress = buildProgress([child("準備", "2026-09-01", { done: true }), child("本番", "2026-09-03")]);
-    const fields = (await store.selfState(`${FOLDER}/A`))!.fields;
-    expect(await store.writeProgress(`${FOLDER}/A`, progress, fields)).toBe(true);
+    expect(await store.writeProgress(`${FOLDER}/A`, progress)).toBe(true);
     expect(parseFm(vault.files.get(path)!).fm).toEqual({
       done: false,
       next: "設計を見直す",
@@ -348,75 +236,44 @@ describe("ProjectStore と frontmatter", () => {
       tasks_total: 2,
       tasks_done: 1,
       next_task: "2026-09-03 本番",
-      due: "2026-09-30",
-      started: true, // ✅ が 1 つ以上あるので着手済み
     });
+    // 本文は変えない
+    expect(parseFm(vault.files.get(path)!).body).toBe("# A\n- 期日: 2026/09/30\n");
     // 同じ値なら書かない
     vault.ops = [];
-    await store.writeProgress(`${FOLDER}/A`, progress, fields);
+    await store.writeProgress(`${FOLDER}/A`, progress);
     expect(vault.ops).toEqual([]);
-    // タスクが無くなれば last_done / next_task は消える。due は本文に無ければ触らない
-    await store.writeProgress(`${FOLDER}/A`, buildProgress([]), { due: "", dueDate: null, ticket: null, docs: [] });
+    // タスクが無くなれば last_done / next_task は消える
+    await store.writeProgress(`${FOLDER}/A`, buildProgress([]));
     expect(parseFm(vault.files.get(path)!).fm).toEqual({
       done: false,
       next: "設計を見直す",
       tasks_total: 0,
       tasks_done: 0,
-      due: "2026-09-30",
-      started: true, // 自動では false に戻さない
     });
   });
 
-  it("着手の切り替えは started だけを書き、同じ値なら書かない", async () => {
+  it("完了したタスクがあっても、進捗の書き込みで状態（done など）は変わらない", async () => {
     const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ndone: false\nstarted: false\ngroup: 仕事\n---\n# A\n- [ ] ^dtp-a\n");
-    expect(await store.setStarted(`${FOLDER}/A`, true)).toBe(true);
-    expect(vault.files.get(path)).toBe("---\ndone: false\nstarted: true\ngroup: 仕事\n---\n# A\n- [ ] ^dtp-a\n");
-    vault.ops = [];
-    await store.setStarted(`${FOLDER}/A`, true);
-    expect(vault.ops).toEqual([]);
-    await store.setStarted(`${FOLDER}/A`, false);
-    expect(vault.files.get(path)).toBe("---\ndone: false\nstarted: false\ngroup: 仕事\n---\n# A\n- [ ] ^dtp-a\n");
-  });
-
-  it("子タスクが完了した・実績が付いたら started: true にする（未完了で実績なしなら何もしない）", async () => {
-    const path = `${FOLDER}/A.md`;
-    vault.files.set(path, "---\ndone: false\nstarted: false\n---\n# A\n");
-    await store.markStartedByTask(`${FOLDER}/A`, false, false);
-    expect(parseFm(vault.files.get(path)!).fm.started).toBe(false);
-    await store.markStartedByTask(`${FOLDER}/A`, false, true);
-    expect(parseFm(vault.files.get(path)!).fm.started).toBe(true);
-    // 人が false に戻したあと、未完了の保存では戻さない
-    vault.files.set(path, "---\ndone: false\nstarted: false\n---\n# A\n");
-    await store.markStartedByTask(`${FOLDER}/A`, false, false);
-    expect(parseFm(vault.files.get(path)!).fm.started).toBe(false);
-    await store.markStartedByTask(`${FOLDER}/A`, true, false);
-    expect(parseFm(vault.files.get(path)!).fm.started).toBe(true);
-    // プロジェクト無し・見つからないノートは何もしない
-    await store.markStartedByTask(null, true, true);
-    await store.markStartedByTask(`${FOLDER}/なし`, true, true);
-    expect(vault.files.has(`${FOLDER}/なし.md`)).toBe(false);
+    vault.files.set(path, "---\ndone: false\ngroup: 仕事\n---\n# A\n");
+    await store.writeProgress(`${FOLDER}/A`, buildProgress([child("準備", "2026-09-01", { done: true })]));
+    const { fm } = parseFm(vault.files.get(path)!);
+    expect(fm.done).toBe(false);
+    expect(fm.group).toBe("仕事");
+    expect(Object.keys(fm).sort()).toEqual(["done", "group", "last_done", "tasks_done", "tasks_total"]);
+    expect(await store.writeProgress(`${FOLDER}/なし`, buildProgress([]))).toBe(false);
   });
 });
 
-describe("タスクの保存 → プロジェクトへの通知", () => {
-  it("作成・更新の成功後に、保存後のプロジェクト・完了・実績の有無を知らせる", async () => {
-    const vault = new FakeVault();
-    const settings: DayTimelineSettings = { ...DEFAULT_SETTINGS, folder: "Timeline", deletionLog: false };
-    const store = new BlockTaskStore({ vault } as unknown as App, () => settings);
-    const got: TaskWriteInfo[] = [];
-    store.onTaskWritten = (i) => got.push(i);
-    const date = new Date(2026, 8, 1);
-    await store.create(date, { title: "a", start: 540, end: 600, done: false, project: "Timeline/Projects/P" });
-    expect(got).toEqual([{ project: "Timeline/Projects/P", done: false, hasActual: false }]);
-    const t = (await store.load(date)).tasks[0];
-    await store.update(date, t, { title: "a", start: 540, end: 600, done: true });
-    expect(got[1]).toEqual({ project: "Timeline/Projects/P", done: true, hasActual: false });
-    await store.update(date, t, { title: "a", start: 540, end: 600, done: false, actual: [{ start: 540, end: 570 }] });
-    expect(got[2]).toEqual({ project: "Timeline/Projects/P", done: false, hasActual: true });
-    // 持ち越し（[>]）は完了ではない。プロジェクトを外せば null。実績は保存済みの値（読み直したタスク）から見る
-    const t2 = (await store.load(date)).tasks[0];
-    await store.update(date, t2, { title: "a", start: 540, end: 600, done: true, forward: true, project: null });
-    expect(got[3]).toEqual({ project: null, done: false, hasActual: true });
+describe("タスク表の差し替え", () => {
+  const section = ["<!-- dt-project-tasks:start -->", "## タスク", "", "（なし）", "<!-- dt-project-tasks:end -->"];
+
+  it("マーカーの中だけを差し替える", () => {
+    const before = "# A\n<!-- dt-project-tasks:start -->\n古い\n<!-- dt-project-tasks:end -->\n\n## メモ\n";
+    expect(upsertTaskListSection(before, section)).toBe("# A\n" + section.join("\n") + "\n\n## メモ\n");
+  });
+
+  it("マーカーが無ければ末尾に足す", () => {
+    expect(upsertTaskListSection("# A\n\n## メモ\n\n\n", section)).toBe("# A\n\n## メモ\n\n" + section.join("\n") + "\n");
   });
 });

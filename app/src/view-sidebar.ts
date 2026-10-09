@@ -2,14 +2,13 @@
  * タイムラインビューの左サイドバー（パネル）: 「Inbox・時刻なし」の一覧、プロジェクトのツリー、本日のサマリー。
  * DayTimelineView のミックスイン（view.ts の末尾で合成）。this はビュー自身
  */
-import { Menu, Notice, getIcon, moment, setIcon } from "obsidian";
+import { Menu, Notice, moment, setIcon } from "obsidian";
 import { Task, isScheduled, stepProgress } from "./model";
-import { ConfirmModal, PromptModal, TaskModal } from "./modal";
+import { TaskModal } from "./modal";
 import type { TicketRef } from "./markdown/blocks";
 import {
   groupProjects,
   isChildSettled,
-  knownGroupNames,
   projectDisplayName,
   renderGroupIcon,
   type ProjectChild,
@@ -193,7 +192,7 @@ export class SidebarMixin {
         title: "プロジェクト",
         count: activeProjects.length,
         collapsed: s.sidebarProjectsCollapsed,
-        tip: "進行中のプロジェクト。⋮ から新規作成・展開・完了済みの表示切替",
+        tip: "進行中のプロジェクト。⋮ から展開・完了済みの表示切替・ノートのタスク一覧の更新",
         onToggle: () => {
           s.sidebarProjectsCollapsed = !s.sidebarProjectsCollapsed;
           void this.plugin.persistSettings();
@@ -531,14 +530,7 @@ export class SidebarMixin {
 
   /** プロジェクトのパネルのヘッダー（⋮）から開くメニュー。active は進行中のプロジェクト */
   buildProjectsMenu(this: DayTimelineView, menu: MenuLike, active: ProjectSummary[]): void {
-    menu.addItem((i) =>
-      i
-        .setTitle("新しいプロジェクトを作成…")
-        .setIcon("plus")
-        .onClick(() => this.plugin.openNewProjectModal())
-    );
     if (active.length) {
-      menu.addSeparator();
       const allExpanded = this.areAllProjectsExpanded();
       menu.addItem((i) =>
         i
@@ -559,8 +551,8 @@ export class SidebarMixin {
             this.renderInbox();
           })
       );
+      menu.addSeparator();
     }
-    menu.addSeparator();
     menu.addItem((i) =>
       i
         .setTitle("全プロジェクトノートのタスク一覧を更新")
@@ -600,7 +592,7 @@ export class SidebarMixin {
           ? "今日のタスクがあるプロジェクトはありません（「すべて」で全部を表示）。"
           : hiddenDone
             ? `進行中のプロジェクトはありません（完了済 ${hiddenDone} 件は非表示）。`
-            : "上の ⋮ メニューの「新しいプロジェクトを作成」、またはタスクの編集ダイアログの「プロジェクト」欄から作成すると、ここに一覧されます。",
+            : `プロジェクトノートを「${this.plugin.projects?.folder() ?? "Projects"}」に置くと、ここに一覧されます（作成は Bases やテンプレートで）。`,
       });
       return;
     }
@@ -668,14 +660,6 @@ export class SidebarMixin {
     const nameEl = row.createSpan({ cls: "dt-project-name", text: sum.ref.name });
     // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
-    // 未着手（frontmatter の started が true でない）は行を薄くしてラベルを付ける
-    if (!sum.started) {
-      row.addClass("is-not-started");
-      row.createSpan({ cls: "dt-project-not-started", text: "未着手" }).setAttr(
-        "aria-label",
-        "未着手（frontmatter の started が true でない）。子タスクの完了か実績の記録で着手済みになります"
-      );
-    }
     const total = sum.children.length;
     // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
     const fields = sum.fields;
@@ -692,7 +676,7 @@ export class SidebarMixin {
     stats.setText(total ? `${sum.doneCount}/${total}` : "タスクなし");
     if (total) stats.setAttr("aria-label", `予 ${hmm(sum.planMin)}・実 ${hmm(sum.actMin)}`);
     // 行のホバー時のツールチップは情報量が多すぎたため、いったん出さない
-    // 操作（ノートを開く・タスクを追加・完了にする）は行のアイコンではなく右クリックメニューから
+    // 操作（ノートを開く・タスクを追加）は行のアイコンではなく右クリックメニューから
     this.attachProjectRowBehavior(row, chev, sum);
 
     if (!expanded) return;
@@ -763,34 +747,6 @@ export class SidebarMixin {
         ev.stopPropagation();
         window.open(url);
       });
-    }
-  }
-
-  /** プロジェクトを完了にする（右クリックメニューから。未完了のタスクが残っていれば確認する）。パネルから消える */
-  completeProject(this: DayTimelineView, sum: ProjectSummary): void {
-    const projects = this.plugin.projects;
-    if (!projects) return;
-    const key = sum.ref.linktext;
-    const run = async () => {
-      const ok = await projects.setDone(key, true);
-      if (!ok) {
-        new Notice("プロジェクトを完了にできませんでした（ノートが開けるか確認してください）");
-        return;
-      }
-      sum.done = true; // すぐパネルから消す（次の再読み込みでも frontmatter の done が同じ判定を返す）
-      new Notice(`プロジェクト「${sum.ref.name}」を完了にしました。ノートの done を false にすると戻せます`);
-      this.renderInbox();
-    };
-    const open = sum.children.filter((c) => !c.task.done && !c.task.forwarded).length;
-    if (open) {
-      new ConfirmModal(
-        this.app,
-        `「${sum.ref.name}」には未完了のタスクが ${open} 件あります。プロジェクトを完了にしますか？（タスクはそのまま残ります）`,
-        "完了にする",
-        run
-      ).open();
-    } else {
-      void run();
     }
   }
 
@@ -977,7 +933,8 @@ export class SidebarMixin {
     this.openDoc(sum.ref.linktext, doc);
   }
 
-  /** プロジェクト行の右クリックメニュー（ノートを開く・タスクを追加・チケット・ドキュメント・グループの付け替え・完了にする） */
+  /** プロジェクト行の右クリックメニュー（ノートを開く・タスクを追加・チケット・ドキュメント）。
+   * 状態・グループの変更はここには無い（プロジェクトノートの property は Bases など人が書く） */
   showProjectMenu(this: DayTimelineView, sum: ProjectSummary, e: MouseEvent): void {
     if (!this.plugin.projects) return;
     const key = sum.ref.linktext;
@@ -992,83 +949,19 @@ export class SidebarMixin {
         .setIcon("plus")
         .onClick(() => this.openProjectCreateModal(key))
     );
-    menu.addSeparator();
-    // プロジェクト自身のチケット・ドキュメント
+    // プロジェクト自身のチケット・ドキュメント（あるときだけ区切って出す）
     const fields = sum.fields;
-    let hasExtras = false;
-    if (fields?.ticket) {
+    const url = fields?.ticket ? ticketUrl(this.plugin.settings.trackers, fields.ticket.tracker, fields.ticket.id) : null;
+    if (url || fields?.docs.length) menu.addSeparator();
+    if (fields?.ticket && url) {
       const t = fields.ticket;
-      const url = ticketUrl(this.plugin.settings.trackers, t.tracker, t.id);
-      if (url) {
-        menu.addItem((i) =>
-          i.setTitle(`チケット #${t.id} を開く`).setIcon("ticket").onClick(() => window.open(url))
-        );
-        hasExtras = true;
-      }
+      menu.addItem((i) => i.setTitle(`チケット #${t.id} を開く`).setIcon("ticket").onClick(() => window.open(url)));
     }
     if (fields?.docs.length) {
       // タスクのメニューと同じ「ドキュメント」のサブメニュー（ノート自身は上の項目で開くので入れない）
       this.addDocumentsSubmenu(menu, key, fields.docs, false);
-      hasExtras = true;
     }
-    if (hasExtras) menu.addSeparator();
-    const current = sum.ref.group ?? null;
-    // 完了済みプロジェクトだけが使っているグループへも移せるよう、候補は全プロジェクトから集める
-    const names = knownGroupNames(
-      this.projectData.map((s) => s.ref),
-      this.plugin.settings.projectGroups.map((x) => x.name)
-    );
-    const groupIcons = this.groupIconMap();
-    for (const groupName of names) {
-      menu.addItem((i) => {
-        // アイコンが Lucide 名ならメニューのアイコン欄に、絵文字などはタイトルの頭に出す
-        // （現在のグループは ✓ を優先）
-        const icon = groupIcons.get(groupName);
-        const asText = icon && !getIcon(icon) ? icon + " " : "";
-        i.setTitle(`グループ: ${asText}${groupName}`).onClick(() => void this.setProjectGroup(sum, groupName));
-        if (groupName === current) i.setIcon("check");
-        else if (icon && !asText) i.setIcon(icon);
-      });
-    }
-    if (names.length) menu.addSeparator();
-    menu.addItem((i) =>
-      i
-        .setTitle("新しいグループへ…")
-        .setIcon("folder-plus")
-        .onClick(() =>
-          new PromptModal(this.app, {
-            title: `「${sum.ref.name}」のグループ`,
-            placeholder: "グループ名（例: 仕事）",
-            cta: "移動",
-            onSubmit: (groupName) => void this.setProjectGroup(sum, groupName),
-          }).open()
-        )
-    );
-    if (current) {
-      menu.addItem((i) =>
-        i.setTitle("グループを外す").setIcon("x").onClick(() => void this.setProjectGroup(sum, null))
-      );
-    }
-    menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle("プロジェクトを完了にする").setIcon("check-circle-2").onClick(() => this.completeProject(sum))
-    );
     menu.showAtMouseEvent(e);
-  }
-
-  /** プロジェクトのグループを付け替えて、パネルへ即反映する */
-  async setProjectGroup(this: DayTimelineView, sum: ProjectSummary, group: string | null): Promise<void> {
-    const projects = this.plugin.projects;
-    if (!projects) return;
-    const g = group?.trim() || null;
-    if (g === (sum.ref.group ?? null)) return;
-    const ok = await projects.setGroup(sum.ref.linktext, g);
-    if (!ok) {
-      new Notice("グループを変更できませんでした（ノートが開けるか確認してください）");
-      return;
-    }
-    sum.ref.group = g; // メタデータキャッシュの反映を待たずに表示へ
-    this.renderInbox();
   }
 
   /** プロジェクト行: クリックで展開、タイムラインへドラッグで子タスクを作成 */
