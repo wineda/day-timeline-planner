@@ -690,7 +690,7 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-/* プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行） */
+/* プロジェクト自身の期日（frontmatter の due）・チケット（ノートの「- チケット: 」行） */
 .dt-project-due,
 .dt-project-ticket {
   flex: 0 0 auto;

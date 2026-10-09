@@ -10,9 +10,10 @@ import type { Task } from "../src/model";
 import {
   ProjectStore,
   buildProgress,
+  extractProjectFields,
+  frontmatterText,
   frontmatterValueOf,
   isStatusDone,
-  normalizeStatus,
   plainTaskTitle,
   readFrontmatterDone,
   upsertTaskListSection,
@@ -32,9 +33,9 @@ describe("frontmatter の status から完了を読む", () => {
     expect(isStatusDone("done")).toBe(false);
     expect(isStatusDone(true)).toBe(false);
     expect(isStatusDone(undefined)).toBe(false);
-    expect(normalizeStatus(" 着手 ")).toBe("着手");
-    expect(normalizeStatus("")).toBeNull();
-    expect(normalizeStatus(3)).toBeNull();
+    expect(frontmatterText(" 着手 ")).toBe("着手");
+    expect(frontmatterText("")).toBeNull();
+    expect(frontmatterText(3)).toBeNull();
   });
 
   it("ノートの内容から読む（別の値・未設定・frontmatter の外は進行中）", () => {
@@ -89,6 +90,25 @@ function child(title: string, date: string | null, extra: Partial<Task> = {}): P
     owner: null,
   };
 }
+
+describe("プロジェクト自身の期日・チケット・ドキュメント", () => {
+  it("期日は frontmatter の due から読み、本文の「- 期日:」行は無視する", () => {
+    const f = extractProjectFields("---\nstatus: 着手\ndue: 2026-09-30\n---\n# A\n- 期日: 2026/01/01\n- チケット: redmine#65130\n- ドキュメント: [[設計書]]\n");
+    expect(f.due).toBe("2026-09-30");
+    expect(f.dueDate).toEqual(new Date(2026, 8, 30));
+    expect(f.ticket).toEqual({ tracker: "redmine", id: "65130" });
+    expect(f.docs.map((d) => d.target)).toEqual(["設計書"]);
+    // due が無ければ空（本文に期日があっても使わない）
+    expect(extractProjectFields("# A\n- 期日: 2026-09-30\n").due).toBe("");
+    // 引用符付き・日付として読めない値
+    expect(extractProjectFields('---\ndue: "2026-10-01"\n---\n').dueDate).toEqual(new Date(2026, 9, 1));
+    expect(extractProjectFields("---\ndue: 来月\n---\n")).toMatchObject({ due: "来月", dueDate: null });
+  });
+
+  it("frontmatter だけの空ノートも読める", () => {
+    expect(extractProjectFields("---\nstatus: 未着手\n---\n")).toEqual({ due: "", dueDate: null, ticket: null, docs: [] });
+  });
+});
 
 describe("タスク名の表示名", () => {
   it("リンク記法とタグを外す", () => {
@@ -293,5 +313,12 @@ describe("タスク表の差し替え", () => {
 
   it("マーカーが無ければ末尾に足す", () => {
     expect(upsertTaskListSection("# A\n\n## メモ\n\n\n", section)).toBe("# A\n\n## メモ\n\n" + section.join("\n") + "\n");
+  });
+
+  it("frontmatter だけの空ノート（Bases の New item）には frontmatter の後ろに足し、frontmatter は壊さない", () => {
+    const fm = "---\nstatus: 未着手\n---";
+    expect(upsertTaskListSection(fm + "\n", section)).toBe(fm + "\n\n" + section.join("\n") + "\n");
+    expect(upsertTaskListSection(fm, section)).toBe(fm + "\n\n" + section.join("\n") + "\n");
+    expect(upsertTaskListSection("", section)).toBe(section.join("\n") + "\n");
   });
 });

@@ -661,7 +661,7 @@ export class SidebarMixin {
     // 名前を Ctrl/Cmd + クリックするとプロジェクトノートをプレビュー表示
     this.attachProjectNamePreview(nameEl, sum.ref.linktext);
     const total = sum.children.length;
-    // プロジェクト自身の期日・チケット（ノートの「- 期日: 」「- チケット: 」行）
+    // プロジェクト自身の期日（frontmatter の due）・チケット（ノートの「- チケット: 」行）
     const fields = sum.fields;
     if (fields?.due) {
       const dueEl = row.createSpan({

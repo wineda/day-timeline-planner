@@ -21,8 +21,10 @@ export interface ProjectRef {
 }
 
 // ---------- プロジェクト自身の項目（期日・チケット・ドキュメント） ----------
-// 子タスクと同じ「- ラベル: 値」の行で、プロジェクトノート自身にも持たせられる。
-// テンプレートに空の行（「- 期日: 」など）を入れておけば、あとから書き足すだけでよい
+// 期日は frontmatter の `due`（人が Bases などで書く）。チケット・ドキュメントは子タスクと同じ
+// 「- ラベル: 値」の行で、プロジェクトノートの本文に持たせられる。
+// 本文先頭のメタ行（`- [ ] ^id`）は要らない。Bases の「New item」で作った frontmatter だけの空ノートも
+// そのままプロジェクトノートとして扱う
 
 /** ドキュメント行の1項目（プロジェクトに結びつけた資料へのリンク） */
 export interface ProjectDoc {
@@ -36,7 +38,7 @@ export interface ProjectDoc {
 
 /** プロジェクトノート自身が持つ項目 */
 export interface ProjectFields {
-  /** 期日（書かれたままの文字列。無ければ ""） */
+  /** 期日（frontmatter の `due` に書かれたままの文字列。無ければ ""） */
   due: string;
   /** 期日を日付として読めたもの（読めなければ null） */
   dueDate: Date | null;
@@ -46,17 +48,13 @@ export interface ProjectFields {
   docs: ProjectDoc[];
 }
 
-const DUE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?期日(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
+/** 期日のキー（frontmatter。`YYYY-MM-DD`。人が書く） */
+export const DUE_KEY = "due";
+
 const TICKET_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?チケット(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 const DOC_LINE_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(?:ドキュメント|資料)(?:\*\*)?\s*[:：]\s*(.*?)\s*$/;
 
-/** 期日の行なら中身を返す（空でも ""）。違えば null */
-export function parseDueLine(line: string): string | null {
-  const m = DUE_RE.exec(line);
-  return m ? m[1] : null;
-}
-
-/** 期日の値として受け付ける書き方 */
+/** 期日の値として受け付ける書き方（正は YYYY-MM-DD。手書きの別表記も読む） */
 const DUE_FORMATS = [
   "YYYY-MM-DD",
   "YYYY-M-D",
@@ -134,18 +132,16 @@ const FENCE_RE = /^\s*(?:```|~~~)/;
 
 /**
  * プロジェクトノートから期日・チケット・ドキュメントを読む。
- * frontmatter とコードブロックの外なら、ノートのどこに書いてもよい
- * （期日・チケットは最初の行、ドキュメントは全行分を集める）
+ * 期日は frontmatter の `due`。チケット・ドキュメントは本文（frontmatter とコードブロックの外なら
+ * どこに書いてもよい。チケットは最初の行、ドキュメントは全行分を集める）。
+ * 本文の「- 期日:」行は読まない（残っていても無視する）
  */
 export function extractProjectFields(content: string): ProjectFields {
   const lines = content.split(/\r?\n/);
-  let start = 0;
-  if (lines[0]?.trim() === "---") {
-    const end = lines.findIndex((l, i) => i > 0 && (l.trim() === "---" || l.trim() === "..."));
-    if (end > 0) start = end + 1;
-  }
-  let due = "";
-  let dueDate: Date | null = null;
+  const range = frontmatterRange(lines);
+  const start = range ? range.close + 1 : 0;
+  const due = frontmatterText(frontmatterValueOf(content, DUE_KEY)) ?? "";
+  const dueDate = due ? parseDueDate(due) : null;
   let ticket: TicketRef | null = null;
   const docs: ProjectDoc[] = [];
   let fence = false;
@@ -156,14 +152,6 @@ export function extractProjectFields(content: string): ProjectFields {
       continue;
     }
     if (fence) continue;
-    if (!due) {
-      const d = parseDueLine(line);
-      if (d !== null) {
-        due = d;
-        dueDate = d ? parseDueDate(d) : null;
-        continue;
-      }
-    }
     if (!ticket) {
       const t = parseTicketLine(line);
       if (t !== null) {
@@ -198,10 +186,10 @@ export const PROGRESS_KEYS = {
 } as const;
 
 /**
- * frontmatter の値を比較用の文字列にする（純関数）。前後の空白と、囲んでいる引用符（`"完了"`）を除く。
+ * frontmatter の値を文字列にする（純関数）。前後の空白と、囲んでいる引用符（`"完了"`）を除く。
  * 配列なら先頭、文字列でなければ null。空も null
  */
-export function normalizeStatus(v: unknown): string | null {
+export function frontmatterText(v: unknown): string | null {
   if (Array.isArray(v)) v = v[0];
   if (typeof v !== "string") return null;
   let t = v.trim();
@@ -212,7 +200,7 @@ export function normalizeStatus(v: unknown): string | null {
 
 /** frontmatter の `status` の値が「完了」か（空白と引用符を除いて比べる。別の値・未設定は進行中） */
 export function isStatusDone(v: unknown): boolean {
-  return normalizeStatus(v) === STATUS_DONE;
+  return frontmatterText(v) === STATUS_DONE;
 }
 
 /** ノート先頭の frontmatter ブロックの行範囲（開始行と終了行）。無ければ null */
@@ -512,7 +500,8 @@ export function buildTaskListSection(children: ProjectChild[]): string[] {
 
 /**
  * プロジェクトノートの自動更新セクションを差し替える。
- * マーカーが無ければ末尾に追加する
+ * マーカーが無ければ本文の末尾に（`## タスク` の見出しごと）追加する。frontmatter だけの空ノートでも
+ * frontmatter は壊さず、その後ろに足す
  */
 export function upsertTaskListSection(content: string, section: string[]): string {
   const eol = content.includes("\r\n") ? "\r\n" : "\n";
